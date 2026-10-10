@@ -9,7 +9,7 @@ with their SHA-256: anybody can publish or download such a file and re-run the c
 result. Nothing else than the blocks is used, so the score of a miner cannot be inflated off-chain.
 
 Score: 1 point per valid block mined to the address, 1.5 for a block that carried paid work (a job of a client), multiplied by 1.25 during
-the first two weeks. Eligibility: at least 7 distinct active days (24-hour windows since the start), a minimum share of all the points,
+the first three days. Eligibility: at least 3 distinct active days (24-hour windows since the start), a minimum share of all the points,
 a registered address if a registration list is given, and not on the exclusion list. The reward pool is shared between the eligible
 addresses in proportion to their points. All parameters are printed in the output and can be changed with the options below.
 Python 3 standard library only.
@@ -25,11 +25,11 @@ import urllib.request
 from datetime import datetime, timezone
 
 DEFAULTS = {
-    "epoch_days": 7,          # length of a scoring period, for the weekly leaderboard
-    "early_weeks": 2,         # the first periods get a multiplier (the network is most fragile at the start)
+    "epoch_days": 1,          # length of a scoring period, for the leaderboard (the mainnet is expected soon after the start: days, not weeks)
+    "early_days": 3,          # the first days get a multiplier (the network is most fragile at the start)
     "early_mult": 1.25,
     "useful_mult": 1.5,       # a block that carried paid work counts more than a block of native work
-    "min_active_days": 7,     # distinct 24-hour windows with at least one block
+    "min_active_days": 3,     # distinct 24-hour windows with at least one block
     "min_share": 0.00005,     # of all the points (0.005 %): no dust
     "pool_pct": 5.0,          # informational: percentage of the mainnet supply set aside by the team (docs/19)
 }
@@ -82,7 +82,7 @@ def score(blocks, start_ts, p, registered=None, excluded=()):
         last_ts = max(last_ts, ts)
         ep = (ts - start_ts) // epoch_secs
         useful = b["work"] != "native"
-        pts = (p["useful_mult"] if useful else 1.0) * (p["early_mult"] if ep < p["early_weeks"] else 1.0)
+        pts = (p["useful_mult"] if useful else 1.0) * (p["early_mult"] if ts - start_ts < p["early_days"] * 86400 else 1.0)
         m = miners.setdefault(b["miner"], {"address": b["miner"], "blocks": 0, "useful_blocks": 0, "points": 0.0, "days": set(), "per_epoch": {}})
         m["blocks"] += 1
         m["useful_blocks"] += 1 if useful else 0

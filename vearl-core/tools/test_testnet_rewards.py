@@ -28,10 +28,10 @@ def week_of_blocks(miner, first_day, days, per_day=2, work="native"):
 
 class ScoreTests(unittest.TestCase):
     def test_points_early_multiplier_and_useful_blocks(self):
-        blocks = [block(1, START + 10, "a"), block(2, START + 20, "a", "job"), block(3, START + 3 * 7 * DAY + 5, "a")]
+        blocks = [block(1, START + 10, "a"), block(2, START + 20, "a", "job"), block(3, START + 4 * DAY + 5, "a")]
         r = tr.score(blocks, START, P)
         a = r["miners"][0]
-        # week 0: native 1 * 1.25, useful 1.5 * 1.25; week 3 (no longer early): 1
+        # first three days: native 1 * 1.25, useful 1.5 * 1.25; day 4 (no longer early): 1
         self.assertAlmostEqual(a["points"], 1.25 + 1.875 + 1.0)
         self.assertEqual((a["blocks"], a["useful_blocks"]), (3, 1))
 
@@ -45,6 +45,7 @@ class ScoreTests(unittest.TestCase):
         self.assertTrue(r["steady"]["eligible"])
         self.assertFalse(r["burst"]["eligible"])
         self.assertTrue(any("active days" in x for x in r["burst"]["reasons"]))
+        self.assertEqual(P["min_active_days"], 3)
         dust = week_of_blocks("whale", 0, 8, per_day=40000) + week_of_blocks("dust", 0, 8, per_day=1)
         r = {m["address"]: m for m in tr.score(dust, START, P)["miners"]}
         self.assertFalse(r["dust"]["eligible"])

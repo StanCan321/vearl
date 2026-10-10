@@ -27,7 +27,7 @@
       ['Miners', num(d.totals.miners)],
       ['Eligible so far', num(d.totals.eligible)],
       ['Last block', when(d.totals.last_block_time)],
-      ['Rules in use', 'at least ' + d.params.min_active_days + ' active days and ' + (d.params.min_share * 100).toFixed(3) + ' % of all points; a block counts 1 point, a block with paid work ' + d.params.useful_mult + ', and the first ' + d.params.early_weeks + ' weeks ×' + d.params.early_mult],
+      ['Rules in use', 'at least ' + d.params.min_active_days + ' active days and ' + (d.params.min_share * 100).toFixed(3) + ' % of all points; a block counts 1 point, a block with paid work ' + d.params.useful_mult + ', and the first ' + (d.params.early_days != null ? d.params.early_days + ' days' : d.params.early_weeks + ' weeks') + ' ×' + d.params.early_mult],
       ['Data hash', d.data_hash]
     ];
     rows.forEach(function (r) { box.appendChild(el('div', r[0], 'k')); var v = el('div', r[1], 'v'); if (r[0] === 'Data hash') v.className = 'v mono'; box.appendChild(v); });
