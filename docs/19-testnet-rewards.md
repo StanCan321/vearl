@@ -12,8 +12,8 @@ Mining Quantus with the optional add-on does not count; running the miner withou
 
 ## 2. The reward pool
 
-The team sets aside a fixed share of the mainnet supply for the testnet contributors. Intended size: **5 % of the supply** (never more than
-10 %), announced as a percentage before the testnet ends. The mainnet is expected soon after the start of the testnet, so the durations in this document (early period, active days) are counted in days; if the schedule changes, the team announces the new values before they apply. The pool is shared between the eligible addresses in proportion to their
+The team sets aside a fixed share of the mainnet supply for the testnet contributors. Planned size: **5 % of the mainnet supply**, announced as a
+percentage before the testnet ends. The mainnet is expected soon after the start of the testnet, so the durations in this document (early period, active days) are counted in days; if the schedule changes, the team announces the new values before they apply. The pool is shared between the eligible addresses in proportion to their
 points (section 3). The size of the pool does not depend on how many people take part.
 
 ## 3. How points are counted
