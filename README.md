@@ -51,6 +51,11 @@ More demos (inference, rendering, linear algebra, endurance, chain split and mer
 
 ## Run a miner or a node
 
+**Download:** ready-to-run Windows and Linux builds (miner, node, wallet, command-line tools) are attached to each
+[release](https://github.com/vearl-verified-compute/vearl/releases), with their SHA-256 checksums. You need an NVIDIA GPU of the Ampere
+generation or newer (RTX 30xx and later) and the NVIDIA driver; without a GPU the miner runs on the CPU, slowly. To build from source
+instead, see the section above.
+
 `vearl-miner` is the one program a miner opens: it creates a wallet, joins the testnet and mines Vearl with the whole GPU. An optional
 add-on lets the same GPU also mine Quantus (QTC); it is off unless you install it and say yes (`docs/15` section 4 bis, `docs/17`).
 Running a testnet from scratch (genesis, seed node, faucet, explorer) is in `docs/06`; pools are in `docs/16`.
