@@ -56,7 +56,7 @@ FAIL = 100_000_000
 
 # the import is split by part of the project; first matching group wins, leftovers go to the last commit
 GROUPS = [
-    ("Add license, notices and project documents", ("LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.md", "SECURITY.md", "CONTRIBUTING.md", "CHANGELOG.md", "CODE_OF_CONDUCT.md", "README.md", ".gitignore", ".gitattributes", ".editorconfig", ".github/")),
+    ("Add license, notices and project documents", ("LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.md", "SECURITY.md", "CONTRIBUTING.md", "CHANGELOG.md", "AUTHORS.md", "CODE_OF_CONDUCT.md", "README.md", ".gitignore", ".gitattributes", ".editorconfig", ".github/")),
     ("Import design, specification and threat model", ("docs/",)),
     ("Import the Rust core: consensus, market, network, wallet and miner", ("vearl-core/Cargo.toml", "vearl-core/Cargo.lock", "vearl-core/build.rs", "vearl-core/quantus-miner.pins", "vearl-core/src/")),
     ("Import the CUDA kernels", ("vearl-core/gpu/",)),
