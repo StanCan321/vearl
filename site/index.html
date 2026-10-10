@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vearl · Proof of Useful Work · Verified Compute</title>
+<meta name="description" content="Vearl is a Proof of Useful Work blockchain: GPU miners run real AI models and every answer is verified before anyone is paid. Public testnet: 23 October 2026.">
+<meta name="theme-color" content="#07080b">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Vearl">
+<meta property="og:title" content="Vearl · Bitcoin mines hashes. Vearl mines AI.">
+<meta property="og:description" content="Proof of Useful Work · Verified Compute">
+<link rel="canonical" href="https://vearl.org/">
+<meta property="og:url" content="https://vearl.org/">
+<meta property="og:image" content="https://vearl.org/og-image.png?v=3">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@vearl_org">
+<link rel="preload" href="/fonts/instrument-sans-normal-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/ibm-plex-mono-normal-500.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/instrument-serif-italic-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
+<link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav" id="nav">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="Vearl, back to top"><img src="/mark.svg" alt="" width="28" height="28">vearl</a>
+    <ul class="nav-links" id="menu">
+      <li><a href="#protocol">Protocol</a></li>
+      <li><a href="#workloads">Workloads</a></li>
+      <li><a href="#verification">Verification</a></li>
+      <li><a href="#security">Security</a></li>
+      <li><a href="#faq">FAQ</a></li>
+      <li><a href="/explorer/">Explorer</a></li>
+      <li><a href="/compute/">Compute</a></li>
+      <li><a href="/whitepaper">Whitepaper</a></li>
+    </ul>
+    <a class="status-pill" href="#status"><span class="dot"></span>Closed testnet</a>
+    <button class="burger" id="burger" aria-label="Open menu" aria-expanded="false" aria-controls="menu"><span></span><span></span><span></span></button>
+  </div>
+</header>
+
+<main id="main">
+<section class="hero" id="top">
+  <canvas id="pearl" aria-hidden="true"></canvas>
+  <div class="wrap hero-inner">
+    <div class="hero-copy">
+      <div class="eyebrow tagline-2"><span>Proof of Useful Work</span><span class="sep" aria-hidden="true"> · </span><span>Verified Compute</span></div>
+      <h1><span class="l1">Bitcoin mines hashes.</span> <span class="serif">Vearl mines AI.</span></h1>
+      <p class="lede">Vearl keeps the security of proof of work, but miners earn it by running AI models for real clients. Every answer is proven correct before anyone gets paid.</p>
+      <div class="ctas">
+        <a class="btn primary" href="#protocol">How it works <span class="arr">→</span></a>
+        <a class="btn" href="#workloads">See the numbers</a>
+      </div>
+      <p class="hero-note">Closed testnet today · public testnet planned 23 October 2026</p>
+      <div class="meta"><span class="founder">Doxxed founder · Clovis Anicet</span><span>Rust</span><span>CUDA</span><span>NIST FIPS 205</span></div>
+    </div>
+    <div class="hero-side">
+    <div class="scene-slot" id="scene" aria-hidden="true"></div>
+    <aside class="feed" aria-label="Replay of a recorded testnet run">
+      <div class="feed-head">
+        <span class="feed-title">Testnet replay</span>
+        <span class="feed-sub">recorded run · NVIDIA A10</span>
+      </div>
+      <ol class="feed-list" id="feed"></ol>
+      <div class="feed-foot"><span><b>72/72</b> photos bit-exact</span><span><b>8/8</b> stories bit-exact</span><span><b>0</b> unverified results</span></div>
+    </aside>
+    </div>
+  </div>
+  <div class="ticker" aria-label="Figures measured on the testnet">
+    <div class="ticker-track" id="ticker"></div>
+  </div>
+</section>
+
+<section class="statement" aria-label="Why Vearl">
+  <div class="wrap">
+    <p class="statement-text reveal">Bitcoin's network draws as much power as a mid&#8209;sized country, to compute hashes that nobody will ever read. <span class="serif">Vearl points that power at work people actually need.</span></p>
+    <div class="pillars reveal d1">
+      <div><span class="k">Mining power</span><span class="v">runs AI models</span></div>
+      <div><span class="k">Every answer</span><span class="v">is proven before payment</span></div>
+      <div><span class="k">A cheating miner</span><span class="v">loses its bond</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="demo" aria-label="Vearl in 30 seconds">
+  <div class="wrap">
+    <figure class="demo-frame reveal">
+      <video id="demo" class="demo-video" muted loop playsinline preload="none" width="1280" height="720" poster="/assets/video/vearl-demo-poster-v1.jpg" data-src="/assets/video/vearl-demo-v1.mp4" tabindex="0" aria-label="Vearl in 30 seconds, a silent film. Press to pause or resume."></video>
+      <figcaption><b>Vearl in 30 seconds.</b> A silent film; click or tap to pause. The 3D scenes in it are illustrations (the testnet's rendering kernel draws simpler scenes today). The Monte Carlo sample is real kernel output.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="section" id="protocol">
+  <div class="wrap">
+    <div class="head reveal">
+      <div>
+        <div class="eyebrow"><span class="n">01</span>Protocol</div>
+        <h2>Same hardware, same energy. <span class="serif">A result at the end.</span></h2>
+      </div>
+      <p>In a classic proof of work, miners compute billions of hashes whose only purpose is to be hard to find. Vearl keeps the security model and changes what gets computed: every block is mined from a matrix product, and that product can belong to a paying client.</p>
+    </div>
+    <div class="flow reveal d1">
+      <div class="lane old">
+        <div class="lane-title">Classic proof of work<strong>Bitcoin-style mining</strong></div>
+        <div class="chain">
+          <div class="node"><small>Input</small>Electricity</div><div class="wire"></div>
+          <div class="node"><small>Work</small>SHA-256 hashes</div><div class="wire w2"></div>
+          <div class="node"><small>Output</small>Block</div>
+        </div>
+        <div class="outcome"><span class="mark">×</span>The hashes are thrown away once the block is found.</div>
+      </div>
+      <div class="lane new">
+        <div class="lane-title">Vearl<strong>Proof of Useful Work<span class="sub">Verified Compute</span></strong></div>
+        <div class="chain">
+          <div class="node"><small>Input</small>Electricity</div><div class="wire"></div>
+          <div class="node key"><small>Work</small>int8 matrix product</div><div class="wire w2"></div>
+          <div class="node"><small>Output</small>Block</div><div class="wire w3"></div>
+          <div class="node key"><small>Output</small>Client result</div>
+        </div>
+        <div class="outcome"><span class="mark">✓</span>The same computation secures the chain and answers a client, who checks it before paying.</div>
+      </div>
+    </div>
+    <p class="flow-note reveal d2">Integer arithmetic is deliberate: every node reproduces a result bit for bit, which is what makes cheap verification and one-operation fraud proofs possible.</p>
+  </div>
+</section>
+
+<section class="section tint" id="workloads">
+  <div class="wrap">
+    <div class="head reveal">
+      <div>
+        <div class="eyebrow"><span class="n">02</span>Workloads</div>
+        <h2>Running on the testnet <span class="serif">today.</span></h2>
+      </div>
+      <p>Every figure below was measured on the testnet, on a single NVIDIA A10 GPU, with each result checked before payment. Nothing here is a projection.</p>
+    </div>
+    <table class="table reveal d1">
+      <thead><tr><th>Workload</th><th>Model</th><th>Size</th><th>Measured</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="w"><span class="idx">A</span>Text generation</td>
+          <td data-k="Model">TinyStories-33M language model, 4 layers, 50,257-word vocabulary</td>
+          <td class="m" data-k="Size">307 ops · 2 jobs per word</td>
+          <td class="r" data-k="Measured">Writes stories word by word: <b>8 stories in parallel</b>, ≈ 18 s per word, 92.9% same next word as the original model</td>
+        </tr>
+        <tr>
+          <td class="w"><span class="idx">B</span>Photo recognition</td>
+          <td data-k="Model">DeiT-Tiny vision transformer, 224 × 224 photos, 1,000 ImageNet classes</td>
+          <td class="m" data-k="Size">386 ops · 2 chained jobs</td>
+          <td class="r" data-k="Measured"><b>≈ 1.7 s</b> per photo, 70.6% top-1 on photos never seen in training (original model: 78.2%)</td>
+        </tr>
+        <tr>
+          <td class="w"><span class="idx">C</span>Semantic search embeddings</td>
+          <td data-k="Model">BGE-base, 12 layers, 110 million parameters</td>
+          <td class="m" data-k="Size">492 ops · 3 chained jobs</td>
+          <td class="r" data-k="Measured"><b>≈ 3.3 s</b> per text, 96.7% of the original model's score on STS-B (0.836 vs 0.864)</td>
+        </tr>
+        <tr>
+          <td class="w"><span class="idx">D</span>Fast sentence embeddings</td>
+          <td data-k="Model">all-MiniLM-L6-v2, 6 layers, 12 attention heads</td>
+          <td class="m" data-k="Size">195 ops · 61 GEMMs</td>
+          <td class="r" data-k="Measured"><b>≈ 1.0 s</b> per text, cosine similarity 0.92 with the original model</td>
+        </tr>
+        <tr>
+          <td class="w"><span class="idx">E</span>Small-image classification</td>
+          <td data-k="Model">ResNet-20 on CIFAR-10</td>
+          <td class="m" data-k="Size">76 ops · 22 GEMMs</td>
+          <td class="r" data-k="Measured"><b>88.6%</b> top-1 accuracy, 32 images in 41 s</td>
+        </tr>
+        <tr>
+          <td class="w"><span class="idx">F</span>Matrix multiplication</td>
+          <td data-k="Model">Tiled int8 GEMM</td>
+          <td class="m" data-k="Size">8192 × 8192 × 8192</td>
+          <td class="r" data-k="Measured"><b>1.1 trillion</b> operations, verified end to end in about 11 s</td>
+        </tr>
+        <tr>
+          <td class="w"><span class="idx">G</span>Handwritten digits</td>
+          <td data-k="Model">MLP and CNN on MNIST</td>
+          <td class="m" data-k="Size">10,000 test images</td>
+          <td class="r" data-k="Measured"><b>98.1%</b> top-1 accuracy in int8</td>
+        </tr>
+        <tr>
+          <td class="w"><span class="idx">H</span>Bulk embeddings</td>
+          <td data-k="Model">Distilled text encoder</td>
+          <td class="m" data-k="Size">20,480 texts</td>
+          <td class="r" data-k="Measured">Outputs <b>bit-identical</b> to an independent reference engine</td>
+        </tr>
+        <tr>
+          <td class="w"><span class="idx">I</span>Your own model</td>
+          <td data-k="Model">PyTorch or ONNX import</td>
+          <td class="m" data-k="Size">240 ops per job, chainable</td>
+          <td class="r" data-k="Measured">Convolutions, attention, LayerNorm, softmax, GELU, residual blocks</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="table-foot reveal d2">Models are quantized to 8-bit integers so that every node computes exactly the same bits. Accuracy figures compare the integer model with its original floating-point version on held-out data. <b>These models are a first generation: they will be considerably improved</b>, with larger and more accurate models, faster jobs and longer texts.</p>
+    <figure class="showcase reveal d2">
+      <img src="/assets/art/flower-1920.jpg" srcset="/assets/art/flower-960.jpg 960w, /assets/art/flower-1920.jpg 1920w" sizes="(max-width: 1248px) 100vw, 1200px" width="1920" height="1080" loading="lazy" decoding="async" alt="A ceramic vase of pastel flowers, rendered in 3D, with the words Beautiful by the batch">
+      <figcaption><b>Beyond AI: 3D rendering and simulation.</b> Frames are split into small tiles rendered by GPU miners, and the client re-computes tiles at random to check them. Illustration: the rendering kernel of the testnet draws simpler scenes today.</figcaption>
+    </figure>
+    <figure class="showcase reveal d2">
+      <img src="/assets/art/gallery-1920.jpg" srcset="/assets/art/gallery-960.jpg 960w, /assets/art/gallery-1920.jpg 1920w" sizes="(max-width: 1248px) 100vw, 1200px" width="1920" height="1080" loading="lazy" decoding="async" alt="Twelve 3D renders: a perfume bottle, a watch, a cocktail, a chess set, a knight, crystals, a floating island, a starship, a coffee cup, a mushroom diorama, headphones and a game controller">
+      <figcaption><b>Products, games, worlds.</b> Twelve scenes of the kind a studio could send to the network: packshots, game characters and environments. Illustration: rendered with our own path tracer on a single GPU, not yet by the testnet kernel.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="section" id="verification">
+  <div class="wrap">
+    <div class="head reveal">
+      <div>
+        <div class="eyebrow"><span class="n">03</span>Verification</div>
+        <h2>Nobody trusts the miner. <span class="serif">Anyone can check.</span></h2>
+      </div>
+      <p>Redoing a computation costs as much as the computation itself. Freivalds' test checks a matrix product with a few matrix-vector products instead, and a single wrong entry is enough to prove fraud.</p>
+    </div>
+    <div class="verify">
+      <ol class="steps reveal" id="steps">
+        <li><h3>The client submits a job</h3><p>The input and the Merkle roots of the model weights go on chain, together with an escrow that will pay the miner.</p></li>
+        <li><h3>A miner runs it on a GPU</h3><p>It executes every operation, publishes a commitment to each result, and mines blocks from those same matrix products.</p></li>
+        <li><h3>The client verifies</h3><p>Freivalds' test for every matrix product, exact recomputation for everything else. Seconds, not the cost of the original job.</p></li>
+        <li><h3>Payment or penalty</h3><p>All correct: the escrow is released. One wrong operation: a fraud proof covering that operation alone is enough, and the miner loses its bond.</p></li>
+      </ol>
+      <div class="reveal d1">
+        <div class="console" aria-hidden="true">
+          <div class="console-bar"><i></i><i></i><i></i><span>verifier · freivalds</span></div>
+          <pre id="gemm"></pre>
+          <div class="log" id="vlog"></div>
+        </div>
+        <p class="verify-note">Live illustration on 6 × 6 matrices. One job in three, the miner alters a single cell.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section tint" id="security">
+  <div class="wrap">
+    <div class="head reveal">
+      <div>
+        <div class="eyebrow"><span class="n">04</span>Security</div>
+        <h2>Standard cryptography, <span class="serif">independently cross&#8209;checked.</span></h2>
+      </div>
+      <p>No homemade primitives. Each component follows a public standard or a well-known reference, and is tested against a second implementation written separately from the specification.</p>
+    </div>
+    <div class="spec reveal d1">
+      <div class="spec-row"><div class="spec-k">Signatures</div><div class="spec-v"><h3>Post-quantum accounts</h3><p>SLH-DSA-SHAKE-128s (NIST FIPS 205) alongside Ed25519, checked against an independent implementation of the standard.</p></div><div class="spec-t"><span class="tag ok">Live on testnet</span></div></div>
+      <div class="spec-row"><div class="spec-k">Difficulty</div><div class="spec-v"><h3>ASERT (aserti3-2d)</h3><p>Continuous difficulty adjustment, validated against the 29 official reference vectors.</p></div><div class="spec-t"><span class="tag ok">Live on testnet</span></div></div>
+      <div class="spec-row"><div class="spec-k">Reorganizations</div><div class="spec-v"><h3>Atomic reorgs, optional MESS</h3><p>State snapshots with exact rollback, plus an optional brake on deep reorganizations using ECIP&#8209;1100 parameters.</p></div><div class="spec-t"><span class="tag ok">Live on testnet</span></div></div>
+      <div class="spec-row"><div class="spec-k">Light clients</div><div class="spec-v"><h3>Header, tile and balance proofs</h3><p>Verify the chain and an account balance without downloading blocks or job data.</p></div><div class="spec-t"><span class="tag ok">Live on testnet</span></div></div>
+      <div class="spec-row"><div class="spec-k">Peer transport</div><div class="spec-v"><h3>Noise XX over X25519</h3><p>Encrypted and authenticated, but still classical. A post-quantum handshake is not implemented yet.</p></div><div class="spec-t"><span class="tag warn">Open item</span></div></div>
+      <div class="spec-row"><div class="spec-k">Review</div><div class="spec-v"><h3>External security audit</h3><p>17 independent checks and differential fuzzers run on every change. No third-party audit has been done yet.</p></div><div class="spec-t"><span class="tag plan">Planned</span></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="status">
+  <div class="wrap">
+    <div class="head reveal">
+      <div>
+        <div class="eyebrow"><span class="n">05</span>Status</div>
+        <h2>Where the project <span class="serif">stands.</span></h2>
+      </div>
+      <p>Vearl is in development and runs as a closed testnet. Testnet tokens have no value. We publish what works, with measurements, and what does not work yet.</p>
+    </div>
+    <div class="stats reveal d1">
+      <div class="stat"><div class="v">171</div><p>automated tests, all passing</p></div>
+      <div class="stat"><div class="v">17/17</div><p>independent checks in the internal audit suite</p></div>
+      <div class="stat"><div class="v">483</div><p>conformance blocks shared between implementations</p></div>
+      <div class="stat"><div class="v zero">0</div><p>external audits so far</p></div>
+    </div>
+    <ol class="road reveal d2">
+      <li class="done"><div class="when">Done</div><h3>Closed testnet</h3><p>Chain, compute market, verified inference and embeddings, measured on rented GPU servers.</p></li>
+      <li class="now"><div class="when">23 October 2026</div><h3>Public testnet</h3><p>Multiple machines, external miners and a block explorer. Miners who help secure it are planned to receive Vearl tokens on mainnet.</p></li>
+      <li><div class="when">Next</div><h3>External audit</h3><p>Third-party review of the cryptography, the consensus rules and the fraud proofs.</p></li>
+      <li><div class="when">Research</div><h3>Considerably better models</h3><p>Larger and more accurate models: per-channel quantization, several sequences per job, an on-chain model registry.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section class="section tint" id="faq">
+  <div class="wrap">
+    <div class="head reveal">
+      <div>
+        <div class="eyebrow"><span class="n">06</span>FAQ</div>
+        <h2>Straight <span class="serif">answers.</span></h2>
+      </div>
+      <p>The questions people ask first, answered without marketing.</p>
+    </div>
+    <div class="faq reveal d1">
+      <details>
+        <summary>Is Vearl live?<span class="pm"></span></summary>
+        <div class="a"><p>Vearl has run as a closed testnet, measured on rented GPU servers (no public node is online yet). The next milestone is a public testnet that external miners and developers can join, planned for 23 October 2026. Miners who help secure the public testnet are planned to receive Vearl tokens on mainnet as a thank-you. This is a plan, not a guarantee: the rules and amounts will be announced, and there is no mainnet date yet. Testnet tokens themselves still have no value.</p></div>
+      </details>
+      <details>
+        <summary>Who is behind Vearl?<span class="pm"></span></summary>
+        <div class="a"><p>Vearl is created by its founder, Clovis Anicet, who is publicly identified (doxxed): the project is not anonymous. Vearl is a separate project with its own code: it is not an official Pearl project and Pearl has not endorsed it. You can write to <span class="mail" data-u="contact" data-d="vearl.org">contact [at] vearl.org</span>. A name alone proves nothing, so the site also publishes the measurements, the limits and what is not solved yet, which anyone can check.</p></div>
+      </details>
+      <details>
+        <summary>Do testnet tokens have any value?<span class="pm"></span></summary>
+        <div class="a"><p>No. Testnet tokens exist only for testing. They have no monetary value and are not for sale.</p></div>
+      </details>
+      <details>
+        <summary>What hardware do I need to mine?<span class="pm"></span></summary>
+        <div class="a"><p>GPU mining needs an NVIDIA card with compute capability 8.0 or newer: Ampere and later, for example the RTX 30 and 40 series, A10, A100 or H100. Older cards are refused by the node. CPU mining works for testing.</p></div>
+      </details>
+      <details>
+        <summary>How is this different from Bitcoin?<span class="pm"></span></summary>
+        <div class="a"><p>The security principle is the same: producing a block costs real computation. What changes is the computation itself. Bitcoin miners compute SHA-256 hashes; Vearl miners compute integer matrix products, which can carry useful work for clients.</p></div>
+      </details>
+      <details>
+        <summary>Can it run large language models?<span class="pm"></span></summary>
+        <div class="a"><p>Small ones, not large ones. The testnet runs a 33-million-parameter language model (TinyStories) that writes short stories word by word, every step verified before payment, and a 110-million-parameter text encoder. A job holds up to 240 operations on 1024 × 1024 tensors and jobs chain together, which reaches models of roughly a hundred million parameters. Models with billions of parameters are out of reach today, and text is limited to 64 tokens.</p></div>
+      </details>
+      <details>
+        <summary>Has the code been audited?<span class="pm"></span></summary>
+        <div class="a"><p>Not by a third party yet. Internally, 17 independent checks and differential fuzzers compare the Rust node with separate Python implementations written from the specification, on every change.</p></div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section class="section closing">
+  <canvas id="drops" aria-hidden="true"></canvas>
+  <div class="wrap reveal">
+    <div class="eyebrow">Public testnet · 23 October 2026</div>
+    <h2>Your GPU could be doing <span class="serif">something useful.</span></h2>
+    <p>The public testnet will open to miners and developers first. Miners who help secure the network are planned to receive Vearl tokens on mainnet as a thank-you. Everything it does is documented above, with the numbers behind it.</p>
+    <div class="ctas">
+      <a class="btn primary" href="#workloads">See the workloads <span class="arr">→</span></a>
+      <a class="btn" href="/whitepaper">Read the whitepaper</a>
+      <a class="btn" href="#faq">Read the FAQ</a>
+      <a class="btn" href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Join the Discord</a>
+      <a class="btn" href="https://x.com/vearl_org" target="_blank" rel="noopener">Follow on X</a>
+    </div>
+    <p class="contact-line">Questions, press or partnerships: <span class="mail" data-u="contact" data-d="vearl.org">contact [at] vearl.org</span></p>
+  </div>
+</section>
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer-top">
+      <div>
+        <a class="brand" href="#top"><img src="/mark.svg" alt="" width="28" height="28">vearl</a>
+        <div class="tagline">Proof of Useful Work · Verified Compute</div>
+      </div>
+      <div>
+        <h3>Protocol</h3>
+        <ul><li><a href="#protocol">How it works</a></li><li><a href="#workloads">Workloads</a></li><li><a href="#verification">Verification</a></li><li><a href="/explorer/">Explorer</a></li><li><a href="/compute/">Create a job</a></li><li><a href="/whitepaper">Whitepaper</a></li></ul>
+      </div>
+      <div>
+        <h3>Project</h3>
+        <ul><li><a href="#security">Security</a></li><li><a href="#status">Status</a></li><li><a href="#faq">FAQ</a></li><li><a href="/credits">Photo credits</a></li><li><a href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Discord</a></li><li><a href="https://x.com/vearl_org" target="_blank" rel="noopener">X</a></li><li><span class="mail" data-u="contact" data-d="vearl.org" data-label="Contact">contact [at] vearl.org</span></li></ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026 Vearl · Founder: Clovis Anicet</span>
+      <span class="legal">Testnet software. Testnet tokens have no value and are not for sale. The code has not been audited by a third party. Nothing on this site is investment advice.</span>
+    </div>
+  </div>
+</footer>
+
+<script src="/assets/photos.js" defer></script>
+<script src="/assets/site.js" defer></script>
+</body>
+</html>

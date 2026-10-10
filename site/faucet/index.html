@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vearl Faucet · Free test tokens for the testnet</title>
+<meta name="description" content="Get free Vearl testnet tokens to try the network. They have no value and are not for sale.">
+<meta name="theme-color" content="#07080b">
+<meta name="color-scheme" content="dark">
+<meta name="vearl-faucet" content="/drip">
+<meta name="vearl-explorer" content="/explorer/">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="canonical" href="https://vearl.org/faucet/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Vearl">
+<meta property="og:title" content="Vearl Faucet">
+<meta property="og:description" content="Free test tokens for the Vearl testnet.">
+<meta property="og:image" content="https://vearl.org/og-image.png?v=3">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@vearl_org">
+<link rel="preload" href="/fonts/instrument-sans-normal-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/ibm-plex-mono-normal-500.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/instrument-serif-italic-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="stylesheet" href="/assets/explorer.css">
+<link rel="stylesheet" href="/assets/compute.css">
+</head>
+<body class="xp cp">
+<a class="skip" href="#app">Skip to content</a>
+
+<header class="nav solid" id="nav">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="Vearl, home"><img src="/mark.svg" alt="" width="28" height="28">vearl<span class="x-sub">faucet</span></a>
+    <ul class="nav-links" id="menu">
+      <li><a href="/faucet/" aria-current="page">Faucet</a></li>
+      <li><a href="/explorer/" data-ext="explorer">Explorer</a></li>
+      <li><a href="/whitepaper">Whitepaper</a></li>
+      <li><a href="/">vearl.org</a></li>
+    </ul>
+    <button class="burger" id="burger" aria-label="Open menu" aria-expanded="false" aria-controls="menu"><span></span><span></span><span></span></button>
+  </div>
+</header>
+
+<main class="x-main" id="app" tabindex="-1">
+  <section class="x-hero cp-hero"><div class="wrap">
+    <div class="eyebrow">Vearl testnet</div>
+    <h1>Free test tokens. <span class="serif">To try the network, not to keep.</span></h1>
+    <p class="lede">Paste the address of your testnet wallet and receive test tokens to pay fees and create jobs. They have no value, are not for sale and may disappear when the testnet is reset.</p>
+  </div></section>
+
+  <div class="wrap">
+    <div class="studio">
+      <form id="form" novalidate>
+        <div class="panel" aria-label="Request tokens">
+          <div class="form">
+            <div class="field">
+              <label for="addr">Your address</label>
+              <div class="row"><input type="text" id="addr" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="vrl1…" aria-describedby="hint"></div>
+              <div class="hint" id="hint">Create a wallet with <span class="mono">vearl-wallet new</span>: the address starts with <span class="mono">vrl1</span>. The faucet never asks for your keys or your 24 words.</div>
+            </div>
+          </div>
+          <div class="submit">
+            <div class="formerr" id="err" role="alert"></div>
+            <button class="btn primary" type="submit" id="go">Get test tokens</button>
+            <p class="fine" id="limits">One request per address and per visitor each hour, and a daily cap for everybody.</p>
+          </div>
+        </div>
+      </form>
+      <div>
+        <section class="panel" id="result-panel" hidden>
+          <div class="panel-head"><h2>Sent</h2></div>
+          <div class="panel-body"><div class="kv" id="result"></div></div>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>Next steps</h2></div>
+          <div class="panel-body">
+            <ol class="steps">
+              <li>The tokens arrive with the next block, about 30 seconds.</li>
+              <li>Look at your balance in the <a class="lnk" href="/explorer/" data-ext="explorer">explorer</a>.</li>
+              <li>Run a miner or a worker: see the miner guide in the project’s repository (docs/15).</li>
+            </ol>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+  <noscript><div class="wrap"><div class="state"><h2>JavaScript is <span class="serif">required</span></h2><p>The faucet form sends your address to the Vearl faucet from your browser. Nothing is sent to third parties.</p></div></div></noscript>
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer-top">
+      <div>
+        <a class="brand" href="/"><img src="/mark.svg" alt="" width="28" height="28">vearl</a>
+        <div class="tagline">Proof of Useful Work · Verified Compute</div>
+      </div>
+      <div>
+        <h3>Testnet</h3>
+        <ul><li><a href="/faucet/">Faucet</a></li><li><a href="/explorer/" data-ext="explorer">Explorer</a></li><li><a href="/whitepaper">Whitepaper</a></li></ul>
+      </div>
+      <div>
+        <h3>Vearl</h3>
+        <ul><li><a href="/">Website</a></li><li><a href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Discord</a></li><li><a href="https://x.com/vearl_org" target="_blank" rel="noopener">X</a></li></ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div class="legal">Testnet. Tokens have no value and are not for sale. The code has not been audited by a third party, and the network can be reset. Nothing here is investment advice.</div>
+      <div>© Vearl</div>
+    </div>
+  </div>
+</footer>
+
+<script src="/assets/faucet.js"></script>
+</body>
+</html>

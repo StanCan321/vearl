@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://vearl.org/sitemap.xml

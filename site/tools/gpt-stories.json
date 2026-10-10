@@ -1,0 +1,47 @@
+{
+ "model": "TinyStories-33M-int8",
+ "prompts": [
+  "Once upon a time, there was a little cat named Tom.",
+  "Lily and Ben went to the park to play.",
+  "One day, a small bird found a shiny key.",
+  "Sam wanted to build a big tower with his blocks.",
+  "The sun was hot, so Mia and her mom went to the beach.",
+  "There was a friendly dragon who lived in a cave.",
+  "Tim had a red ball. He loved to",
+  "Anna saw a sad puppy in the rain."
+ ],
+ "chain": [
+  "Once upon a time, there was a little cat named Tom. Tom was a very curious cat. He liked to explore and find new things. One day, Tom found a big, red ball. He was so happy!\n\nTom wanted to play with the",
+  "Lily and Ben went to the park to play. They saw a big slide and a swing. They wanted to try them.\n\n\"Can I go first?\" Lily asked.\n\n\"OK, but be careful,\" Ben said.\n\n",
+  "One day, a small bird found a shiny key. The bird was very happy and wanted to show it to his friends. He flew to the big tree and hid the key in a hole. The bird was very excited to show his friends the key.",
+  "Sam wanted to build a big tower with his blocks. He put one block on top of another, and then another, and another. He was very careful not to make the tower fall. He wanted to make it very high and very long.\n\n",
+  "The sun was hot, so Mia and her mom went to the beach. Mia was so excited to play in the sand and swim in the water.\n\nMia and her mom had a great day at the beach. They built sandcastles, played in the sand",
+  "There was a friendly dragon who lived in a cave. He was very kind and he liked to help people. One day, he was walking through the forest when he saw a little girl. She was crying and she was very sad.\n\nThe dragon",
+  "Tim had a red ball. He loved to play with it every day. One day, he saw a big dog. The dog was not nice. Tim was scared.\n\nTim wanted to be brave. He took his red ball and went",
+  "Anna saw a sad puppy in the rain. She asked her mom, \"Why is the puppy so sad?\" Her mom said, \"The puppy is lost and needs help finding his way home.\"\n\nAnna wanted to help the puppy. She"
+ ],
+ "float": [
+  "Once upon a time, there was a little cat named Tom. Tom was a very curious cat. He liked to explore and find new things. One day, Tom saw a big, red ball. He wanted to play with it.\n\nTom went to the",
+  "Lily and Ben went to the park to play. They saw a big slide and ran to it. Lily went first and slid down fast. She laughed and said, \"That was fun!\"\n\nBen wanted to try too, but he was scared",
+  "One day, a small bird found a shiny key. The bird was very happy. It wanted to use the key to open a secret door. The bird flew around and found a small hole in a tree. The bird put the key in the hole and",
+  "Sam wanted to build a big tower with his blocks. He put one block on top of another, and another, and another. He was very careful not to make the tower fall. He wanted to make it very high and strong.\n\nBut then",
+  "The sun was hot, so Mia and her mom went to the beach. Mia was so excited to play in the sand and swim in the water.\n\nMia's mom said, \"Let's go for a swim!\" Mia was so happy and she ran to the",
+  "There was a friendly dragon who lived in a cave. He was very kind and always helped the people who lived there. One day, a little girl named Lily came to the cave. She was lost and scared. The dragon saw her and said, \"",
+  "Tim had a red ball. He loved to play with his ball every day. One day, Tim saw a big tree with a hole in it. He thought, \"I want to see what is inside the hole.\"\n\nTim went to",
+  "Anna saw a sad puppy in the rain. She felt sorry for the puppy and wanted to help. She ran to the puppy and gave it a big hug. The puppy was so happy and licked Anna's face.\n\nAnna was so"
+ ],
+ "seconds": 730.0950050354004,
+ "steps": 40,
+ "tokens": 320,
+ "exact_last_step": 8,
+ "same_prefix_tokens": [
+  68,
+  320
+ ],
+ "report": {
+  "ppl_int": 2.4242146128992035,
+  "ppl_float": 2.3673700919849314,
+  "top1": 0.9294365246396379,
+  "positions": 25183
+ }
+}

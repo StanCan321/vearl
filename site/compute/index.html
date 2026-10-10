@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vearl Compute · Create a verified compute job, free on the testnet</title>
+<meta name="description" content="Create a compute job on the Vearl testnet (a 3D render or a Monte Carlo estimate), have a miner compute it, and get a result that was audited. Free while the network is a testnet.">
+<meta name="theme-color" content="#07080b">
+<meta name="color-scheme" content="dark">
+<meta name="vearl-gw" content="/gw">
+<meta name="vearl-explorer" content="/explorer/">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="canonical" href="https://vearl.org/compute/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Vearl">
+<meta property="og:title" content="Vearl Compute">
+<meta property="og:description" content="Create a verified compute job in a minute. Free on the testnet.">
+<meta property="og:image" content="https://vearl.org/og-image.png?v=3">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@vearl_org">
+<link rel="preload" href="/fonts/instrument-sans-normal-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/ibm-plex-mono-normal-500.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/instrument-serif-italic-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="stylesheet" href="/assets/explorer.css">
+<link rel="stylesheet" href="/assets/compute.css">
+</head>
+<body class="xp cp">
+<a class="skip" href="#app">Skip to content</a>
+
+<header class="nav solid" id="nav">
+  <div class="wrap">
+    <a class="brand" href="#/" aria-label="Vearl Compute, create a job"><img src="/mark.svg" alt="" width="28" height="28">vearl<span class="x-sub">compute</span></a>
+    <ul class="nav-links" id="menu">
+      <li><a href="#/" data-nav="home">Create</a></li>
+      <li><a href="#/mine" data-nav="mine">My jobs</a></li>
+      <li><a href="#/how" data-nav="how">How it works</a></li>
+      <li><a href="/explorer/" data-ext="explorer">Explorer</a></li>
+      <li><a href="/">vearl.org</a></li>
+    </ul>
+    <span class="status-pill warn" id="pill" role="status" aria-live="polite"><span class="dot"></span><span id="pill-text">Connecting</span></span>
+    <button class="burger" id="burger" aria-label="Open menu" aria-expanded="false" aria-controls="menu"><span></span><span></span><span></span></button>
+  </div>
+</header>
+
+<div class="banner" id="banner" role="alert"><div class="wrap" id="banner-text"></div></div>
+
+<main class="x-main" id="app" tabindex="-1">
+  <div class="wrap loading"><span class="skel"></span><span class="skel"></span><span class="skel"></span></div>
+  <noscript><div class="wrap"><div class="state"><h2>JavaScript is <span class="serif">required</span></h2><p>The job form talks to the Vearl job service from your browser. Nothing is sent to third parties.</p></div></div></noscript>
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer-top">
+      <div>
+        <a class="brand" href="/"><img src="/mark.svg" alt="" width="28" height="28">vearl</a>
+        <div class="tagline">Proof of Useful Work · Verified Compute</div>
+      </div>
+      <div>
+        <h3>Compute</h3>
+        <ul><li><a href="#/">Create a job</a></li><li><a href="#/mine">My jobs</a></li><li><a href="#/how">How it works</a></li></ul>
+      </div>
+      <div>
+        <h3>Vearl</h3>
+        <ul><li><a href="/">Website</a></li><li><a href="/explorer/" data-ext="explorer">Explorer</a></li><li><a href="/whitepaper">Whitepaper</a></li><li><a href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Discord</a></li><li><a href="https://x.com/vearl_org" target="_blank" rel="noopener">X</a></li></ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div class="legal">Testnet. Jobs are paid with testnet tokens that have no value and are not for sale. The code has not been audited by a third party. Renders and the π estimate are audited by sampling; the other jobs are checked exactly, but a model’s answer can still be wrong. Nothing here is investment advice.</div>
+      <div>© Vearl</div>
+    </div>
+  </div>
+</footer>
+
+<script src="/assets/photos.js"></script>
+<script src="/assets/compute.js"></script>
+</body>
+</html>

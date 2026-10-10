@@ -1,0 +1,792 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Whitepaper · Vearl Proof of Useful Work</title>
+<meta name="description" content="The Vearl whitepaper: consensus rules, compute market, verification, cryptography, and an honest list of what is not solved yet.">
+<meta name="theme-color" content="#07080b">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Vearl">
+<meta property="og:title" content="Vearl whitepaper">
+<meta property="og:description" content="Proof of Useful Work, Verified Compute: the full protocol, the consensus rules and the security analysis, with measured results.">
+<link rel="canonical" href="https://vearl.org/whitepaper">
+<meta property="og:url" content="https://vearl.org/whitepaper">
+<meta property="og:image" content="https://vearl.org/og-image.png?v=3">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@vearl_org">
+<link rel="preload" href="/fonts/instrument-sans-normal-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/ibm-plex-mono-normal-500.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="stylesheet" href="/assets/whitepaper.css">
+</head>
+<body>
+<a class="skip" href="#paper">Skip to the paper</a>
+
+<header class="nav paper-nav" id="nav">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="Vearl, home"><img src="/mark.svg" alt="" width="28" height="28">vearl</a>
+    <ul class="nav-links" id="menu">
+      <li><a href="#work">Proof of work</a></li>
+      <li><a href="#chain">Consensus</a></li>
+      <li><a href="#market">Market</a></li>
+      <li><a href="#verification">Verification</a></li>
+      <li><a href="#threats">Security</a></li>
+      <li><a href="/">Home</a></li>
+    </ul>
+    <a class="status-pill" href="#roadmap"><span class="dot"></span>Closed testnet</a>
+    <button class="burger" id="burger" aria-label="Open menu" aria-expanded="false" aria-controls="menu"><span></span><span></span><span></span></button>
+  </div>
+</header>
+
+<header class="cover">
+  <div class="wrap">
+    <div class="eyebrow">Whitepaper · Draft 0.1</div>
+    <h1>Proof of work that <span class="serif">does the work.</span></h1>
+    <p class="lede">Vearl secures a blockchain with the same GPU computation that answers a client's AI request. This paper describes the protocol, the consensus rules, the compute market, how results are verified, the cryptography, and what is still unsolved.</p>
+    <div class="cover-meta">
+      <span>30 September 2026</span>
+      <span>Testnet specification</span>
+      <span class="hot">Not audited</span>
+      <span class="hot">Testnet tokens have no value</span>
+    </div>
+  </div>
+</header>
+
+<main class="paper-wrap" id="paper">
+<div class="wrap paper-grid">
+
+<details class="toc" id="toc" open>
+  <summary>Contents</summary>
+  <nav aria-label="Contents">
+  <ol>
+    <li><a href="#abstract"><span class="n">00</span>Abstract</a></li>
+    <li><a href="#introduction"><span class="n">01</span>Introduction</a></li>
+    <li><a href="#overview"><span class="n">02</span>System overview</a></li>
+    <li><a href="#work"><span class="n">03</span>The proof of work</a></li>
+    <li><a href="#chain"><span class="n">04</span>Chain consensus</a></li>
+    <li><a href="#market"><span class="n">05</span>The compute market</a></li>
+    <li><a href="#verification"><span class="n">06</span>Verifying computation</a></li>
+    <li><a href="#workloads"><span class="n">07</span>Verified AI workloads</a></li>
+    <li><a href="#crypto"><span class="n">08</span>Cryptography</a></li>
+    <li><a href="#network"><span class="n">09</span>Network</a></li>
+    <li><a href="#economics"><span class="n">10</span>Economics</a></li>
+    <li><a href="#threats"><span class="n">11</span>Security analysis</a></li>
+    <li><a href="#implementation"><span class="n">12</span>Implementation and evidence</a></li>
+    <li><a href="#limits"><span class="n">13</span>Limitations</a></li>
+    <li><a href="#roadmap"><span class="n">14</span>Status and roadmap</a></li>
+    <li><a href="#appendix-a"><span class="n">A</span>Parameters</a></li>
+    <li><a href="#appendix-b"><span class="n">B</span>Encodings</a></li>
+    <li><a href="#references"><span class="n">R</span>References</a></li>
+  </ol>
+  </nav>
+</details>
+
+<article class="paper">
+
+<!-- ================================================================ 00 -->
+<section id="abstract">
+  <h2><span class="num">00 · Abstract</span>A chain secured by <span class="serif">useful computation.</span></h2>
+  <p class="lead">Vearl is a proof-of-work blockchain in which the work that secures the chain can also be a paying client's computation. Miners multiply 8-bit integer matrices on GPUs. Every 16 × 16 tile of a noised product is a lottery ticket, and a ticket below the difficulty target is a block.</p>
+  <p>A block counts as useful only when the matrices are the ones a client committed to in an escrowed job. The client checks the returned result with a probabilistic test that costs a small fraction of the computation itself. Any single wrong value can be proven on chain with a proof of about a kilobyte, and the worker that returned it loses its bond. When there is no client demand, miners work on matrices derived from the protocol itself, so the security of the chain never depends on the market.</p>
+  <p>Results are exact integers, so every node computes identical bits and a fraud proof is never ambiguous. On this base, programs of up to 240 tensor operations run as verified jobs, and jobs chain together. The testnet has verified a 12-layer vision transformer, a 110-million-parameter text encoder and a small language model that writes stories word by word, each checked bit for bit against an independent reference engine.</p>
+  <div class="cards">
+    <div><div class="v mint">30 s</div><p>target block time, adjusted by ASERT</p></div>
+    <div><div class="v mint">2<sup>−24</sup></div><p>worst-case error of the client's 24-round Freivalds check</p></div>
+    <div><div class="v mint">240</div><p>operations in one verified tensor program</p></div>
+    <div><div class="v">0</div><p>external audits so far</p></div>
+  </div>
+  <div class="callout warn">
+    <span class="title">Status</span>
+    <p>Vearl is a closed testnet. The code has not been reviewed by a third party, and several security arguments in this paper are empirical or simulated rather than proven. Testnet tokens have no value, are not for sale and must not be treated as an investment. Nothing in this paper is financial advice.</p>
+  </div>
+  <p><strong>Author.</strong> Clovis Anicet, founder of Vearl, publicly identified (doxxed). Vearl is a separate project with its own code: it is not an official Pearl project and Pearl has not endorsed it. Contact: <span class="mail" data-u="contact" data-d="vearl.org">contact [at] vearl.org</span>.</p>
+  <h3>How to read this paper</h3>
+  <p>Claims carry a label that says how strong the evidence is. The labels are used throughout.</p>
+  <div class="legend">
+    <div><span class="ev impl">Implemented</span>in the reference node and covered by tests</div>
+    <div><span class="ev meas">Measured</span>run on real hardware, numbers reported</div>
+    <div><span class="ev sim">Simulated</span>result of a reproducible model, not a proof</div>
+    <div><span class="ev hyp">Hypothesis</span>assumed, not demonstrated</div>
+    <div><span class="ev open">Open</span>not solved</div>
+    <div><span class="ev lit">Literature</span>established result from published work</div>
+  </div>
+  <p>Vearl is the name of the project and of its reference implementation. The testnet unit is divisible into 10<sup>8</sup> base units. A final token name has not been chosen.</p>
+</section>
+
+<!-- ================================================================ 01 -->
+<section id="introduction">
+  <h2><span class="num">01 · Introduction</span>Why hashing is <span class="serif">not the only way.</span></h2>
+
+  <h3><span class="n">1.1</span>The cost of hashing</h3>
+  <p>Proof of work secures a ledger by making block production expensive. An attacker who wants to rewrite history has to out-spend everyone else, and that cost is what honest participants rely on. In Bitcoin the expense is SHA-256 hashing, and the result has no use outside the block.</p>
+  <p>Replacing hashing with computation that somebody actually wants is an old idea. It runs into two hard problems.</p>
+
+  <h3><span class="n">1.2</span>Two problems with useful work</h3>
+  <p><strong>Verification must be cheap.</strong> Every node must be able to check that a block contains valid work, and a client must be able to check its own result, without redoing the computation. Matrix multiplication is one of the few heavy workloads where this is possible: a product of two <em>n</em> × <em>n</em> matrices costs about <em>n</em><sup>3</sup> operations, while a probabilistic check costs about <em>n</em><sup>2</sup> <span class="ev lit">Literature</span> [4].</p>
+  <p><strong>Usefulness cannot be proven.</strong> A protocol can check that a product was computed correctly. It cannot check that anybody wanted it. If the miner chooses its own input matrices, a miner that feeds random numbers through the whole pipeline is accepted exactly like one that runs a model. A recent empirical study of a deployed network argues that this is what happens in practice [2]. We cite it as one third-party study whose numbers we have not reproduced.</p>
+
+  <h3><span class="n">1.3</span>The Vearl approach</h3>
+  <p>A protocol cannot prove that a computation is useful to a third party. It can prove that <strong>someone paid, and burned a share of the payment, for that exact computation to be done</strong>. Vearl calls this <em>fee-bound useful work</em> and makes it the only certificate of usefulness the protocol claims.</p>
+  <ul>
+    <li>The input matrices of useful work are <strong>committed by a client</strong> in a job transaction that locks the client's payment in escrow. A miner can earn a useful-work bonus only for matrices a client committed to.</li>
+    <li>The bonus is <strong>capped by the amount the client burned</strong>. Creating fake jobs for yourself therefore never pays better than mining ordinary work.</li>
+    <li>The computation that answers the client is <strong>the same one that produces lottery tickets</strong>. A GPU running a client's job mines at essentially the same rate as a GPU running protocol-derived matrices, so client demand adds to security instead of competing with it. The measured overhead is about 9 %; the equal-rate assumption still has to be confirmed on a real network <span class="ev hyp">Hypothesis</span>.</li>
+    <li>With no client demand, miners use <strong>protocol-derived matrices</strong>. Security does not depend on the market, and no usefulness is claimed for that work.</li>
+  </ul>
+
+  <h3><span class="n">1.4</span>Design goals</h3>
+  <ol class="plain">
+    <li><strong>Security with an empty market.</strong> Every valid block earns the same base reward whatever the work class.</li>
+    <li><strong>Cheap, exact verification.</strong> Nodes recompute one tile per block. Clients check a result in quadratic time. One wrong value is provable with a short proof.</li>
+    <li><strong>Deterministic integer semantics.</strong> No floating point anywhere in consensus. Two honest workers produce identical bits, which is what makes a fraud proof indisputable.</li>
+    <li><strong>Honest economics.</strong> Incentives are bounded by burned value, and every parameter is labelled provisional until it is calibrated.</li>
+    <li><strong>A small, auditable surface.</strong> Standard cryptographic primitives only, a byte-level specification, and independent second implementations that are checked against the node on every change.</li>
+  </ol>
+
+  <h3><span class="n">1.5</span>Related work</h3>
+  <p>The noisy matrix-multiplication proof of work used here builds on the construction of Komargodski, Schen and Weinstein [1], in which low-rank noise derived from a public seed turns an arbitrary matrix product into a lottery while keeping the honest overhead close to zero. Vearl keeps that idea and changes who owns the inputs: they come from escrowed jobs, not from the miner. Pass [3] studies the economics of useful proof of work and identifies a regime in which block rewards subsidise the useful computation; Vearl's separation between security (block reward) and usefulness (client fees) follows that reading. The difficulty rule is ASERT [8], the optional reorganisation brake follows ECIP-1100 [9], and account signatures include the post-quantum scheme standardised in FIPS 205 [5].</p>
+</section>
+
+<!-- ================================================================ 02 -->
+<section id="overview">
+  <h2><span class="num">02 · System overview</span>Two kinds of work, <span class="serif">one chain.</span></h2>
+
+  <h3><span class="n">2.1</span>Participants</h3>
+  <div class="fig">
+    <div class="fig-title">Who does what</div>
+    <div class="roles">
+      <div class="role"><div class="who">Client</div><div class="do">Commits input and weights, locks an escrow, receives the result, checks it, and accepts it or proves it wrong.</div></div>
+      <div class="role"><div class="who">Worker</div><div class="do">Claims a job, posts a bond, computes the result, mines blocks with the client's matrices, and publishes commitments to its intermediate results.</div></div>
+      <div class="role"><div class="who">Miner</div><div class="do">Any node that produces blocks. A worker is a miner that also holds client data. A miner without a job uses protocol-derived matrices.</div></div>
+      <div class="role"><div class="who">Validator</div><div class="do">Every full node. Recomputes one tile per block, applies transactions, and enforces every rule in this paper.</div></div>
+      <div class="role"><div class="who">Challenger</div><div class="do">Anyone. Submits a fraud proof against a wrong result and earns half of the cheater's bond.</div></div>
+      <div class="role"><div class="who">Light client</div><div class="do">Checks block headers, the proof of work and account balances without the full state.</div></div>
+    </div>
+  </div>
+
+  <h3><span class="n">2.2</span>Life of a job</h3>
+  <div class="fig">
+    <div class="fig-title">One useful job, end to end</div>
+    <ol class="flow-steps">
+      <li><div class="box"><small>Client</small>Commits matrices, locks escrow</div></li>
+      <li class="arrow-li"><div class="arrow"><span>→</span></div></li>
+      <li><div class="box"><small>Worker</small>Claims, posts a bond</div></li>
+      <li class="arrow-li"><div class="arrow"><span>→</span></div></li>
+      <li><div class="box key"><small>Worker</small>Mines with the client's matrices</div></li>
+      <li class="arrow-li"><div class="arrow"><span>→</span></div></li>
+      <li><div class="box"><small>Worker</small>Publishes result commitment</div></li>
+      <li class="arrow-li"><div class="arrow"><span>→</span></div></li>
+      <li><div class="box"><small>Client</small>Verifies the result</div></li>
+      <li class="arrow-li"><div class="arrow"><span>→</span></div></li>
+      <li><div class="box good"><small>Chain</small>Payment, or fraud proof and slash</div></li>
+    </ol>
+    <p class="figcap">The client checks the result with a Freivalds test. If one value is wrong, anyone can prove it on chain in linear time, the worker's bond is split between the challenger and the burn, and the client is refunded.</p>
+  </div>
+
+  <h3><span class="n">2.3</span>Classes of work</h3>
+  <p>Every block declares the class of work it contains. The class decides which matrices the validator recomputes against.</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Class</th><th>Matrices come from</th><th>Who may mine it</th><th>Reward</th></tr></thead>
+    <tbody>
+      <tr><td><code>Native</code></td><td>The protocol: derived from the epoch number (100 blocks per epoch)</td><td>Any miner</td><td>Base reward. <strong>No usefulness is claimed.</strong></td></tr>
+      <tr><td><code>Job</code></td><td>A client's committed matrices <em>A</em> and <em>B</em></td><td>Only the worker of that job</td><td>Base reward plus a capped rebate</td></tr>
+      <tr><td><code>Product</code></td><td>One <em>n</em> × <em>n</em> block of a large tiled product</td><td>Only the worker of that job</td><td>Same as <code>Job</code></td></tr>
+      <tr><td><code>Op</code></td><td>One GEMM inside a verified tensor program</td><td>Only the worker of that program</td><td>Same as <code>Job</code></td></tr>
+      <tr><td><code>Layer</code></td><td>Legacy multi-layer inference jobs, superseded by programs</td><td>Only the worker</td><td>Same as <code>Job</code></td></tr>
+    </tbody>
+  </table></div>
+  <p>Because the base reward is identical for every class, the market can be empty and the chain is exactly as secure as it would be without the market. The useful classes add a rebate that can never exceed what the client burned at creation.</p>
+</section>
+
+<!-- ================================================================ 03 -->
+<section id="work">
+  <h2><span class="num">03 · The proof of work</span>A noised matrix product, <span class="serif">sliced into tickets.</span></h2>
+
+  <h3><span class="n">3.1</span>Inputs and commitments</h3>
+  <p>Work is defined over two <em>n</em> × <em>n</em> matrices <em>A</em> and <em>B</em> of signed 8-bit integers with every entry in [−64, 64]. <em>A</em> is committed by a Merkle tree over its <strong>rows</strong> and <em>B</em> by a Merkle tree over its <strong>columns</strong>. The roots are <code>a_root</code> and <code>b_root</code>; in a job they are fixed by the client's transaction. Each leaf is hashed with its index under a dedicated domain label, so a row can never be confused with a column or with a node.</p>
+
+  <h3><span class="n">3.2</span>Low-rank noise</h3>
+  <p>A per-attempt seed σ is derived from the parent block, the miner, the work class, an extra nonce, the transaction root and the timestamp. From σ, an extendable-output function produces four small matrices with entries in {−1, 0, 1}: <em>E</em><sub>L</sub> and <em>F</em><sub>L</sub> of size <em>n</em> × <em>r</em>, and <em>E</em><sub>R</sub> and <em>F</em><sub>R</sub> of size <em>r</em> × <em>n</em>. The miner multiplies the noised matrices:</p>
+  <div class="eq"><code><span class="cm">// r ≤ 63, so every noised entry still fits in a signed 8-bit integer</span>
+A′ = A + E<sub>L</sub>·E<sub>R</sub>          B′ = B + F<sub>L</sub>·F<sub>R</sub>
+C′ = A′ · B′                        <span class="cm">// exact int32 arithmetic</span></code></div>
+  <p>The noise makes every attempt depend on a fresh seed, so no work can be reused from one block, miner or job to another. Because σ commits to the miner and to the transaction root, changing the beneficiary or the transactions invalidates the work <span class="ev impl">Implemented</span>.</p>
+
+  <h3><span class="n">3.3</span>Attempts and the jackpot</h3>
+  <p>Each 16 × 16 tile of <em>C</em>′ is one attempt. For tile (<em>t</em><sub>i</sub>, <em>t</em><sub>j</sub>) the accumulator is built by summing the inner dimension in chunks of <code>fold_k</code> steps. After each chunk, the 256 accumulator values are folded into a 64-word state by XOR with a step-dependent rotation. The final state is hashed once.</p>
+  <div class="eq"><code>acc ← 0 ;  fold[0..63] ← 0
+for s in 0 … n/fold_k − 1:
+    acc += Σ<sub>k in chunk s</sub> A′[tile rows][k] · B′[k][tile cols]        <span class="cm">// mod 2³²</span>
+    rot  = (s mod 31) + 1
+    for each of the 256 values i:  fold[i mod 64] ⊕= rotl32(acc[i], rot)
+
+jackpot = BLAKE3( "vearl/jackpot/v2" ‖ σ ‖ t<sub>i</sub> ‖ t<sub>j</sub> ‖ fold )
+wins    if  first 8 bytes of jackpot, read big-endian,  &lt;  target</code></div>
+  <p>Folding is what lets a GPU mine at tensor-core speed. Hashing every partial sum would cost far more than the multiplication itself. Folding makes the hash cost negligible while still forcing the miner to compute every partial sum. <span class="ev hyp">Hypothesis</span> The security of this folding step has no formal analysis. It is the most original and least tested component of the design, and it is the first place an auditor should look.</p>
+
+  <div class="fig">
+    <div class="fig-title">One mining attempt</div>
+    <ol class="flow-steps">
+      <li><div class="box"><small>Input</small>Matrices A, B and the seed σ</div></li>
+      <li class="arrow-li"><div class="arrow"><span>→</span></div></li>
+      <li><div class="box"><small>Noise</small>A′ = A + E·E, B′ = B + F·F</div></li>
+      <li class="arrow-li"><div class="arrow"><span>→</span></div></li>
+      <li><div class="box key"><small>GPU</small>int8 product, tile by tile, folded</div></li>
+      <li class="arrow-li"><div class="arrow"><span>→</span></div></li>
+      <li><div class="box"><small>Hash</small>BLAKE3 of the folded state</div></li>
+      <li class="arrow-li"><div class="arrow"><span>→</span></div></li>
+      <li><div class="box good"><small>Test</small>Below target? The tile is a block</div></li>
+    </ol>
+    <p class="figcap">The noise is removed afterwards in O(<em>n</em><sup>2</sup><em>r</em>) operations, which recovers the exact product <em>A</em>·<em>B</em> that the client asked for.</p>
+  </div>
+
+  <h3><span class="n">3.4</span>Verifying a block</h3>
+  <p>A block carries a proof: the 16 rows of <em>A</em> and 16 columns of <em>B</em> that the winning tile needs, each with a Merkle path to the committed roots. A validator checks the paths, re-derives the noise from σ, recomputes that <strong>single tile</strong>, and compares the hash. The cost is O(16<sup>2</sup>·<em>n</em>) instead of O(<em>n</em><sup>3</sup>). Proofs weigh about 6 KiB at <em>n</em> = 128 and about 43 KiB at <em>n</em> = 1024 per header. That is the price of a useful proof of work that can be verified without the job data <span class="ev meas">Measured</span>.</p>
+
+  <h3><span class="n">3.5</span>Decoding the useful result</h3>
+  <p>The worker needs the exact product, not the noised one. The noise terms are low rank, so they are removed cheaply:</p>
+  <div class="eq"><code>C = C′ − A·(F<sub>L</sub>·F<sub>R</sub>) − (E<sub>L</sub>·E<sub>R</sub>)·B − (E<sub>L</sub>·E<sub>R</sub>)·(F<sub>L</sub>·F<sub>R</sub>)  =  A·B</code></div>
+
+  <h3><span class="n">3.6</span>A flaw we found, and the rule that closes it</h3>
+  <p>A client that also works as the worker can commit matrices of very low rank, in the extreme case all zeros, which are valid for the protocol. Partial sums of such a product are much cheaper to compute, so each attempt costs less than honest work. The attacker gets more tickets per unit of energy and divides the cost of a majority attack. This applies to any useful proof of work where the client picks the inputs.</p>
+  <p>The attack is real: we implemented it and its jackpots are bit-identical to the honest computation. With the original parameters (rank 16, <code>fold_k</code> 256) an attempt cost 0.06 times the honest computation. The noise guarantees the effective rank of <em>A</em>′ and <em>B</em>′ is at least <em>r</em>, so the gain is about <code>fold_k</code> / <em>r</em> and vanishes when the folding interval does not exceed the noise rank <span class="ev meas">Measured</span>.</p>
+  <div class="tbl-wrap"><table class="tbl keep">
+        <thead><tr><th>Noise rank</th><th class="num">fold_k 16</th><th class="num">32</th><th class="num">64</th><th class="num">128</th><th class="num">256</th></tr></thead>
+    <tbody>
+      <tr><td>16</td><td class="num">1.00</td><td class="num">0.50</td><td class="num">0.25</td><td class="num">0.13</td><td class="num">0.06</td></tr>
+      <tr><td>32</td><td class="num">2.02</td><td class="num">1.01</td><td class="num">0.50</td><td class="num">0.25</td><td class="num">0.13</td></tr>
+      <tr class="hl"><td>63</td><td class="num">4.00</td><td class="num">2.00</td><td class="num"><b>1.00</b></td><td class="num">0.50</td><td class="num">0.25</td></tr>
+    </tbody>
+  </table></div>
+  <p class="tbl-cap">Attacker cost divided by honest cost per attempt, all-zero inputs, n = 4096. Values of 1 or more mean the shortcut gives no advantage.</p>
+  <p>The genesis block of any chain is <strong>rejected</strong> unless its parameters pass a security check: tile 16, <em>n</em> a multiple of 128, 1 ≤ rank ≤ 63, <code>fold_k</code> a multiple of 32 that divides <em>n</em>, and <code>fold_k</code> ≤ 1.05 × rank. The testnet uses <em>n</em> = 128 (larger for model workloads), rank 63 and <code>fold_k</code> 64 <span class="ev impl">Implemented</span>.</p>
+  <div class="callout warn">
+    <span class="title">Still open</span>
+    <p>Low rank is one structured family. Toeplitz, circulant, low-displacement-rank or block-sparse matrices admit fast products, and their effect on the cost of partial sums has not been analysed. The noise distribution {−1, 0, 1} was chosen to fit in 8 bits; its effect on the indistinguishability of tiles is not analysed either <span class="ev open">Open</span>.</p>
+  </div>
+
+  <h3><span class="n">3.7</span>GPU implementation and its real overhead</h3>
+  <p>The CUDA kernel uses int8 tensor cores (<code>mma.m16n8k32</code>), asynchronous copies, folding in registers and an on-GPU BLAKE3. Its output is tested <strong>bit for bit</strong> against the CPU reference for jackpots, noise generation, exact products and mined blocks, so a node without a GPU verifies the same blocks. On an NVIDIA A10 with rank 63 and <code>fold_k</code> 64 <span class="ev meas">Measured</span>:</p>
+  <div class="cards">
+    <div><div class="v mint">68–79 M</div><p>attempts per second, n = 128 to 512 (71 M at n = 1024)</p></div>
+    <div><div class="v mint">≈ 9 %</div><p>consensus overhead versus the plain GEMM of the same kernel (n = 8192)</p></div>
+    <div><div class="v">≈ 87</div><p>TOPS int8 reached by our kernel, where cuBLAS reaches about 199</p></div>
+  </div>
+  <p>The 9 % figure is relative to our own kernel. Our kernel is itself about 2.3 times slower than cuBLAS on the same card, so a miner who would otherwise use cuBLAS pays roughly 2.5 times in time today. Closing that gap is engineering work that has not been done. The overhead figures published by other projects are measured on other hardware and models and are not comparable. Only one GPU model (A10) has been measured; the kernel compiles for compute capability 8.0, 8.6, 8.9 and 9.0 and refuses older cards.</p>
+</section>
+
+<!-- ================================================================ 04 -->
+<section id="chain">
+  <h2><span class="num">04 · Chain consensus</span>Blocks, fork choice <span class="serif">and difficulty.</span></h2>
+
+  <h3><span class="n">4.1</span>Accounts and transactions</h3>
+  <p>The ledger is account based. An account is a 32-byte public key with a balance and a nonce. A transaction carries the sender, a sequential nonce, a fee and a typed body, and is signed over its canonical encoding. Fees are credited to the miner of the block that includes the transaction. A block containing a single invalid transaction is invalid as a whole.</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Transaction</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>Transfer</code></td><td>Move funds between accounts</td></tr>
+      <tr><td><code>SubmitJob</code>, <code>SubmitJobAuction</code></td><td>Create a job with an escrow, optionally with a reverse auction</td></tr>
+      <tr><td><code>Bid</code>, <code>ClaimJob</code></td><td>Offer a lower price, then claim the job and post the bond</td></tr>
+      <tr><td><code>PostResult</code></td><td>Publish the commitment to the result</td></tr>
+      <tr><td><code>Accept</code>, <code>Settle</code></td><td>Client approval, or permissionless settlement once the challenge window closes</td></tr>
+      <tr><td><code>Fraud</code></td><td>Prove that one value of a result is wrong</td></tr>
+      <tr><td><code>Fetch</code>, <code>Serve</code>, <code>SlashUnserved</code></td><td>On-chain data-availability challenge, response and penalty</td></tr>
+      <tr><td>Tiled and program jobs</td><td>Large products and verified tensor programs, with their own posting and fraud transactions</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><span class="n">4.2</span>Block header</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Field</th><th>Content</th></tr></thead>
+    <tbody>
+      <tr><td><code>version</code>, <code>height</code>, <code>prev</code></td><td>Header version (2), block number, hash of the parent header</td></tr>
+      <tr><td><code>timestamp</code></td><td>Seconds; strictly greater than the parent's</td></tr>
+      <tr><td><code>miner</code></td><td>Public key that receives the reward; bound into the work seed</td></tr>
+      <tr><td><code>class</code>, <code>extra_nonce</code></td><td>Class of work and the free nonce a miner varies</td></tr>
+      <tr><td><code>ti</code>, <code>tj</code>, <code>jackpot</code></td><td>The winning tile and its hash</td></tr>
+      <tr><td><code>tx_root</code></td><td>Merkle root of the transactions (all zeros if none)</td></tr>
+      <tr><td><code>target</code></td><td>Difficulty target, 64 bits</td></tr>
+      <tr><td><code>a_root</code>, <code>b_root</code></td><td>Roots of the matrices the work was done on, so a tile proof can be checked without job data</td></tr>
+      <tr><td><code>accounts_root</code></td><td>Merkle root of all live accounts <em>after</em> the block, so a balance can be proven to a light client</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><span class="n">4.3</span>Validating a block</h3>
+  <p>A validator applies these checks in order and rejects the block at the first failure.</p>
+  <ol class="plain">
+    <li>The version, height and parent hash are correct.</li>
+    <li>The timestamp is strictly greater than the parent's.</li>
+    <li>The target equals the target the difficulty rule prescribes.</li>
+    <li>The announced jackpot is below the target. This cheap filter runs <em>before</em> any expensive check, which limits denial-of-service.</li>
+    <li>The transaction root matches, the block has at most 256 transactions and at most 4 MiB of serialised transactions.</li>
+    <li>The work is valid: the matrices follow from the class, the seed is recomputed, the tile is recomputed from the proof, and the jackpot matches.</li>
+    <li>Transactions are applied in order against the account state.</li>
+    <li>The block reward and any capped rebate are credited to the miner.</li>
+    <li>The resulting account root matches the header.</li>
+  </ol>
+  <p>A separate node-local rule refuses blocks whose timestamp is more than 60 seconds ahead of the local clock at the moment of reception. It is deliberately not part of consensus, so a chain that was valid when mined is still accepted when replayed later.</p>
+
+  <h3><span class="n">4.4</span>Fork choice</h3>
+  <p>Each block has a work value equal to 2<sup>64</sup> divided by (target + 1). The canonical chain is the valid chain with the <strong>greatest cumulative work</strong>, not the longest. A candidate replaces the current chain only if its cumulative work is <em>strictly</em> greater, so on a tie the node keeps the chain it saw first.</p>
+
+  <h3><span class="n">4.5</span>Difficulty: ASERT</h3>
+  <p>The target adjusts at every block with an exponential rule anchored to an ideal schedule <span class="ev impl">Implemented</span> <span class="ev lit">Literature</span>:</p>
+  <div class="eq"><code>target = anchor_target · 2^( (Δt − T·(Δh + 1)) / halflife )
+         <span class="cm">T = 30 s, halflife = 900 s (30 blocks), anchor = first block, integer arithmetic only</span></code></div>
+  <p>Because the target depends only on how far real time has drifted from the ideal schedule, there is no sliding window for an intermittent miner to game. Our first rule, LWMA-1 [12], could be slowed by a miner that switches on and off. We measured this by simulation <span class="ev sim">Simulated</span>:</p>
+  <div class="tbl-wrap"><table class="tbl keep">
+    <thead><tr><th>Rule</th><th class="num">Steady</th><th class="num">On/off ×20</th><th class="num">After ×10 jump</th><th class="num">After ÷10 drop</th></tr></thead>
+    <tbody>
+      <tr><td>LWMA-1 (30 blocks)</td><td class="num">30.3 s</td><td class="num">38.3 s (+27.8 %)</td><td class="num">20.7 s</td><td class="num">58.6 s</td></tr>
+      <tr class="hl"><td>ASERT, halflife 900 s</td><td class="num">30.0 s</td><td class="num">30.0 s (−0.1 %)</td><td class="num">7.8 s</td><td class="num">62.1 s</td></tr>
+    </tbody>
+  </table></div>
+  <p class="tbl-cap">Average block time in seconds, steady hash rate and over the 100 blocks that follow a sudden change. The cost of ASERT is a temporarily faster emission after a sustained jump in hash rate, which the absolute schedule later claws back.</p>
+  <p>The implementation was checked against the 29 official test vectors of the Bitcoin Cash Node reference and against an independent Python implementation on 50,000 random inputs, with no difference <span class="ev meas">Measured</span>. A timestamp pushed 60 s into the future makes the next block at most about 4.7 % easier, and the next block corrects it. The simulation uses exponential solve times and no network latency, so it gives orders of magnitude, not guarantees.</p>
+
+  <h3><span class="n">4.6</span>Reorganisations and synchronisation</h3>
+  <ul>
+    <li>A node keeps full-state snapshots every 16 blocks (the last 64 plus genesis) and can rewind to any height by replaying at most 15 blocks.</li>
+    <li>On a fork, it locates the common ancestor by stepping back 8, 16, 32 … blocks, downloads only the diverging branch, and performs an <strong>atomic</strong> reorganisation: if any block is invalid, the work is insufficient or the brake refuses, the original chain is restored exactly.</li>
+    <li>Transactions from the abandoned branch that the winning branch did not include return to the mempool.</li>
+    <li>Sync replies are bounded to 8 MiB, and the requester continues until it receives an empty batch.</li>
+  </ul>
+  <p>A deep-fork test merged two chains of about 155 blocks with jobs and transfers on each side in a few seconds, with the supply invariant intact <span class="ev meas">Measured</span>.</p>
+
+  <h3><span class="n">4.7</span>Optional deep-reorganisation brake</h3>
+  <p>Vearl includes an opt-in brake modelled on ECIP-1100 [9]. A competing chain is adopted only if its work since the common ancestor exceeds <em>f</em>(<em>t</em>) times ours, where <em>t</em> is the time our chain has been in place and <em>f</em> rises smoothly from 1 to 31 over about 7 hours. It is <strong>off by default</strong>. A more aggressive first setting made two equal halves separated for only 90 seconds unable to rejoin, because each demanded about 5 % extra work from the other. Liveness matters more on a young network, so operators enable the brake once partitions longer than a few minutes are unlikely. It is a subjective local rule, and a long partition then needs manual recovery.</p>
+  <p>In simulation, with the brake on, an attacker holding 45 % of the hash power has a 0.4 % chance of replacing 30 or more blocks within 4 hours, against 40.5 % without it <span class="ev sim">Simulated</span>.</p>
+
+  <h3><span class="n">4.8</span>What consensus does not provide</h3>
+  <ul>
+    <li><strong>No finality.</strong> Reorganisations are braked, not impossible.</li>
+    <li><strong>No protection against selfish mining.</strong> In simulation, a selfish miner's revenue share is 0.274 with 30 % of the hash power (no gain), 0.327 with 33 % and 0.387 with 36 %, so the profitable threshold is about one third. As in any Nakamoto chain, this is inherent [11] <span class="ev open">Open</span>.</li>
+    <li>No protection against a majority of the work, and a very small security budget at launch (section 10).</li>
+  </ul>
+
+  <h3><span class="n">4.9</span>Light clients</h3>
+  <p>A light client downloads headers, each with its tile proof, and verifies the chain, the timestamps, the difficulty, the native work roots and the recomputed tile without any state. It then checks an account balance with a Merkle path against <code>accounts_root</code> of the tip. Tested on a live node, 85 headers were verified in 0.2 s and a balance was proven <span class="ev meas">Measured</span>. As with any SPV client, transaction validity and the honesty of <code>accounts_root</code> rest on the honest majority of the work, and proofs of account <em>absence</em> do not exist yet.</p>
+
+  <h3><span class="n">4.10</span>Monetary invariant</h3>
+  <p>After every block the node checks that the sum of balances, open escrows, bonds, held data-request fees and everything ever burned equals the genesis allocation plus everything ever minted. A violation would indicate a consensus bug. This invariant is verified in tests, in fuzzing and in the independent implementations <span class="ev impl">Implemented</span>.</p>
+</section>
+
+<!-- ================================================================ 05 -->
+<section id="market">
+  <h2><span class="num">05 · The compute market</span>Escrow, bonds <span class="serif">and fraud proofs.</span></h2>
+  <p>The market is part of the protocol, not an application on top of it. Every rule below is enforced by validators.</p>
+
+  <h3><span class="n">5.1</span>Job lifecycle</h3>
+  <div class="fig">
+    <div class="fig-title">State machine of a job</div>
+    <ol class="flow-steps">
+      <li><div class="box"><small>State</small><b>Open</b> escrow locked, 10 % burned</div></li>
+      <li class="arrow-li"><div class="arrow"><span>→</span></div></li>
+      <li><div class="box"><small>State</small><b>Claimed</b> worker bond posted</div></li>
+      <li class="arrow-li"><div class="arrow"><span>→</span></div></li>
+      <li><div class="box"><small>State</small><b>Posted</b> result committed, challenge window open</div></li>
+      <li class="arrow-li"><div class="arrow"><span>→</span></div></li>
+      <li><div class="box good"><small>End</small><b>Settled</b> worker paid</div></li>
+    </ol>
+    <ol class="flow-steps flow-steps-alt">
+      <li><div class="box bad"><small>Posted →</small><b>Slashed</b> fraud or unserved data</div></li>
+      <li><div class="box"><small>Open or Claimed →</small><b>Expired</b> client refunded</div></li>
+    </ol>
+    <p class="figcap">Every transition is evaluated with the height and timestamp of the block that contains the transaction.</p>
+  </div>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Step</th><th>Rule</th></tr></thead>
+    <tbody>
+      <tr><td>Submit</td><td>Escrow of at least 1 unit. 10 % is burned immediately. The remaining 90 % is the net escrow. The burned amount also becomes the job's rebate budget. Commitments <code>a_root</code> and <code>b_root</code> are fixed here.</td></tr>
+      <tr><td>Claim</td><td>The worker posts a bond of 10 % of the agreed price. With an auction, the winner claims at its own bid and the client immediately recovers the difference.</td></tr>
+      <tr><td>Post</td><td>The worker publishes <code>c_root</code>, the Merkle commitment to the result rows. The challenge window starts.</td></tr>
+      <tr><td>Window</td><td>Stays open until <strong>both</strong> 10 blocks <strong>and</strong> 300 seconds of timestamp have passed.</td></tr>
+      <tr><td>Accept / Settle</td><td>The client can accept early. Otherwise anyone can settle after the window. The worker receives the net escrow plus its bond back.</td></tr>
+      <tr><td>Fraud</td><td>A valid proof slashes the bond: half to the challenger, half burned. The client receives the net escrow back.</td></tr>
+      <tr><td>Expire</td><td>An unclaimed job refunds the client after the deadline. A claimed job with no result burns the bond and refunds the client.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><span class="n">5.2</span>Why the window counts both blocks and seconds</h3>
+  <p>A design flaw found during testing: the window was first measured in blocks only. On a fast network, or with a miner producing blocks back to back, ten blocks pass in under a second, and a cheating worker was paid before the client could verify anything. The window now also requires 300 seconds of timestamp, which a burst of blocks cannot consume because timestamps are bounded by validators' clocks. A test confirms that 40 blocks one second apart do not close the window <span class="ev impl">Implemented</span>.</p>
+
+  <h3><span class="n">5.3</span>Reverse auctions and reputation</h3>
+  <p>A job may carry an auction. During it, workers submit bids that must be strictly lower than the best one and no higher than the net escrow. Nobody can claim before it ends. The winner has 60 seconds of exclusivity, after which any worker can claim at the full price, so a winner that disappears loses its place without blocking the job. Bids are public and sequential, so last-second undercutting is possible <span class="ev open">Open</span>. Workers accumulate counters of jobs done, slashed and expired. They are informational and not enforced by the protocol.</p>
+
+  <h3><span class="n">5.4</span>Data availability</h3>
+  <p>A worker could publish a commitment without holding the data, or hold it back after being paid. During the window, the client can demand any single entry of the result on chain by paying a small fee (<code>Fetch</code>, up to 8 pending at once). The worker must answer with the value and a Merkle path within 120 seconds (<code>Serve</code>); answering earns the fee and reopens the window so the client can check the value. If it does not answer, anyone can submit <code>SlashUnserved</code>: the reporter receives half of the bond, half is burned, and the client is refunded. Automatic settlement is blocked while a request is pending.</p>
+  <p>This guarantees that nobody is paid for a commitment with no data behind it, and that a fabricated result is caught by a single sampled entry. It does <strong>not</strong> deliver the full result on chain: delivery of a correct result that a worker refuses to hand over remains off chain, and fair exchange without a trusted third party is a known hard problem <span class="ev open">Open</span>.</p>
+
+  <h3><span class="n">5.5</span>Usefulness and the rebate</h3>
+  <p>A block of a useful class earns the base reward <strong>plus</strong> a rebate of min(base / 2, rebate left), where the rebate budget starts at the amount burned when the job was created. Usefulness is therefore subsidised by at most what clients burned. Consider a wash trader who is both client and worker of its own job. It pays the 10 % burn and can recover at most that amount as rebate, so it never earns more than mining native work, and a test asserts this <span class="ev impl">Implemented</span>. The 10 % burn is therefore not a revenue mechanism or a deflationary policy. Its role is to <em>bound the rebate</em>.</p>
+</section>
+
+<!-- ================================================================ 06 -->
+<section id="verification">
+  <h2><span class="num">06 · Verifying computation</span>Exact where it can be, <span class="serif">honest where it cannot.</span></h2>
+
+  <h3><span class="n">6.1</span>Three levels of guarantee</h3>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Level</th><th>Verification</th><th>Mines at the same time?</th><th>Guarantee</th></tr></thead>
+    <tbody>
+      <tr class="hl"><td>1 · Verifiable GEMM</td><td>Freivalds test plus single-entry fraud proofs</td><td><strong>Yes</strong>: the client's noised product is the consensus work</td><td>Strong and cheap. One wrong entry is always provable.</td></tr>
+      <tr><td>2 · Sampling</td><td>Recompute random chunks, fraud proof on one chunk</td><td>No. Paid at full cost, without rebate</td><td>Probabilistic. An isolated falsified chunk is missed with probability 1 − <em>m</em>/<em>N</em> for <em>m</em> checked chunks of <em>N</em>.</td></tr>
+      <tr><td>3 · Not cheaply verifiable</td><td>None</td><td>No</td><td>None without trust. Not supported.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Most of this paper concerns level 1, which is where the protocol is strongest. Level 2 is implemented for two fixed kernels and is described in section 6.7.</p>
+
+  <h3><span class="n">6.2</span>Freivalds check</h3>
+  <p>To check <em>C</em> = <em>A</em>·<em>B</em>, pick a random vector <em>x</em> and compare <em>A</em>·(<em>B</em>·<em>x</em>) with <em>C</em>·<em>x</em>. Each round costs three matrix-vector products, O(<em>n</em><sup>2</sup>), and a wrong result survives a round with probability at most 1/2. The client runs 24 rounds, for an error of at most 2<sup>−24</sup> <span class="ev lit">Literature</span> [4].</p>
+
+  <h3><span class="n">6.3</span>Single-entry fraud proofs</h3>
+  <p>Freivalds tells a client that <em>something</em> is wrong. To convince the chain, the client locates one wrong entry (<em>i</em>, <em>j</em>) and submits:</p>
+  <ul>
+    <li>row <em>i</em> of <em>A</em> with its Merkle path to <code>a_root</code>,</li>
+    <li>column <em>j</em> of <em>B</em> with its path to <code>b_root</code>,</li>
+    <li>row <em>i</em> of the published result with its path to <code>c_root</code>.</li>
+  </ul>
+  <p>Validators verify three paths and compute one dot product. The proof is valid, and the worker is slashed, if and only if the dot product differs from the published entry. It costs O(<em>n</em>) and is about 1.2 KB at <em>n</em> = 128. An honest worker cannot be slashed, because the proof of a correct entry fails.</p>
+  <p>Integer matrices are committed <em>by rows</em>: one leaf per row, written in little-endian int32. An earlier version used one leaf per entry, which required <em>n</em><sup>2</sup> hashes instead of <em>n</em>. At <em>n</em> = 1024, that was about 100 times slower (396 ms against 4 ms on one core). Switching to rows cut client verification of a 76-operation network from 130 s to 18 s for 32 images <span class="ev meas">Measured</span>.</p>
+
+  <h3><span class="n">6.4</span>Verified tensor programs</h3>
+  <p>A single product is not a neural network. A <strong>program</strong> is a sequence of at most 240 operations on <em>n</em> × <em>n</em> int8 tensors with at most 64 weight blocks. Tensor <em>T</em><sub>0</sub> is the client's input and operation <em>k</em> produces <em>T</em><sub><em>k</em>+1</sub>. Every tensor is committed by columns, weights by rows, and the raw int32 result of each GEMM by rows. The worker publishes the roots as it goes, and each operation has its own fraud proof, so an error anywhere is provable on its own. Later operations computed from a wrong value are correct relative to it.</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Operation</th><th>Definition (all integer, all fixed)</th><th>Proof shape</th></tr></thead>
+    <tbody>
+      <tr><td><code>Gemm</code>, <code>GemmAT</code></td><td>T = clamp((W·T<sub>x</sub>) ≫ shift), or the product of two computed tensors (attention scores). <strong>The mined work.</strong></td><td>Product and activation</td></tr>
+      <tr><td><code>Add</code></td><td>Saturating sum; residual connections</td><td>Element</td></tr>
+      <tr><td><code>Map</code></td><td>Transpose, im2col and general strided convolution, flatten, shift, multi-head spread and gather</td><td>Element</td></tr>
+      <tr><td><code>Pool</code></td><td>Average (rounded) or max over k × k windows</td><td>Element</td></tr>
+      <tr><td><code>Softmax</code>, <code>SoftmaxLo</code></td><td>Integer softmax per column from a fixed exp table, plus a fine part giving probabilities to 1/4096</td><td>Column</td></tr>
+      <tr><td><code>CausalSoftmax</code></td><td>The same, where query <em>q</em> only sees keys 0 … <em>q</em>; used by language models</td><td>Column</td></tr>
+      <tr><td><code>LayerNorm</code></td><td>Rounded integer mean and standard deviation, exact integer square root</td><td>Column</td></tr>
+      <tr><td><code>Bias</code>, <code>Mul</code>, <code>Lut</code></td><td>Per-row bias, per-row multiply, and a 128-entry lookup table (GELU, tanh, SiLU and others)</td><td>Column, row, table</td></tr>
+    </tbody>
+  </table></div>
+  <p>Activations saturate to [−64, 64], shifts are arithmetic, and no operation uses floating point. The exponential table is computed offline in exact decimal arithmetic. Two honest workers therefore always produce identical bits. The second stage of a large softmax (<code>SoftmaxLo</code>) was needed because 26 to 37 % of the attention mass of a 197-token image sits in probabilities below 1/128, which a one-byte softmax rounds to zero.</p>
+
+  <h3><span class="n">6.5</span>Models, quantisation and chaining</h3>
+  <p>A floating-point model is not the same model once quantised to 8 bits, and the gap must be measured rather than assumed. Each model is converted to a program, then fine-tuned with quantisation-aware training in a simulator that uses <em>exactly</em> the integer arithmetic of the chain. The simulator is checked bit for bit against the independent reference engine before and after training. A job holds at most 240 operations, so larger models are split into jobs that <strong>chain</strong>: the verified output of one is the input of the next, for example three jobs of four layers for a 12-layer encoder.</p>
+
+  <h3><span class="n">6.6</span>Tiled products</h3>
+  <p>A product larger than one block (up to 8 × 8 × 8 blocks) is split into block products, each a mined unit, plus verified sums. A block product or a sum can each be proven wrong with a proof of the same shape. No block product is required to advance the chain: any winning attempt from any block of the job can become a block. The client verifies with Freivalds on each block and exact sums. An 8192 × 8192 × 8192 product (about 1.1 trillion integer operations) was verified end to end in about 11 s <span class="ev meas">Measured</span>.</p>
+
+  <h3><span class="n">6.7</span>Level 2: sampled audits</h3>
+  <p>Monte Carlo integration and tiled 3D rendering run as protocol-fixed integer kernels, with no client code executed and no sandbox. Each chunk is a deterministic function of public parameters and its index, and the worker commits to the Merkle root of the chunks. The client recomputes a random sample; one fraud proof names a chunk, which the chain recomputes at bounded cost. As stated in the table above, the guarantee is probabilistic and these jobs carry no rebate. A Monte Carlo estimate of π with 262,144 samples gave 3.14497 <span class="ev meas">Measured</span>.</p>
+</section>
+
+<!-- ================================================================ 07 -->
+<section id="workloads">
+  <h2><span class="num">07 · Verified AI workloads</span>What runs today, <span class="serif">with the numbers.</span></h2>
+  <p>Every figure below was measured on the testnet on a single NVIDIA A10 GPU, on chains with <em>n</em> = 1024, with every operation of every job verified before payment. Outputs were compared with an independent reference engine that shares no code with the node.</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Workload</th><th>Model</th><th>Size</th><th>Measured</th></tr></thead>
+    <tbody>
+      <tr><td>Text generation</td><td>TinyStories-33M, 4 layers, 50,257-word vocabulary [15]</td><td>2 jobs per word (154 + 153 ops)</td><td>Eight stories in parallel, 320 words in 730 s (18 s per step). The next word equals the original model's in 92.9 % of positions; perplexity 2.42 against 2.37. Logits bit-identical to the reference engine, 8 of 8.</td></tr>
+      <tr><td>Photo recognition</td><td>DeiT-Tiny vision transformer, 224 × 224, 1,000 classes [13]</td><td>386 ops, 2 chained jobs</td><td>About 1.7 s per photo. Top-1 over 1,000 classes: 70.6 % on Imagenette photos not seen in training (original: 78.2 %). 8 of 8 bit-identical.</td></tr>
+      <tr><td>Text embeddings</td><td>BGE-base, 12 layers, 110 million parameters [14]</td><td>492 ops, 3 chained jobs</td><td>About 3.3 s per text. STS-B Spearman 0.836 against 0.864 for the original (96.7 %). 8 of 8 bit-identical.</td></tr>
+      <tr><td>Fast embeddings</td><td>all-MiniLM-L6-v2, 6 layers [16]</td><td>195 ops, 61 GEMMs</td><td>About 1.0 s per text; cosine 0.92 with the original.</td></tr>
+      <tr><td>Image classification</td><td>ResNet-20, CIFAR-10 [17]</td><td>76 ops, 22 GEMMs</td><td>88.6 % top-1; 32 images verified in 41 s.</td></tr>
+      <tr><td>Linear algebra</td><td>Tiled int8 product</td><td>8192 × 8192 × 8192</td><td>About 1.1 trillion operations verified in about 11 s.</td></tr>
+      <tr><td>Digits, bulk embeddings</td><td>MLP and CNN on MNIST; distilled text encoder</td><td>10,000 images; 20,480 texts</td><td>About 98 % top-1; outputs bit-identical to the reference engine.</td></tr>
+    </tbody>
+  </table></div>
+  <h3><span class="n">7.1</span>How to read these results</h3>
+  <ul>
+    <li><strong>Integer models lose accuracy.</strong> DeiT-Tiny is about 8 points under its floating-point original. The language model is slightly worse than the original but writes coherent stories. Models whose activations have very large outliers fail outright: a simulated 8-bit trial on GPT-2 (124 M parameters), without training and after our best exact transformations, gave a perplexity of 1,345 against 99, which is why the language model on the testnet is small and trained on simple text.</li>
+    <li><strong>Language-model exactness.</strong> The chain's words follow the original model word for word over 68 of 320 generated words, then diverge. That is expected with greedy decoding when two models differ slightly, and the stories remain coherent. What is exact is the <em>computation</em> of each step, not agreement with the floating-point original.</li>
+    <li><strong>Limits.</strong> Text is capped at 64 tokens. There is no key-value cache, so each step recomputes the whole text. A job has 240 operations, which reaches models of roughly a hundred million parameters, not billions.</li>
+    <li><strong>Verification is slower than running locally.</strong> These times include transfer and cryptographic commitment. When client and worker share a machine, local computation is faster. The value of the chain is verified work done by others, not speed.</li>
+  </ul>
+</section>
+
+<!-- ================================================================ 08 -->
+<section id="crypto">
+  <h2><span class="num">08 · Cryptography</span>Standard pieces, <span class="serif">nothing homemade.</span></h2>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Purpose</th><th>Primitive</th></tr></thead>
+    <tbody>
+      <tr><td>Hashing, Merkle trees, key derivation</td><td>BLAKE3 [7] in key-derivation mode with a distinct context string for every use (<code>vearl/merkle/leaf/v1</code>, <code>vearl/jackpot/v2</code>, and so on)</td></tr>
+      <tr><td>Classic account signatures</td><td>Ed25519 [10], strict verification</td></tr>
+      <tr><td>Post-quantum account signatures</td><td>SLH-DSA-SHAKE-128s, FIPS 205 [5]</td></tr>
+      <tr><td>Peer channel</td><td>Noise XX with X25519, ChaCha20-Poly1305 and BLAKE2s [6]</td></tr>
+      <tr><td>Wallet file</td><td>Argon2id and ChaCha20-Poly1305 (RFC 9106, RFC 8439), 24-word recovery phrase</td></tr>
+      <tr><td>Addresses</td><td>Bech32m (BIP-350): <code>vrl1…</code> classic, <code>vrlq1…</code> post-quantum</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><span class="n">8.1</span>Post-quantum accounts</h3>
+  <p>An account can be classic or post-quantum, and the protocol accepts both. The signature length selects the scheme: 64 bytes is Ed25519, 7,856 bytes is SLH-DSA, and any other length is refused. The 32-byte public key stays the address in both cases, so no transaction format changed. The signed message uses a dedicated FIPS 205 context string, so a signature made in another context is refused. A post-quantum key is derived deterministically from the wallet phrase.</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th></th><th>Ed25519</th><th>SLH-DSA-SHAKE-128s</th></tr></thead>
+    <tbody>
+      <tr><td>Signature</td><td class="m">64 bytes</td><td class="m">7,856 bytes</td></tr>
+      <tr><td>Signing time</td><td class="m">microseconds</td><td class="m">≈ 1.6 s</td></tr>
+      <tr><td>Verification</td><td class="m">microseconds</td><td class="m">≈ 1.6 ms</td></tr>
+      <tr><td>Security assumption</td><td>Discrete logarithm (broken by Shor's algorithm)</td><td>Hash functions only</td></tr>
+    </tbody>
+  </table></div>
+  <p>An independent verifier written from the FIPS 205 text agreed with the Rust crate on 16 of 16 verdicts, including 14 tampered signatures <span class="ev meas">Measured</span>. Limits: the Rust crate is pure Rust and uses no unsafe code but has not been audited; there is no fee schedule per byte yet, with the cap of 256 transactions per block bounding the worst case at about 2 MiB; and the peer channel is not post-quantum. A classic public key that has already been published stays exposed to a future quantum computer until funds move to a post-quantum account.</p>
+</section>
+
+<!-- ================================================================ 09 -->
+<section id="network">
+  <h2><span class="num">09 · Network</span>Encrypted peers, <span class="serif">bounded everything.</span></h2>
+  <ul>
+    <li><strong>Transport.</strong> TCP carrying a Noise XX channel. A peer's identity is its static key, and operators can pin it (<code>host:port@key</code>). Plaintext peers of older versions are refused. An application message is at most 16 MiB.</li>
+    <li><strong>Handshake.</strong> Each side sends <code>Hello</code> first with its genesis hash, height and cumulative work. A different genesis closes the connection, and so does an identity that is already connected.</li>
+    <li><strong>Admission.</strong> At most 24 inbound connections, 2 per IP and 4 per /16 subnet; at most 6 outbound connections, never two in the same /16; 64 concurrent handshakes. This raises the cost of an eclipse attack. It is not a Sybil defence <span class="ev open">Open</span>.</li>
+    <li><strong>Rate limiting.</strong> A token bucket of 100 messages per second per peer, with a burst of 200. Invalid messages accumulate a score, and an invalid block or 100 points disconnects and bans the address.</li>
+    <li><strong>Mempool (a local rule, not consensus).</strong> Signature and nonce checks, a non-empty balance, 16 transactions per sender and 5,000 in total. A sender whose first pending transaction is stuck, for 10 s on a nonce gap or 30 s on failure, has all of its pending transactions evicted. Without this rule a single stuck transaction froze a worker completely; the endurance test found it.</li>
+    <li><strong>Data.</strong> Clients upload job data to a worker off chain. The worker persists it (up to 512 MiB) and reloads it on restart. Intermediate results are fetched in bounding boxes so that sparse tensors transfer compactly.</li>
+  </ul>
+  <p>The P2P channel is not post-quantum, and IP addresses of peers are visible: there is no network-level anonymity.</p>
+</section>
+
+<!-- ================================================================ 10 -->
+<section id="economics">
+  <h2><span class="num">10 · Economics</span>Provisional numbers, <span class="serif">clearly labelled.</span></h2>
+  <div class="callout warn">
+    <span class="title">Read first</span>
+    <p>Nothing in this section predicts a price, a demand or a profit. The parameters are testnet values chosen to exercise the mechanisms. They have not been calibrated with market data. Testnet tokens have no value.</p>
+  </div>
+
+  <h3><span class="n">10.1</span>Block reward and emission</h3>
+  <p>The reward of a block of height <em>h</em> is max(<em>R</em><sub>0</sub> ≫ ⌊<em>h</em> / 1,051,200⌋, tail) with <em>R</em><sub>0</sub> = 20 units and a tail of 0.5 units per block. At the target block time of 30 seconds, 1,051,200 blocks correspond to one year. Halving depends on block height, not on time. The schedule below is derived directly from these constants.</p>
+  <div class="tbl-wrap"><table class="tbl keep">
+    <thead><tr><th>Year</th><th class="num">Reward per block</th><th class="num">Emitted in the year</th><th class="num">Cumulative</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td class="num">20</td><td class="num">21,024,000</td><td class="num">21,024,000</td></tr>
+      <tr><td>2</td><td class="num">10</td><td class="num">10,512,000</td><td class="num">31,536,000</td></tr>
+      <tr><td>3</td><td class="num">5</td><td class="num">5,256,000</td><td class="num">36,792,000</td></tr>
+      <tr><td>4</td><td class="num">2.5</td><td class="num">2,628,000</td><td class="num">39,420,000</td></tr>
+      <tr><td>5</td><td class="num">1.25</td><td class="num">1,314,000</td><td class="num">40,734,000</td></tr>
+      <tr><td>6</td><td class="num">0.625</td><td class="num">657,000</td><td class="num">41,391,000</td></tr>
+      <tr><td>7 onwards</td><td class="num">0.5 (tail)</td><td class="num">525,600 each year</td><td class="num">no cap</td></tr>
+    </tbody>
+  </table></div>
+  <p class="tbl-cap">Units, before any genesis allocation. The supply is not capped: the tail keeps a small permanent issuance to pay for security.</p>
+
+  <h3><span class="n">10.2</span>Who pays whom</h3>
+  <ul>
+    <li><strong>Security</strong> is paid by the block reward, identical for every class of work.</li>
+    <li><strong>Usefulness</strong> is paid by clients. A rebate on useful blocks is bounded by what the client burned.</li>
+    <li><strong>Workers</strong> earn block rewards for the tickets their computation produces, and the escrow for results verified. In a competitive equilibrium a client's job costs little more than the duplex overhead when demand is small compared with issuance. The issuance then subsidises the computation <span class="ev sim">Simulated</span>.</li>
+    <li>That subsidy means the token needs a value independent of usage. A fixed minimum escrow in the token is arbitrary next to a product that costs a tiny fraction of a cent. An adaptive floor, similar to a fee market, is planned.</li>
+  </ul>
+
+  <h3><span class="n">10.3</span>The security budget is small at launch</h3>
+  <p>The cost of an attack is tied to issuance times price. In a model where a rented GPU costs 0.50 dollars per hour, a hypothetical token price of 0.10 dollars attracts about 1,455 GPUs to compete for the issuance, so matching the honest network costs an attacker about 730 dollars per hour. A value of 10,000 dollars would then only be safe after about 14 hours of confirmations <span class="ev sim">Simulated</span>. This is the standard young-chain problem, and no parameter creates security without economic value behind the token. A network that carries real value should only accept amounts below the cost of attack over the confirmation time.</p>
+
+  <h3><span class="n">10.4</span>What is not modelled</h3>
+  <p>Strategic behaviour (selfish mining, withholding, eclipse), endogenous price volatility, bandwidth and storage costs, real demand, competition from other chains for the same GPUs, and regulation. A token with monetary value would need a legal review before anything is offered to anyone. None of that has been done, and no sale of any token is planned or implied by this paper.</p>
+</section>
+
+<!-- ================================================================ 11 -->
+<section id="threats">
+  <h2><span class="num">11 · Security analysis</span>What is covered, <span class="serif">what is not.</span></h2>
+  <p>The threat model considers a hostile peer, a miner trying to get blocks with less work than honest, a worker that cheats or withholds data, a client that accuses falsely, a Sybil or eclipse attacker, and an attacker with large computing power. Protection against a majority of the work is not part of the model. Client-side compromise (malware, phishing) is out of scope.</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Threat</th><th>Defence</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>Cheap attempts through structured, low-rank inputs</td><td>Genesis parameter rule, <code>fold_k</code> ≤ 1.05 · rank</td><td><span class="st ok">Covered</span> for the parameters accepted; other structures are a hypothesis</td></tr>
+      <tr><td>Work reuse across blocks, miners, jobs</td><td>The seed binds parent, miner, class, transactions and time</td><td><span class="st ok">Covered</span></td></tr>
+      <tr><td>Forged tile proof</td><td>Merkle openings plus recomputation of the tile</td><td><span class="st ok">Covered</span></td></tr>
+      <tr><td>Wrong job result</td><td>24-round Freivalds check and a single-entry fraud proof with a bond</td><td><span class="st ok">Covered</span></td></tr>
+      <tr><td>Being paid before the challenge window</td><td>Window in blocks and in seconds</td><td><span class="st ok">Covered</span></td></tr>
+      <tr><td>Withholding result data</td><td><code>Fetch</code> / <code>Serve</code> / <code>SlashUnserved</code></td><td><span class="st part">Partial</span>: full delivery stays off chain</td></tr>
+      <tr><td>Wash trading to inflate rewards</td><td>Rebate bounded by burn</td><td><span class="st ok">Covered</span> by design</td></tr>
+      <tr><td>Difficulty manipulation</td><td>ASERT, timestamp rules</td><td><span class="st ok">Covered</span> by simulation, not proof</td></tr>
+      <tr><td>Malformed input crashing a node</td><td>Bounded decoding, errors instead of panics, fuzzing</td><td><span class="st ok">Covered</span> empirically</td></tr>
+      <tr><td>Supply inflation bugs</td><td>Invariant checked after every block</td><td><span class="st ok">Covered</span> empirically</td></tr>
+      <tr><td>Node diverging from the specification</td><td>Byte-level spec, independent Python implementations</td><td><span class="st ok">Covered</span> for the stated scope; same author</td></tr>
+      <tr><td>Eclipse and Sybil</td><td>Per-IP and per-/16 limits, pinned keys</td><td><span class="st part">Partial</span>, no Sybil defence</td></tr>
+      <tr><td>Deep reorganisation, majority attack</td><td>Optional brake</td><td><span class="st part">Partial</span>; short attacks and selfish mining untreated</td></tr>
+      <tr><td>Level 2 inexact result</td><td>Sampling audits</td><td><span class="st part">Partial</span> by design: probabilistic</td></tr>
+      <tr><td>Confidentiality of data and transactions</td><td>None. Everything is public or visible to the worker</td><td><span class="st open">Open</span></td></tr>
+      <tr><td>Errors shared by code, text and second implementation</td><td>None</td><td><span class="st open">Open</span>: a third-party implementer is needed</td></tr>
+      <tr><td>Soundness of the folding step</td><td>Empirical study only</td><td><span class="st open">Open</span></td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout bad">
+    <span class="title">Reminder</span>
+    <p>Vearl makes no claim to be resistant to ASICs. An int8 matrix-multiplication kernel sits exactly where accelerators already exist. The main defence is real demand, since the same GPUs also serve AI workloads, and not an algorithm. The design does not claim that no attack exists, total anonymity, or that it is better than other proofs of useful work in practice. Its differences are design differences, and superiority must be shown by measurements.</p>
+  </div>
+</section>
+
+<!-- ================================================================ 12 -->
+<section id="implementation">
+  <h2><span class="num">12 · Implementation and evidence</span>Checked against <span class="serif">a second opinion.</span></h2>
+  <p>The reference implementation is written in Rust, with a CUDA kernel for the GPU. It contains the node, the wallet, a command-line client, an HTTP API with a block explorer, a faucet, and deployment units. The code has not been published yet. This paper therefore states which claims are backed by which checks, so that reviewers can re-run them once they have access.</p>
+  <div class="cards">
+    <div><div class="v mint">171</div><p>automated tests, all passing</p></div>
+    <div><div class="v mint">17 / 17</div><p>independent checks in the internal audit suite</p></div>
+    <div><div class="v mint">483</div><p>conformance blocks shared by Rust and Python</p></div>
+    <div><div class="v">0</div><p>external audits</p></div>
+  </div>
+  <h3><span class="n">12.1</span>Independent implementations</h3>
+  <p>The specification describes every byte of the work layer, the chain, the market, the tensor programs and the network. Separate Python implementations were written <em>from the text, without reading the Rust code</em>, for the work layer, the chain, the market, tensor programs, tiled products, the light client and the post-quantum verifier. Each one revalidates the frozen test vectors and <em>refuses</em> the tampered ones for the right reason. They also mine and author blocks that the Rust validator must accept, in both directions. A conformance run of 2,994 random tensor programs compared every tensor with the node's engine and found no divergence, and a differential fuzzer showed 1,500 of 1,500 identical accept or reject decisions between Rust and Python.</p>
+  <h3><span class="n">12.2</span>Robustness</h3>
+  <ul>
+    <li>About 1.1 million mutated transactions and about 460,000 mutated blocks and messages produced no panic and no accepted altered block.</li>
+    <li>A network fuzzer sent about 18,000 malformed messages to a live worker node: no panic, the node stayed reachable and kept mining.</li>
+    <li>A chaos test with four real nodes, abrupt kills, jobs of every type and a cheating worker ended with all honest jobs paid and all cheaters slashed.</li>
+    <li>The Python and Rust difficulty implementations agreed on 50,000 random cases and on the official ASERT vectors.</li>
+  </ul>
+  <h3><span class="n">12.3</span>A limit of this evidence</h3>
+  <p>The code, the specification and the second implementations were all written by the same party. A truly independent third-party implementer and an external audit are still needed. The checks above show that the pieces agree with each other, not that they are free of a mistake that they would all make together <span class="ev open">Open</span>.</p>
+</section>
+
+<!-- ================================================================ 13 -->
+<section id="limits">
+  <h2><span class="num">13 · Limitations</span>What this paper <span class="serif">does not claim.</span></h2>
+  <ol class="plain">
+    <li><strong>Useful means paid and burned, not proven useful.</strong> A client can pay for useless computation at the price of the burn. This trade-off exists in every useful proof of work where the client chooses the input.</li>
+    <li><strong>The folding step has no formal security proof,</strong> and structured inputs other than low rank have not been analysed.</li>
+    <li><strong>Freivalds proves a product is correct, not that a particular GPU computed it.</strong> That suffices to pay for a result. Proof of hardware work comes from the lottery.</li>
+    <li><strong>Data availability is partial.</strong> Complete delivery of a correct result stays off chain.</li>
+    <li><strong>One worker per job, first come, first served,</strong> unless an auction is used, and auction bids are public.</li>
+    <li><strong>No confidentiality.</strong> The chain is public and workers see their clients' matrices and weights.</li>
+    <li><strong>No finality, no defence against selfish mining,</strong> and a very small security budget at launch.</li>
+    <li><strong>Models are small and lossy.</strong> A job has 240 operations on 1024 × 1024 tensors. Quantisation to 8 bits costs accuracy. Language-model text is capped at 64 tokens and computed without a cache. These are first-generation models, and they are planned to be considerably improved (see the milestones).</li>
+    <li><strong>Only one GPU model has been measured,</strong> and the kernel is well under the speed of cuBLAS.</li>
+    <li><strong>Economic parameters are provisional.</strong> Nothing has been calibrated on real demand, and the minimum escrow is badly specified.</li>
+    <li><strong>No external audit,</strong> and no public testnet yet (planned for 23 October 2026).</li>
+  </ol>
+</section>
+
+<!-- ================================================================ 14 -->
+<section id="roadmap">
+  <h2><span class="num">14 · Status and roadmap</span>Where the project <span class="serif">stands.</span></h2>
+  <div class="fig">
+    <div class="fig-title">Milestones</div>
+    <div class="roles">
+      <div class="role"><div class="who">Done</div><div class="do"><strong>Closed testnet.</strong> Chain, compute market, verified inference, embeddings and text generation on a GPU server, with the light client, post-quantum accounts, wallet, API and explorer.</div></div>
+      <div class="role"><div class="who">23 Oct 2026</div><div class="do"><strong>Public testnet.</strong> Several machines, external miners, and open documentation. Planned for 23 October 2026. Miners who help secure the public testnet are planned to receive Vearl tokens on mainnet.</div></div>
+      <div class="role"><div class="who">Next</div><div class="do"><strong>External audit.</strong> Third-party review of the cryptography, the folding step, the consensus rules and the fraud proofs, and an independent second implementation.</div></div>
+      <div class="role"><div class="who">Research</div><div class="do"><strong>Considerably better models, and better economics.</strong> The current models are a first generation; larger and more accurate ones are planned through per-channel quantisation, longer text and a key-value cache, several sequences per job, an on-chain model registry, an adaptive escrow floor, a fee schedule per byte, confidentiality, and a faster kernel.</div></div>
+    </div>
+  </div>
+  <p>A mainnet should exist only if the security properties above have been demonstrated and reviewed. There is no date for it, and the testnet chain can be reset at any time. Miners who help secure the public testnet are planned to receive Vearl tokens on mainnet as a thank-you; this is an intention, not a guarantee or an offer, and the rules and amounts will be announced.</p>
+  <div class="paper-end">
+    <p><strong>Feedback.</strong> This is a living document (draft 0.1). Where it differs from the behaviour of the software, the software on the testnet is the reference, and we want to hear about it. Corrections to numbers and claims are welcome, especially from reviewers with a security or distributed-systems background.</p>
+    <p>Nothing in this paper is an offer to sell anything or investment advice. Testnet tokens have no value.</p>
+  </div>
+</section>
+
+<!-- ================================================================ A -->
+<section id="appendix-a">
+  <h2><span class="num">Appendix A</span>Parameters <span class="serif">and constants.</span></h2>
+  <p>Values of the current testnet. Those marked <em>genesis</em> are part of the genesis hash, and changing them creates a different chain.</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Parameter</th><th>Value</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Work parameters (<em>genesis</em>)</td><td class="m">n 128, tile 16, rank 63, fold_k 64</td><td>Model workloads use chains with n = 1024</td></tr>
+      <tr><td>Entry range</td><td class="m">[−64, 64]</td><td>Signed 8-bit integers</td></tr>
+      <tr><td>Target block time</td><td class="m">30 s</td><td></td></tr>
+      <tr><td>Native work epoch</td><td class="m">100 blocks</td><td>Native matrices change every epoch</td></tr>
+      <tr><td>Difficulty rule (<em>genesis</em>)</td><td class="m">ASERT, halflife 900 s</td><td>LWMA-1, EMA and fixed also exist</td></tr>
+      <tr><td>Future timestamp tolerance</td><td class="m">60 s</td><td>Local rule</td></tr>
+      <tr><td>Block limits</td><td class="m">256 transactions, 4 MiB</td><td>Consensus</td></tr>
+      <tr><td>Initial reward, halving, tail</td><td class="m">20 · 1,051,200 blocks · 0.5</td><td>Units</td></tr>
+      <tr><td>Unit</td><td class="m">10<sup>8</sup> base units</td><td></td></tr>
+      <tr><td>Job burn, worker bond</td><td class="m">10 %, 10 %</td><td>Provisional</td></tr>
+      <tr><td>Minimum escrow</td><td class="m">1 unit</td><td>Provisional; to be made adaptive</td></tr>
+      <tr><td>Challenge window (<em>genesis</em>)</td><td class="m">10 blocks and 300 s</td><td>Both must elapse</td></tr>
+      <tr><td>Serve deadline (<em>genesis</em>)</td><td class="m">120 s</td><td>Window reopens for at least 60 s</td></tr>
+      <tr><td>Data request fee, pending requests</td><td class="m">0.05 unit, 8</td><td></td></tr>
+      <tr><td>Auction</td><td class="m">up to 3,600 s; 60 s winner grace</td><td></td></tr>
+      <tr><td>Tensor program</td><td class="m">240 operations, 64 weight blocks</td><td></td></tr>
+      <tr><td>Snapshots</td><td class="m">every 16 blocks, last 64</td><td></td></tr>
+      <tr><td>Peer limits</td><td class="m">24 in, 6 out, 2 per IP, 4 per /16</td><td>Local rule</td></tr>
+      <tr><td>Message size, rate</td><td class="m">16 MiB, 100 per s</td><td></td></tr>
+      <tr><td>Mempool</td><td class="m">5,000 total, 16 per sender</td><td>Local rule</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ================================================================ B -->
+<section id="appendix-b">
+  <h2><span class="num">Appendix B</span>Encodings <span class="serif">in brief.</span></h2>
+  <p>The byte-level specification is long, and only its outline is reproduced here. All integers are little-endian, enumerations carry a 32-bit tag, and structures use the bincode 1.x layout. The Merkle padding repeats zero leaves up to the next power of two.</p>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Item</th><th>Definition</th></tr></thead>
+    <tbody>
+      <tr><td>Hash</td><td class="m">H(domain, p<sub>1</sub>, p<sub>2</sub>, …) = BLAKE3 derive-key with context <em>domain</em> of p<sub>1</sub> ‖ p<sub>2</sub> ‖ …</td></tr>
+      <tr><td>Merkle leaf, node</td><td class="m">H("vearl/merkle/leaf/v1", i, data); H("vearl/merkle/node/v1", left, right)</td></tr>
+      <tr><td>Header hash</td><td class="m">H("vearl/header/v1", bincode(header))</td></tr>
+      <tr><td>Work seed σ</td><td class="m">H("vearl/sigma/v1", prev, miner, class, extra_nonce, tx_root, timestamp)</td></tr>
+      <tr><td>Noise</td><td class="m">XOF("vearl/noise/v1", σ, 4·n·rank) bytes, each b ↦ (b mod 3) − 1</td></tr>
+      <tr><td>Native matrices</td><td class="m">XOF("vearl/native/v1", epoch, 2·n²) bytes, each mapped to (b mod 129) − 64</td></tr>
+      <tr><td>Job identifier</td><td class="m">H("vearl/job/v1", client, nonce, a_root, b_root)</td></tr>
+      <tr><td>Work class tags</td><td class="m">Native 0, Job 1, Layer 2, Product 3, Op 4</td></tr>
+      <tr><td>Transaction tags</td><td class="m">Transfer 0, SubmitJob 1, ClaimJob 2, PostResult 3, Accept 4, Fraud 5, Settle 6, SubmitJobAuction 7, Bid 8, Fetch 9, Serve 10, SlashUnserved 11, tiled and program jobs from 12</td></tr>
+      <tr><td>Operation tags</td><td class="m">Gemm 0, Add 1, Map 2, Pool 3, GemmAT 4, Softmax 5, LayerNorm 6, Bias 7, Lut 8, Mul 9, SoftmaxLo 10, CausalSoftmax 11</td></tr>
+      <tr><td>Signature</td><td class="m">Ed25519 (64 bytes) or SLH-DSA (7,856 bytes) over bincode(transaction)</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ================================================================ R -->
+<section id="references">
+  <h2><span class="num">References</span>Sources <span class="serif">cited.</span></h2>
+  <ol class="refs">
+    <li>I. Komargodski, I. Schen, O. Weinstein. <em>Proofs of Useful Work from Arbitrary Matrix Multiplication.</em> arXiv:2504.09971; IACR ePrint 2025/685.</li>
+    <li><em>The Usefulness Gap in Proof-of-Useful-Work.</em> arXiv:2606.04819, June 2026. A single third-party study, cited for its argument; its measurements were not reproduced here.</li>
+    <li>R. Pass. <em>The Economics of Proof-of-Useful-Work.</em> arXiv:2606.06700.</li>
+    <li>R. Freivalds. <em>Probabilistic machines can use less running time.</em> IFIP Congress, 1977.</li>
+    <li>NIST. <em>FIPS 205: Stateless Hash-Based Digital Signature Standard.</em> 2024.</li>
+    <li>T. Perrin. <em>The Noise Protocol Framework.</em> noiseprotocol.org.</li>
+    <li>J. O'Connor, J.-P. Aumasson, S. Neves, Z. Wilcox-O'Hearn. <em>BLAKE3: one function, fast everywhere.</em></li>
+    <li>Bitcoin Cash Node. <em>aserti3-2d difficulty adjustment algorithm (ASERT)</em>, specification and test vectors, 2020.</li>
+    <li>Ethereum Classic. <em>ECIP-1100: Modified Exponential Subjective Scoring (MESS).</em></li>
+    <li>D. J. Bernstein et al. <em>Ed25519</em>; IETF RFC 8032. See also RFC 9106 (Argon2), RFC 8439 (ChaCha20-Poly1305) and BIP-350 (Bech32m).</li>
+    <li>I. Eyal, E. G. Sirer. <em>Majority is not enough: Bitcoin mining is vulnerable.</em> 2014.</li>
+    <li>Zawy12. <em>LWMA difficulty algorithm.</em> GitHub.</li>
+    <li>H. Touvron et al. <em>Training data-efficient image transformers and distillation through attention (DeiT).</em> arXiv:2012.12877.</li>
+    <li>S. Xiao et al. <em>C-Pack: Packaged Resources to Advance General Chinese Embedding (BGE).</em> arXiv:2309.07597.</li>
+    <li>R. Eldan, Y. Li. <em>TinyStories: How Small Can Language Models Be and Still Speak Coherent English?</em> arXiv:2305.07759.</li>
+    <li>W. Wang et al. <em>MiniLM: Deep Self-Attention Distillation for Task-Agnostic Compression of Pre-Trained Transformers.</em> arXiv:2002.10957.</li>
+    <li>K. He et al. <em>Deep Residual Learning for Image Recognition.</em> arXiv:1512.03385.</li>
+  </ol>
+</section>
+
+</article>
+</div>
+</main>
+
+<a class="to-top" id="to-top" href="#" aria-label="Back to top">↑</a>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer-top">
+      <div>
+        <a class="brand" href="/"><img src="/mark.svg" alt="" width="28" height="28">vearl</a>
+        <div class="tagline">Proof of Useful Work · Verified Compute</div>
+      </div>
+      <div>
+        <h3>Protocol</h3>
+        <ul><li><a href="/#protocol">How it works</a></li><li><a href="/#workloads">Workloads</a></li><li><a href="/#verification">Verification</a></li><li><a href="/whitepaper">Whitepaper</a></li></ul>
+      </div>
+      <div>
+        <h3>Project</h3>
+        <ul><li><a href="/#security">Security</a></li><li><a href="/#status">Status</a></li><li><a href="/#faq">FAQ</a></li><li><a href="/credits">Photo credits</a></li><li><a href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Discord</a></li><li><a href="https://x.com/vearl_org" target="_blank" rel="noopener">X</a></li><li><span class="mail" data-u="contact" data-d="vearl.org" data-label="Contact">contact [at] vearl.org</span></li></ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026 Vearl · Founder: Clovis Anicet</span>
+      <span class="legal">Testnet software. Testnet tokens have no value and are not for sale. The code has not been audited by a third party. Nothing on this site is investment advice.</span>
+    </div>
+  </div>
+</footer>
+
+<script src="/assets/whitepaper.js" defer></script>
+</body>
+</html>
