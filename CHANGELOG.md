@@ -16,6 +16,10 @@ First public release of the source code.
   proofs, header-based light client, SLH-DSA post-quantum accounts (optional).
 - Noise XX encrypted peer protocol with pinned node keys.
 
+### Release candidates
+- rc11: `vearl-wallet sign` and `vearl-wallet verify` (signature proving ownership of an address).
+- rc10: the command-line tools print a help text and, on Windows, wait for Enter instead of closing when double-clicked.
+
 ### Programs
 - `node`, `vearl-miner` (wallet assistant, mines Vearl with the whole GPU), `vearl-cli`, `vearl-wallet` (24 words, Argon2id),
   `vearl-genesis`, `vearl-faucet`, `vearl-pool` and `vearl-poolminer` (pool protocol `vpool/1`).
