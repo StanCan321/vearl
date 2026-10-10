@@ -1,0 +1,14 @@
+/* Participate page: a few blocks on top of site.css / explorer.css / compute.css */
+.pp-wrap { display: grid; gap: 24px; margin-top: 28px; }
+.pp-wrap .panel-body p { margin: 0 0 12px; color: var(--ink-2); font-size: 15.5px; line-height: 1.6; }
+.pp-wrap .panel-body p:last-child { margin-bottom: 0; }
+.pp-wrap .panel-body ul, .pp-wrap .panel-body ol { margin: 0 0 12px; padding-left: 22px; color: var(--ink-2); font-size: 15.5px; line-height: 1.65; }
+.pp-wrap .panel-body li { margin-bottom: 6px; }
+.pp-wrap .panel-body b { color: var(--ink); font-weight: 600; }
+.cmd { display: block; margin: 12px 0; padding: 12px 14px; background: rgba(159, 240, 226, .06); border: 1px solid var(--line-2); font: 500 13px/1.55 var(--mono); color: var(--mint); white-space: pre-wrap; overflow-wrap: anywhere; }
+.pp-note { border: 1px solid var(--line-2); background: rgba(240, 198, 116, .06); padding: 14px 16px; color: var(--ink-2); font-size: 14.5px; line-height: 1.55; }
+.pp-note b { color: var(--warn); }
+.pp-cta { display: flex; flex-wrap: wrap; gap: 12px; margin: 4px 0 0; }
+.pp-qa dt { font-weight: 600; color: var(--ink); margin-top: 16px; }
+.pp-qa dt:first-child { margin-top: 0; }
+.pp-qa dd { margin: 6px 0 0; color: var(--ink-2); font-size: 15.5px; line-height: 1.6; }

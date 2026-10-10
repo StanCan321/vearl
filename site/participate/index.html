@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vearl Participate · Mine the testnet</title>
+<meta name="description" content="Everything you need to take part in the Vearl public testnet and be considered for the contributors rewards planned on the mainnet: requirements, download, start, points, eligibility and registration.">
+<meta name="theme-color" content="#07080b">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="canonical" href="https://vearl.org/participate/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Vearl">
+<meta property="og:title" content="Vearl Participate">
+<meta property="og:description" content="How to mine the Vearl testnet and be considered for the mainnet contributors rewards.">
+<meta property="og:image" content="https://vearl.org/og-image.png?v=3">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@vearl_org">
+<link rel="preload" href="/fonts/instrument-sans-normal-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/ibm-plex-mono-normal-500.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/instrument-serif-italic-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="stylesheet" href="/assets/explorer.css">
+<link rel="stylesheet" href="/assets/compute.css">
+<link rel="stylesheet" href="/assets/participate.css">
+</head>
+<body class="xp cp">
+<a class="skip" href="#app">Skip to content</a>
+
+<header class="nav solid" id="nav">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="Vearl, home"><img src="/mark.svg" alt="" width="28" height="28">vearl<span class="x-sub">participate</span></a>
+    <ul class="nav-links" id="menu">
+      <li><a href="/participate/" aria-current="page">Participate</a></li>
+      <li><a href="/leaderboard/">Leaderboard</a></li>
+      <li><a href="/explorer/">Explorer</a></li>
+      <li><a href="/whitepaper">Whitepaper</a></li>
+      <li><a href="/">vearl.org</a></li>
+    </ul>
+    <button class="burger" id="burger" aria-label="Open menu" aria-expanded="false" aria-controls="menu"><span></span><span></span><span></span></button>
+  </div>
+</header>
+
+<main class="x-main" id="app" tabindex="-1">
+  <section class="x-hero cp-hero"><div class="wrap">
+    <div class="eyebrow">Vearl public testnet · October 23, 2026, 16:00 UTC</div>
+    <h1>Mine the testnet. <span class="serif">Be counted for the mainnet.</span></h1>
+    <p class="lede">Everything you need to take part: what to install, how to start, how contributions are counted, and what to do to be considered for the thank-you the team plans for the testnet miners on the mainnet.</p>
+  </div></section>
+
+  <div class="wrap pp-wrap">
+
+    <div class="pp-note"><b>Please read first.</b> The testnet tokens have no value and cannot be sold or converted. The reward on the mainnet is a <b>plan of the team, not a promise</b>: no amount is guaranteed, and the rules can change (changes are announced before they apply). Nothing here is investment advice. The code has not been audited by a third party and the network can be reset.</div>
+
+    <section class="panel">
+      <div class="panel-head"><h2>1. What you need</h2></div>
+      <div class="panel-body">
+        <ul>
+          <li><b>A computer with an NVIDIA GPU of the Ampere generation or newer</b>: RTX 30xx, 40xx or 50xx, A-series, L-series, H100. Without a GPU the miner runs on the CPU, but very slowly.</li>
+          <li><b>The NVIDIA driver</b>: Windows 580 or newer, Linux 575 or newer.</li>
+          <li><b>Windows 10 or 11 (64-bit)</b>, or <b>Linux 64-bit</b> with glibc 2.35 or newer (for example Ubuntu 22.04 or later).</li>
+          <li>An Internet connection. The miner connects to the seed node and downloads the chain, which takes a few minutes the first time.</li>
+          <li>A pen and a sheet of paper: the wallet gives you 24 recovery words that you must write down.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>2. Download and start</h2></div>
+      <div class="panel-body">
+        <ol>
+          <li>Download the archive for your system from the <a class="lnk" href="https://github.com/vearl-verified-compute/vearl/releases" target="_blank" rel="noopener">Releases page on GitHub</a>: the <span class="mono">windows-x86_64.zip</span> or the <span class="mono">linux-x86_64.tar.gz</span>. Download only from there. Check the SHA-256 against the <span class="mono">SHA256SUMS.txt</span> file of the release if you want to be sure.</li>
+          <li>Extract it anywhere. On Windows, double-click <span class="mono">vearl-miner.exe</span>. On Linux, open a terminal in the folder and run <span class="mono">./vearl-miner</span>.</li>
+          <li>The first time, an assistant creates your wallet. It shows <b>24 recovery words once</b>: write them on paper. They are the only backup of your wallet. Never photograph them, never type them anywhere, and never give them to anybody: nobody from the project will ever ask for them.</li>
+          <li>Leave the window open. The miner starts mining as soon as the testnet opens, and prints a status line every 10 seconds (it is also saved in <span class="mono">miner.log</span>).</li>
+        </ol>
+        <p>The miner mines <b>Vearl only</b>. An optional add-on can also mine Quantus (QTC) with the same GPU, but it is off by default and <b>does not count</b> for the testnet rewards.</p>
+        <p>Windows may warn about an unknown program (the files are not code-signed yet) and some antivirus programs flag any miner. You can read the source code and build it yourself: <a class="lnk" href="https://github.com/vearl-verified-compute/vearl" target="_blank" rel="noopener">github.com/vearl-verified-compute/vearl</a>.</p>
+        <div class="pp-cta"><a class="btn primary" href="https://github.com/vearl-verified-compute/vearl/releases" target="_blank" rel="noopener">Download the miner</a></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>3. Check that you are mining</h2></div>
+      <div class="panel-body">
+        <p>Your wallet address starts with <span class="mono">vrl1</span> and is shown by the miner at start. After the testnet opens:</p>
+        <ul>
+          <li>the status line shows <span class="mono">blocks found</span> going up (with one machine it can take a while: blocks are a lottery, and your share of them follows your share of the computing power);</li>
+          <li>the <a class="lnk" href="/explorer/">explorer</a> shows every block, job and miner;</li>
+          <li>the <a class="lnk" href="/leaderboard/">leaderboard</a> shows your points, computed only from the blocks of the chain. Paste your address in its search box.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>4. How contributions are counted</h2></div>
+      <div class="panel-body">
+        <p>The team plans to set aside part of the mainnet supply (intended: 5 %) to thank the people who help secure the testnet, shared in proportion to points. Points come <b>only from the blocks that your address mined</b>: nobody can inflate them off-chain, and anybody can recompute the result from the published blocks.</p>
+        <div class="kv">
+          <div class="k">A valid block</div><div class="v">1 point</div>
+          <div class="k">A block that carried paid work</div><div class="v">1.5 points (a real job from a client)</div>
+          <div class="k">Early period</div><div class="v">first 3 days after the start: points ×1.25</div>
+          <div class="k">Several machines</div><div class="v">allowed, with the same address or not: your total is the sum of your points</div>
+        </div>
+        <p>To be eligible for the thank-you you must also:</p>
+        <ul>
+          <li>be <b>active on at least 3 different days</b> (24-hour windows since the start) and hold at least <b>0.005 %</b> of all the points;</li>
+          <li><b>register your address</b> with a signature that proves you own it (next section);</li>
+          <li>play fair: no fraud (a wrong result published by your worker, forged registrations) and no attack on the network outside the rules of the security policy;</li>
+          <li>be one participant per person, of legal age, in a country that the team is allowed to reward (the list will be published before registration opens), and accept the terms.</li>
+        </ul>
+        <p>After the testnet, the team takes a final snapshot, publishes the blocks, the script and the list of excluded addresses with reasons, and leaves 14 days to contest a result. The plan is to deliver the reward at the mainnet launch, partly at once and the rest over several months. The full rules are in <a class="lnk" href="https://github.com/vearl-verified-compute/vearl/blob/main/docs/19-testnet-rewards.md" target="_blank" rel="noopener">docs/19</a>.</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>5. Register your address</h2></div>
+      <div class="panel-body">
+        <p>Registration opens during the testnet. The date and the way to send your registration will be announced on the <a class="lnk" href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Discord</a> and on <a class="lnk" href="https://x.com/vearl_org" target="_blank" rel="noopener">X</a>. You can already prepare it, it takes a minute. A signature proves that you own the address without revealing any secret.</p>
+        <ol>
+          <li>Open a terminal in the miner folder (Windows: click the address bar of the folder, type <span class="mono">cmd</span> and press Enter). Your wallet file is <span class="mono">wallet.json</span>, in that folder.</li>
+          <li>Show your address:
+            <span class="cmd">vearl-wallet address --file wallet.json</span>
+          </li>
+          <li>Sign the registration message, replacing ADDRESS with your address and CONTACT with your Discord name or e-mail (the wallet asks your password):
+            <span class="cmd">vearl-wallet sign --file wallet.json --message "Vearl testnet rewards registration. Address: ADDRESS. Contact: CONTACT. I accept the terms in docs/19."</span>
+          </li>
+          <li>Keep the three lines it prints (address, message, signature). When registration opens, you will send them through the channel announced by the team.</li>
+        </ol>
+        <p>On Linux, use <span class="mono">./vearl-wallet</span> in the same way. This needs release rc11 or newer.</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Good to know</h2></div>
+      <div class="panel-body">
+        <dl class="pp-qa">
+          <dt>Do the testnet tokens have a value?</dt>
+          <dd>No. They cannot be bought, sold or converted. They only exist to test the network.</dd>
+          <dt>Can the team or anybody ask for my 24 words or my password?</dt>
+          <dd>Never. Anyone who asks is a scammer, including a message that seems to come from the team. We will not contact you first about your wallet.</dd>
+          <dt>What if I lose my 24 words?</dt>
+          <dd>Your wallet and the points linked to that address cannot be recovered. Write them on paper and keep them safe.</dd>
+          <dt>Can I use a pool?</dt>
+          <dd>The blocks are what is counted, so mine with your own address with the official miner. Pool mining is documented in the repository for people who run pools.</dd>
+          <dt>Can the testnet be reset?</dt>
+          <dd>Yes. Your points are kept: the team publishes the blocks and the leaderboard data at each snapshot.</dd>
+          <dt>Where do I ask a question?</dt>
+          <dd>On the <a class="lnk" href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Discord</a>, or write to contact@vearl.org. To report a security problem, write to security@vearl.org and do not post it publicly.</dd>
+        </dl>
+        <div class="pp-cta">
+          <a class="btn" href="/leaderboard/">Leaderboard</a>
+          <a class="btn" href="/explorer/">Explorer</a>
+          <a class="btn" href="https://github.com/vearl-verified-compute/vearl/blob/main/docs/19-testnet-rewards.md" target="_blank" rel="noopener">Full rules (docs/19)</a>
+          <a class="btn" href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Join the Discord</a>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer-top">
+      <div>
+        <a class="brand" href="/"><img src="/mark.svg" alt="" width="28" height="28">vearl</a>
+        <div class="tagline">Proof of Useful Work · Verified Compute</div>
+      </div>
+      <div>
+        <h3>Testnet</h3>
+        <ul><li><a href="/participate/">Participate</a></li><li><a href="/leaderboard/">Leaderboard</a></li><li><a href="/explorer/">Explorer</a></li><li><a href="/whitepaper">Whitepaper</a></li></ul>
+      </div>
+      <div>
+        <h3>Vearl</h3>
+        <ul><li><a href="/">Website</a></li><li><a href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Discord</a></li><li><a href="https://x.com/vearl_org" target="_blank" rel="noopener">X</a></li><li><a href="https://github.com/vearl-verified-compute/vearl" target="_blank" rel="noopener">GitHub</a></li></ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div class="legal">Testnet. Tokens have no value and are not for sale. Any thank-you on the mainnet is a plan of the team, not a promise or an investment. The code has not been audited by a third party, and the network can be reset.</div>
+      <div>© Vearl</div>
+    </div>
+  </div>
+</footer>
+
+<script src="/assets/nav.js"></script>
+</body>
+</html>
