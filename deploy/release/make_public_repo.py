@@ -35,6 +35,8 @@ REDACT = [
     ("deploy/deploy-site.sh", r"id_ed25519_vps4", "id_ed25519"),
     ("deploy/release/publish_release.sh", r"\$\{VEARL_SSH_HOST:-root@vearl\.org\}", "${VEARL_SSH_HOST:?set VEARL_SSH_HOST, for example root@your-server}"),
     ("deploy/release/publish_release.sh", r"id_ed25519_vps4", "id_ed25519"),
+    ("deploy/rewards/install-rewards.sh", r"\$\{VEARL_SSH_HOST:-root@vearl\.org\}", "${VEARL_SSH_HOST:?set VEARL_SSH_HOST, for example root@your-server}"),
+    ("deploy/rewards/install-rewards.sh", r"id_ed25519_vps4", "id_ed25519"),
 ]
 # generated model files above this size are not stored (vearl-core/models/README.md says how to rebuild them)
 BIG_MODEL = 10_000_000

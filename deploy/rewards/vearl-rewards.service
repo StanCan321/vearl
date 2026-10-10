@@ -1,0 +1,14 @@
+[Unit]
+Description=Vearl testnet contributors leaderboard (docs/19)
+After=vearl-node.service
+
+[Service]
+Type=oneshot
+User=vearl
+Group=vearl
+ExecStart=/opt/vearl/bin/vearl-rewards.sh
+Nice=10
+ProtectSystem=strict
+ReadWritePaths=/var/www/vearl-rewards
+PrivateTmp=true
+NoNewPrivileges=true
