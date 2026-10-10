@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VEARL testnet — explorer</title>
+<style>
+  :root { --bg:#0f1218; --panel:#171c26; --line:#262e3d; --fg:#e6e9ef; --dim:#8b95a8; --acc:#5cc8ff; --ok:#67d38a; --warn:#ffb454; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f5f6f8; --panel:#fff; --line:#dde1e8; --fg:#1b2130; --dim:#5d6678; --acc:#0a6bb0; --ok:#1b8a4b; --warn:#a9650a; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { padding:14px 16px; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+  header h1 { font-size:16px; margin:0; letter-spacing:.3px; }
+  .badge { font-size:12px; padding:2px 8px; border:1px solid var(--line); border-radius:999px; color:var(--dim); }
+  .badge b { color:var(--fg); font-weight:600; }
+  main { max-width:1100px; margin:0 auto; padding:16px; }
+  form { display:flex; gap:8px; margin:0 0 16px; }
+  input { flex:1; min-width:0; background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font:inherit; }
+  button { background:var(--acc); color:#06121c; border:0; border-radius:8px; padding:10px 14px; font-weight:600; cursor:pointer; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:16px; overflow-x:auto; }
+  h2 { font-size:14px; margin:0 0 8px; color:var(--dim); font-weight:600; text-transform:uppercase; letter-spacing:.6px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--dim); font-weight:500; }
+  td.mono, .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px; }
+  a { color:var(--acc); text-decoration:none; cursor:pointer; }
+  a:hover { text-decoration:underline; }
+  .kv { display:grid; grid-template-columns:max-content 1fr; gap:4px 16px; }
+  .kv div:nth-child(odd) { color:var(--dim); }
+  .kv div { overflow-wrap:anywhere; }
+  .native { color:var(--dim); } .job, .layer { color:var(--ok); font-weight:600; }
+  .err { color:var(--warn); }
+  footer { color:var(--dim); font-size:12px; padding:0 16px 24px; text-align:center; }
+  @media (max-width:600px) { main { padding:10px; } th, td { padding:5px 4px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>VEARL testnet</h1>
+  <span class="badge">height <b id="s-height">–</b></span>
+  <span class="badge">peers <b id="s-peers">–</b></span>
+  <span class="badge">mempool <b id="s-mempool">–</b></span>
+  <span class="badge">minted <b id="s-minted">–</b></span>
+  <span class="badge">burned <b id="s-burned">–</b></span>
+</header>
+<main>
+  <form id="search"><input id="q" placeholder="height, block hash, transaction id, vrl1… address, job id" autocomplete="off" spellcheck="false"><button type="submit">Search</button></form>
+  <div id="view"></div>
+  <p id="msg" class="err"></p>
+</main>
+<footer>TESTNET, unaudited — no value. The “useful work blocks” (job / layer) are those mined while running a client's paid computation.</footer>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const view = $("view");
+
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") e.className = v; else if (k === "onclick") e.addEventListener("click", v); else e.setAttribute(k, v);
+  }
+  for (const k of kids) e.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  return e;
+}
+const short = (h, n = 10) => (h && h.length > 2 * n ? h.slice(0, n) + "…" + h.slice(-n) : h);
+const link = (text, route) => el("a", { onclick: () => go(route) }, text);
+const ago = (ts) => { const d = Math.max(0, Math.floor(Date.now() / 1000) - ts); return d < 60 ? d + " s" : d < 3600 ? Math.floor(d / 60) + " min" : Math.floor(d / 3600) + " h"; };
+
+async function api(path) {
+  const r = await fetch(path);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+function kv(obj) {
+  const g = el("div", { class: "kv" });
+  for (const [k, v] of obj) { g.append(el("div", {}, k)); g.append(el("div", {}, v)); }
+  return g;
+}
+
+function workCell(w) {
+  return el("span", { class: w.type }, w.type === "native" ? "security" : w.type === "job" ? "client compute" : "layer " + w.layer);
+}
+
+function blocksTable(list) {
+  const t = el("table", {});
+  t.append(el("tr", {}, ...["#", "hash", "age", "miner", "work", "txs"].map((h) => el("th", {}, h))));
+  for (const b of list) {
+    t.append(el("tr", {},
+      el("td", {}, link(b.height, "block/" + b.height)),
+      el("td", { class: "mono" }, short(b.hash, 8)),
+      el("td", {}, ago(b.timestamp)),
+      el("td", { class: "mono" }, link(short(b.miner, 8), "account/" + b.miner)),
+      el("td", {}, workCell(b.work)),
+      el("td", {}, b.tx_count)));
+  }
+  return t;
+}
+
+async function home() {
+  const s = await api("/api/status");
+  $("s-height").textContent = s.height; $("s-peers").textContent = s.peers; $("s-mempool").textContent = s.mempool;
+  $("s-minted").textContent = s.supply.minted; $("s-burned").textContent = s.supply.burned;
+  const b = await api("/api/blocks?limit=25");
+  view.replaceChildren(
+    el("section", {}, el("h2", {}, "Network"), kv([
+      ["Total work", s.total_work], ["Target", s.target], ["Retargeting", s.retarget],
+      ["Work parameters", "n=" + s.params.n + "  tile=" + s.params.tile + "  rank=" + s.params.rank + "  fold=" + s.params.fold_k],
+      ["Jobs", s.jobs + " simple, " + s.inference_jobs + " inference"]])),
+    el("section", {}, el("h2", {}, "Latest blocks"), blocksTable(b.blocks)));
+}
+
+async function showBlock(id) {
+  const b = await api("/api/block/" + id);
+  const sec = el("section", {}, el("h2", {}, "Block " + b.height), kv([
+    ["Hash", el("span", { class: "mono" }, b.hash)], ["Parent", el("span", { class: "mono" }, b.prev)],
+    ["Timestamp", b.timestamp + " (" + ago(b.timestamp) + ")"], ["Miner", link(b.miner, "account/" + b.miner)],
+    ["Work", workCell(b.work)], ["Winning tile", b.tile.join(", ")], ["Base reward", b.reward + " VRL"],
+    ["Target", b.target]]));
+  const txs = el("section", {}, el("h2", {}, "Transactions (" + b.tx_count + ")"));
+  if (b.txs.length) {
+    const t = el("table", {});
+    t.append(el("tr", {}, ...["id", "from", "type", "detail"].map((h) => el("th", {}, h))));
+    for (const x of b.txs) {
+      const k = x.kind, extra = Object.entries(k).filter(([n]) => n !== "type").map(([n, v]) => n + "=" + (typeof v === "string" && v.length > 20 ? short(v, 6) : v)).join("  ");
+      t.append(el("tr", {}, el("td", { class: "mono" }, link(short(x.id, 8), "tx/" + x.id)), el("td", { class: "mono" }, link(short(x.from, 8), "account/" + x.from)), el("td", {}, k.type), el("td", { class: "mono" }, extra)));
+    }
+    txs.append(t);
+  }
+  const nav = el("p", {}, b.height > 0 ? link("← block " + (b.height - 1), "block/" + (b.height - 1)) : "", "  ", link("block " + (b.height + 1) + " →", "block/" + (b.height + 1)));
+  view.replaceChildren(sec, txs, nav);
+}
+
+async function showTx(id) {
+  const t = await api("/api/tx/" + id);
+  const rows = [["Id", el("span", { class: "mono" }, t.id)], ["Status", t.status + (t.confirmations !== undefined ? " (" + t.confirmations + " confirmations)" : "")],
+    ["From", link(t.from, "account/" + t.from)], ["Nonce", t.nonce], ["Fee", t.fee + " VRL"]];
+  if (t.height !== undefined) rows.push(["Block", link(t.height, "block/" + t.height)]);
+  for (const [k, v] of Object.entries(t.kind)) rows.push([k, el("span", { class: "mono" }, typeof v === "object" ? JSON.stringify(v) : v)]);
+  view.replaceChildren(el("section", {}, el("h2", {}, "Transaction"), kv(rows)));
+}
+
+async function showAccount(addr) {
+  const a = await api("/api/account/" + addr);
+  view.replaceChildren(el("section", {}, el("h2", {}, "Account"), kv([
+    ["Address", el("span", { class: "mono" }, a.address)], ["Balance", a.balance + " VRL"], ["Nonce", a.nonce + " (next " + a.next_nonce + ")"],
+    ["Worker reputation", a.reputation.done + " settled, " + a.reputation.slashed + " penalised, " + a.reputation.expired + " abandoned"]])));
+  const h = await api("/api/address/" + addr + "/txs?limit=25");
+  const sec = el("section", {}, el("h2", {}, "Recent transactions"));
+  if (h.txs.length) {
+    const t = el("table", {});
+    t.append(el("tr", {}, ...["direction", "status", "type", "amount", "id"].map((x) => el("th", {}, x))));
+    for (const x of h.txs) {
+      t.append(el("tr", {}, el("td", {}, x.direction === "in" ? "received" : "sent"), el("td", {}, x.status === "pending" ? "pending" : x.confirmations + " conf."),
+        el("td", {}, x.kind.type), el("td", {}, x.kind.amount || ""), el("td", { class: "mono" }, link(short(x.id, 8), "tx/" + x.id))));
+    }
+    sec.append(t);
+  } else sec.append(el("p", {}, "No transactions."));
+  view.append(sec);
+}
+
+async function showJob(id) {
+  const j = await api("/api/job/" + id);
+  const rows = [["Id", el("span", { class: "mono" }, j.id)], ["Type", j.kind === "inference" ? "multi-layer inference" : "matrix product"], ["Status", j.status],
+    ["Client", link(j.client, "account/" + j.client)], ["Worker", j.worker ? link(j.worker, "account/" + j.worker) : "—"], ["Escrow net", j.escrow_net + " VRL"]];
+  if (j.kind === "inference") rows.push(["Layers", j.layers_posted + " / " + j.layers_total]);
+  else { rows.push(["Best bid", j.best_bid ? j.best_bid.price + " VRL" : "—"], ["Pending data requests", j.pending_data_requests], ["Served entries", j.served_entries]); }
+  view.replaceChildren(el("section", {}, el("h2", {}, "Job"), kv(rows)));
+}
+
+async function go(route) { location.hash = "#/" + route; }
+
+async function render() {
+  $("msg").textContent = "";
+  const parts = location.hash.replace(/^#\/?/, "").split("/");
+  try {
+    if (!parts[0]) await home();
+    else if (parts[0] === "block") await showBlock(parts[1]);
+    else if (parts[0] === "tx") await showTx(parts[1]);
+    else if (parts[0] === "account") await showAccount(parts[1]);
+    else if (parts[0] === "job") await showJob(parts[1]);
+    else await home();
+  } catch (e) { $("msg").textContent = e.message; }
+  if (!parts[0]) follow(); // home page: updated as soon as a block arrives (long poll), without polling
+}
+
+let following = 0;
+async function follow() {
+  const me = ++following;
+  try {
+    const s = await api("/api/status");
+    while (me === following && !location.hash.replace(/^#\/?/, "")) {
+      const w = await api("/api/wait?height=" + s.height + "&timeout=25");
+      if (me !== following) return;
+      if (!w.timed_out) return render();
+    }
+  } catch (e) { if (me === following) setTimeout(follow, 3000); }
+}
+
+$("search").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const q = $("q").value.trim();
+  if (!q) return go("");
+  if (/^\d+$/.test(q)) return go("block/" + q);
+  if (/^vrl1[0-9a-z]+$/.test(q)) return go("account/" + q);
+  if (/^[0-9a-fA-F]{64}$/.test(q)) {
+    // hash: try block, then transaction, then job
+    api("/api/block/" + q).then(() => go("block/" + q)).catch(() => api("/api/tx/" + q).then(() => go("tx/" + q)).catch(() => go("job/" + q)));
+    return;
+  }
+  $("msg").textContent = "Unrecognised format.";
+});
+window.addEventListener("hashchange", render);
+render();
+</script>
+</body>
+</html>

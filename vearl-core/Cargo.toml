@@ -1,0 +1,136 @@
+[package]
+name = "vearl-core"
+version = "0.1.0"
+edition = "2021"
+description = "VEARL testnet core: fee-bound proof of useful work + in-protocol compute market"
+license = "Apache-2.0"
+homepage = "https://vearl.org"
+publish = false
+
+[dependencies]
+snow = "0.9"
+serde_json = "1"
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+bip39 = "2"
+bech32 = "0.11"
+rpassword = "7"
+base64 = "0.22"
+blake3 = "1"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+serde = { version = "1", features = ["derive"] }
+bincode = "1.3"
+rand = "0.8"
+# post-quantum signatures SLH-DSA-SHAKE-128s: `fips205` crate (final FIPS 205, pure Rust, no unsafe; UNAUDITED)
+fips205 = "=0.4.1"
+
+[[bin]]
+name = "devnet"
+path = "src/bin/devnet.rs"
+
+[profile.release]
+opt-level = 3
+
+[features]
+default = []
+devtools = [] # test options (--partner-cmd, free --qtc-args) ABSENT from release builds (docs/17)
+gpu = [] # CUDA kernel (nvcc required); VEARL_CUDA_ARCH=86 by default (A10)
+
+[[bin]]
+name = "gpubench"
+path = "src/bin/gpubench.rs"
+required-features = ["gpu"]
+
+[[test]]
+name = "gpu"
+path = "tests/gpu.rs"
+required-features = ["gpu"]
+
+[[bin]]
+name = "gpumine"
+path = "src/bin/gpumine.rs"
+required-features = ["gpu"]
+
+[[bin]]
+name = "node"
+path = "src/bin/node.rs"
+
+[[bin]]
+name = "vearl-cli"
+path = "src/bin/cli.rs"
+
+[[bin]]
+name = "attackreport"
+path = "src/bin/attackreport.rs"
+
+[[bin]]
+name = "vearl-wallet"
+path = "src/bin/wallet.rs"
+
+[[bin]]
+name = "vearl-genesis"
+path = "src/bin/genesis.rs"
+
+[[bin]]
+name = "vearl-faucet"
+path = "src/bin/faucet.rs"
+
+[[bin]]
+name = "vearl-model"
+path = "src/bin/model.rs"
+
+[[bin]]
+name = "vearl-vectors"
+path = "src/bin/vectors.rs"
+
+[[bin]]
+name = "vearl-chain-vectors"
+path = "src/bin/chainvectors.rs"
+
+[[bin]]
+name = "vearl-market-vectors"
+path = "src/bin/marketvectors.rs"
+
+[[bin]]
+name = "vearl-prog-vectors"
+path = "src/bin/progvectors.rs"
+
+[[bin]]
+name = "vearl-netfuzz"
+path = "src/bin/netfuzz.rs"
+
+[[bin]]
+name = "vearl-pq-vectors"
+path = "src/bin/pqvectors.rs"
+
+[[bin]]
+name = "vearl-tiled-vectors"
+path = "src/bin/tiledvectors.rs"
+
+[[bin]]
+name = "vearl-l2"
+path = "src/bin/l2tool.rs"
+
+[[bin]]
+name = "proofbench"
+path = "src/bin/proofbench.rs"
+
+[[bin]]
+name = "vearl-pool"
+path = "src/bin/pool.rs"
+
+[[bin]]
+name = "vearl-poolminer"
+path = "src/bin/poolminer.rs"
+
+[[test]]
+name = "pool"
+path = "tests/pool.rs"
+
+[[bin]]
+name = "vearl-miner"
+path = "src/bin/miner.rs"
+
+[[test]]
+name = "feeguard"
+path = "tests/feeguard.rs"
