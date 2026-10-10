@@ -1,0 +1,13 @@
+[Unit]
+Description=Vearl node health check (height, peers, supply invariant)
+
+[Service]
+Type=oneshot
+User=vearl
+ExecStart=/usr/bin/python3 /opt/vearl/bin/vearl-watch.py --api http://127.0.0.1:8545 --state /var/lib/vearl/watch.json --webhook-file /etc/vearl/alert-webhook
+# the alert-webhook file (one line: a Discord webhook URL) is optional and readable by the vearl group only
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/vearl

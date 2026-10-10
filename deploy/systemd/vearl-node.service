@@ -1,0 +1,30 @@
+[Unit]
+Description=VEARL testnet node
+Documentation=file:///opt/vearl/docs/06-testnet-runbook.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=vearl
+Group=vearl
+# --api stays on the loopback interface: public exposure goes through nginx (TLS + rate limiting)
+ExecStart=/opt/vearl/bin/node --genesis /etc/vearl/genesis.json --listen 0.0.0.0:9000 \
+  --api 127.0.0.1:8545 --data-dir /var/lib/vearl \
+  $VEARL_EXTRA_ARGS
+EnvironmentFile=-/etc/vearl/node.env
+Restart=on-failure
+RestartSec=5
+# hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=false
+ReadWritePaths=/var/lib/vearl
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Vearl fee audit (beacons of the combined miner vs the Quantus pool API)
+After=vearl-node.service
+
+[Service]
+Type=oneshot
+User=vearl
+Group=vearl
+ExecStart=/usr/bin/python3 /opt/vearl/feeaudit/feeaudit.py --beacons http://127.0.0.1:8545/api/fee/beacons --known /etc/vearl/known-hashes.json --state /var/lib/vearl/feeaudit/state.json --out /var/lib/vearl/feeaudit/fee-report.json --public /var/lib/vearl/feeaudit/compliance.json
+# exit code 1 = at least one miner is flagged: not a failure of the service
+SuccessExitStatus=0 1
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/vearl/feeaudit

@@ -1,0 +1,22 @@
+[Unit]
+Description=VEARL testnet faucet
+After=vearl-node.service
+Requires=vearl-node.service
+
+[Service]
+User=vearl
+Group=vearl
+# The faucet wallet password is supplied by systemd (LoadCredential): never as an argument nor in the environment.
+LoadCredential=faucet-password:/etc/vearl/faucet-password
+ExecStart=/opt/vearl/bin/vearl-faucet --node 127.0.0.1:9000 --wallet /etc/vearl/faucet-wallet.json \
+  --password-file %d/faucet-password --listen 127.0.0.1:8081 --amount 25 --cooldown-secs 3600 --max-per-day 5000
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

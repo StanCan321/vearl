@@ -1,0 +1,22 @@
+{
+  "network": "vearl-testnet-1",
+  "params": {
+    "n": 1024,
+    "tile": 16,
+    "rank": 63,
+    "fold_k": 64
+  },
+  "alloc": [
+    {
+      "address": "vrl1pjz76654u725l28d5krylnweyk0yay53cw5pdamsj9g0kqpp232qr5nucm",
+      "amount": "1000000.00000000"
+    }
+  ],
+  "timestamp": 1792771200,
+  "target": "6148914691",
+  "timing": {
+    "challenge_secs": 300,
+    "serve_secs": 120
+  },
+  "retarget": "Asert"
+}

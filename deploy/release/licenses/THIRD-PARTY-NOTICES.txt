@@ -1,0 +1,21 @@
+THIRD-PARTY SOFTWARE SHIPPED WITH THE OPTIONAL QUANTUS ADD-ON OF THE VEARL MINER
+===========================================================================
+
+1. Quantus external miner ("quantus-miner")
+   Copyright Quantus Network and contributors. Licensed under the Apache License, Version 2.0
+   (full text: quantus-miner-LICENSE-Apache-2.0.txt in this folder).
+   Source: https://github.com/Quantus-Network/quantus-miner
+   Version 4.2.0, git commit c7838cbc86f7d74477da1771139f377a8e438072 (2026-09-18).
+   The program is built from that source WITHOUT modification (cargo build --release -p miner-cli).
+   Vearl is not affiliated with, endorsed by or paid by Quantus Network. The Vearl miner starts this program as a separate
+   process and sets its command line (pool address, your payout address, and the Vearl development fee described in QUANTUS-ADDON.txt).
+
+2. NVIDIA NVRTC runtime compiler libraries
+   Windows: nvrtc64_120_0.dll, nvrtc-builtins64_128.dll (CUDA 12.8).  Linux: libnvrtc.so.12, libnvrtc-builtins.so.12.9 (CUDA 12.9).
+   Copyright NVIDIA Corporation. These files are redistributable components of the NVIDIA CUDA Toolkit and are shipped unmodified
+   under the terms of the NVIDIA CUDA Toolkit End User License Agreement (https://docs.nvidia.com/cuda/eula/index.html,
+   Attachment A: redistributable software). They are used only by quantus-miner, to compile its CUDA kernels on your GPU.
+   The NVIDIA driver is NOT included: install it from NVIDIA.
+
+3. Vearl itself
+   The Vearl node, wallet, miner launcher and tools: see the source repository and its LICENSE file.

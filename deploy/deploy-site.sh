@@ -1,0 +1,37 @@
+#!/bin/bash
+# Publish the website to the VPS: public files only (site/tools stays local), then optionally the nginx config.
+# CSS/JS/font-stylesheet URLs get a content fingerprint (?v=hash) so browsers can cache them for a year and still see every update.
+#   bash deploy/deploy-site.sh [--nginx] [--with-explorer] [--with-faucet] [--with-compute]
+#   --with-faucet also publishes the faucet page (/faucet/). It needs the faucet service behind /drip (deploy/systemd/vearl-faucet.service) and --nginx once.
+#   --nginx installs the config; the explorer's /api/ reads the demo network until you pass --api-live (at the launch, once the real node answers on 127.0.0.1:8545)
+#   --with-explorer also publishes the testnet explorer (/explorer/); without it the page is not copied, so nothing links to a node that is not online yet.
+#   --with-compute also publishes the job-creation site (/compute/). Before the testnet starts /gw/ answers with fixed files (deploy/gateway/prelaunch/): the page is
+#   complete but no job can be created. With --nginx --gw-live /gw/ is the real job gateway (deploy/gateway/) instead: use it only once the gateway runs on the public network.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+KEY="-i ${VEARL_SSH_KEY:-$HOME/.ssh/id_ed25519_vps4} -o IdentitiesOnly=yes"   # override with VEARL_SSH_KEY
+HOST=${VEARL_SSH_HOST:-root@vearl.org}   # the web/seed server (override with VEARL_SSH_HOST)
+OUT=$(mktemp -d)
+trap 'rm -rf "$OUT"' EXIT
+ARGS=" $* "
+( cd site && cp -r index.html 404.html credits.html whitepaper.html robots.txt sitemap.xml favicon.svg favicon-32.png apple-touch-icon.png og-image.png mark.svg assets fonts "$OUT"/ )
+if [[ "$ARGS" == *" --with-explorer "* ]]; then cp -r site/explorer "$OUT"/; fi
+if [[ "$ARGS" == *" --with-compute "* ]]; then cp -r site/compute "$OUT"/; mkdir -p "$OUT/gw-static"; cp deploy/gateway/prelaunch/info.json deploy/gateway/prelaunch/digits.json "$OUT/gw-static/"; fi
+if [[ "$ARGS" == *" --with-faucet "* ]]; then cp -r site/faucet "$OUT"/; fi
+PAGES="$OUT/index.html $OUT/404.html $OUT/credits.html $OUT/whitepaper.html"
+[ -f "$OUT/explorer/index.html" ] && PAGES="$PAGES $OUT/explorer/index.html"
+[ -f "$OUT/compute/index.html" ] && PAGES="$PAGES $OUT/compute/index.html"
+[ -f "$OUT/faucet/index.html" ] && PAGES="$PAGES $OUT/faucet/index.html"
+for f in assets/site.css assets/site.js assets/photos.js assets/whitepaper.css assets/whitepaper.js assets/explorer.css assets/explorer.js assets/compute.css assets/compute.js assets/faucet.js fonts/fonts.css; do
+  h=$(md5sum "site/$f" | cut -c1-10)
+  sed -i "s#/$f\"#/$f?v=$h\"#g" $PAGES
+done
+grep -o '/assets/site\.[a-z]*?v=[0-9a-f]*\|/fonts/fonts\.css?v=[0-9a-f]*' "$OUT/index.html"
+tar czf - -C "$OUT" . \
+  | ssh $KEY $HOST 'rm -rf ~/vearl-www && mkdir -p ~/vearl-www && tar xzf - -C ~/vearl-www && sudo mkdir -p /var/www/vearl && sudo rsync -a --delete ~/vearl-www/ /var/www/vearl/ && sudo chown -R root:root /var/www/vearl && sudo find /var/www/vearl -type d -exec chmod 755 {} + && sudo find /var/www/vearl -type f -exec chmod 644 {} + && echo site-ok'
+if [[ "$ARGS" == *" --nginx "* ]]; then
+  GW=prelaunch; [[ "$ARGS" == *" --gw-live "* ]] && GW=live
+  API=sample; [[ "$ARGS" == *" --api-live "* ]] && API=live
+  scp -q $KEY deploy/nginx-vearl.conf deploy/nginx-vearl-headers.conf deploy/nginx-vearl-locations.conf deploy/nginx-vearl-gw-$GW.conf deploy/nginx-vearl-api-$API.conf $HOST:~/
+  ssh $KEY $HOST 'sudo install -m 644 ~/nginx-vearl-headers.conf /etc/nginx/snippets/vearl-headers.conf && sudo install -m 644 ~/nginx-vearl-locations.conf /etc/nginx/snippets/vearl-locations.conf && sudo install -m 644 ~/nginx-vearl-gw-'"$GW"'.conf /etc/nginx/snippets/vearl-gw.conf && sudo install -m 644 ~/nginx-vearl-api-'"$API"'.conf /etc/nginx/snippets/vearl-api.conf && sudo install -m 644 ~/nginx-vearl.conf /etc/nginx/sites-available/vearl && sudo ln -sfn /etc/nginx/sites-available/vearl /etc/nginx/sites-enabled/vearl && sudo rm -f /etc/nginx/sites-enabled/default && sudo nginx -t && sudo systemctl reload nginx && echo nginx-ok'
+fi
