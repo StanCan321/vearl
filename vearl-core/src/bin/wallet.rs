@@ -62,6 +62,8 @@ const HELP: &str = r#"vearl-wallet: command-line wallet for the Vearl testnet (t
   vearl-wallet phrase     --file wallet.json                    show the recovery words again (asks the password)
   vearl-wallet balance    --file wallet.json --node HOST:PORT   balance of a wallet (or --address vrl1... instead of --file)
   vearl-wallet send       --file wallet.json --node HOST:PORT --to vrl1... --amount 12.5 [--fee 0.01] [--pq]
+  vearl-wallet sign       --file wallet.json --message "TEXT"                 sign a text to prove that you own the address (testnet rewards)
+  vearl-wallet verify     --address vrl1... --message "TEXT" --signature HEX   check such a signature
 
 The password is asked in the terminal (hidden); it can also be given in the VEARL_WALLET_PASSWORD variable or with --password-file FILE.
 Never type it as a command-line argument.
@@ -155,8 +157,29 @@ fn main() {
                 m => die(&format!("unexpected reply: {m:?}")),
             }
         }
+        Some("sign") => {
+            let msg = arg(&args, "--message").unwrap_or_else(|| die("--message required"));
+            let (_, m) = unlock_mnemonic(&args);
+            let sk = derive_account(&m, 0);
+            let sig = sign_message(&sk, msg.as_bytes());
+            println!("address:   {}", address_of(&pubkey(&sk)));
+            println!("message:   {msg}");
+            println!("signature: {}", sig.iter().map(|b| format!("{b:02x}")).collect::<String>());
+        }
+        Some("verify") => {
+            let addr = parse_address(&arg(&args, "--address").unwrap_or_else(|| die("--address required"))).unwrap_or_else(|e| die(&e));
+            let msg = arg(&args, "--message").unwrap_or_else(|| die("--message required"));
+            let hexsig = arg(&args, "--signature").unwrap_or_else(|| die("--signature required"));
+            let sig: Vec<u8> = (0..hexsig.len() / 2).filter_map(|i| u8::from_str_radix(hexsig.get(2 * i..2 * i + 2)?, 16).ok()).collect();
+            if hexsig.len() % 2 == 0 && sig.len() * 2 == hexsig.len() && verify_message(&addr, msg.as_bytes(), &sig) {
+                println!("valid: this signature was made by the owner of {}", address_of(&addr));
+            } else {
+                println!("INVALID signature");
+                std::process::exit(1);
+            }
+        }
         _ => {
-            eprintln!("usage: vearl-wallet (new | restore | address | pq-address | phrase | balance | send [--pq]) ... (see the header of the file)");
+            eprintln!("usage: vearl-wallet (new | restore | address | pq-address | phrase | balance | send | sign | verify) ... (run it without arguments for the help)");
             std::process::exit(2);
         }
     }

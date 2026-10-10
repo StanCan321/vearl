@@ -93,3 +93,20 @@ fn post_quantum_account_is_restored_from_the_same_phrase_and_has_its_own_address
     assert_eq!(parse_address(&addr).unwrap(), a.pubkey());
     assert!(parse_address("vrl1qqqqqq").is_err());
 }
+
+#[test]
+fn message_signatures_prove_ownership_of_an_address_and_cannot_be_forged_or_reused() {
+    let m = new_mnemonic();
+    let sk = derive_account(&m, 0);
+    let pk = pubkey(&sk);
+    let msg = b"Vearl testnet rewards: address vrl1example, handle someone";
+    let sig = sign_message(&sk, msg);
+    assert!(verify_message(&pk, msg, &sig));
+    assert!(!verify_message(&pk, b"another message", &sig), "bound to the message");
+    assert!(!verify_message(&pubkey(&derive_account(&m, 1)), msg, &sig), "bound to the key");
+    let mut bad = sig;
+    bad[0] ^= 1;
+    assert!(!verify_message(&pk, msg, &bad), "altered signature");
+    // the signature is made over a domain-separated string: the same bytes signed without the domain do not verify
+    assert!(!vearl_core::crypto::verify_sig(&pk, msg, &sig), "not a plain signature of the message");
+}

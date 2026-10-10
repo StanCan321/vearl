@@ -214,3 +214,17 @@ pub fn read_password(prompt: &str, file: Option<&str>) -> Result<String, String>
 pub fn load_signing_key(path: &Path, password: &str, account: u32) -> Result<SigningKey, String> {
     Ok(derive_account(&Keystore::load(path)?.unlock(password)?, account))
 }
+
+/// Domain separation of signed messages: a signature made for a message can never be valid as a transaction signature.
+const MESSAGE_DOMAIN: &[u8] = b"vearl/message/v1\0";
+
+/// Signs a text message with an account key. Used to prove that one owns an address (testnet rewards registration, docs/19).
+pub fn sign_message(sk: &SigningKey, message: &[u8]) -> [u8; 64] {
+    use ed25519_dalek::Signer;
+    sk.sign(&[MESSAGE_DOMAIN, message].concat()).to_bytes()
+}
+
+/// Checks a message signature made by [`sign_message`] against a public key.
+pub fn verify_message(pk: &PubKey, message: &[u8], sig: &[u8]) -> bool {
+    crate::crypto::verify_sig(pk, &[MESSAGE_DOMAIN, message].concat(), sig)
+}
