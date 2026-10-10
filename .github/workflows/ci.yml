@@ -16,6 +16,7 @@ jobs:
     defaults:
       run:
         working-directory: vearl-core
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -26,4 +27,10 @@ jobs:
       - name: build
         run: cargo build --release --bins
       - name: test
-        run: cargo test --release --no-fail-fast
+        run: |
+          set +e
+          cargo test --release --no-fail-fast 2>&1 | tee test.log
+          status=${PIPESTATUS[0]}
+          # list the failing tests as annotations, so that they are visible without opening the full log
+          grep -E "^test .* FAILED$|panicked at|^error(\[|:)" test.log | head -30 | while IFS= read -r line; do echo "::error::${line}"; done
+          exit $status
