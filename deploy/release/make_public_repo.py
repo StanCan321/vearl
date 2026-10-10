@@ -30,6 +30,11 @@ REDACT = [
     ("deploy/nginx-vearl.conf", r"[ \t]*# visitor statistics:.*?location \^~ /stats/ \{.*?\n    \}\n", ""),
     ("docs/06-testnet-runbook.md", r"103\.90\.160\.22", "SERVER_IP"),
     ("docs/06-testnet-runbook.md", r", no firewall\)", ")"),
+    ("docs/06-testnet-runbook.md", r"at Porkbun", "at your DNS provider"),
+    ("deploy/deploy-site.sh", r"\$\{VEARL_SSH_HOST:-root@vearl\.org\}", "${VEARL_SSH_HOST:?set VEARL_SSH_HOST, for example root@your-server}"),
+    ("deploy/deploy-site.sh", r"id_ed25519_vps4", "id_ed25519"),
+    ("deploy/release/publish_release.sh", r"\$\{VEARL_SSH_HOST:-root@vearl\.org\}", "${VEARL_SSH_HOST:?set VEARL_SSH_HOST, for example root@your-server}"),
+    ("deploy/release/publish_release.sh", r"id_ed25519_vps4", "id_ed25519"),
 ]
 # generated model files above this size are not stored (vearl-core/models/README.md says how to rebuild them)
 BIG_MODEL = 10_000_000
@@ -49,7 +54,7 @@ FAIL = 100_000_000
 
 # the import is split by part of the project; first matching group wins, leftovers go to the last commit
 GROUPS = [
-    ("Add license, notices and project documents", ("LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.md", "SECURITY.md", "CONTRIBUTING.md", "CHANGELOG.md", "README.md", ".gitignore", ".gitattributes", ".editorconfig", ".github/")),
+    ("Add license, notices and project documents", ("LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.md", "SECURITY.md", "CONTRIBUTING.md", "CHANGELOG.md", "CODE_OF_CONDUCT.md", "README.md", ".gitignore", ".gitattributes", ".editorconfig", ".github/")),
     ("Import design, specification and threat model", ("docs/",)),
     ("Import the Rust core: consensus, market, network, wallet and miner", ("vearl-core/Cargo.toml", "vearl-core/Cargo.lock", "vearl-core/build.rs", "vearl-core/quantus-miner.pins", "vearl-core/src/")),
     ("Import the CUDA kernels", ("vearl-core/gpu/",)),

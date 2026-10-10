@@ -6,8 +6,8 @@
 # has the location (deploy-site.sh --nginx). The page that links to them is published with deploy-site.sh --with-download.
 set -euo pipefail
 DIST=${1:?usage: publish_release.sh DIST_DIR}
-KEY="-i ${VEARL_SSH_KEY:-$HOME/.ssh/id_ed25519_vps4} -o IdentitiesOnly=yes"   # override with VEARL_SSH_KEY
-HOST=${VEARL_SSH_HOST:-root@vearl.org}   # the web/seed server (override with VEARL_SSH_HOST)
+KEY="-i ${VEARL_SSH_KEY:-$HOME/.ssh/id_ed25519} -o IdentitiesOnly=yes"   # override with VEARL_SSH_KEY
+HOST=${VEARL_SSH_HOST:?set VEARL_SSH_HOST, for example root@your-server}   # the web/seed server (override with VEARL_SSH_HOST)
 [ -s "$DIST/SHA256SUMS.txt" ] || { echo "no SHA256SUMS.txt in $DIST"; exit 1; }
 ( cd "$DIST" && sha256sum -c SHA256SUMS.txt )
 ssh $KEY $HOST 'mkdir -p /var/www/vearl-downloads'
