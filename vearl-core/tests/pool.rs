@@ -428,6 +428,9 @@ fn a_measured_rate_hint_moves_the_share_target_at_once() {
     let a5 = address_of(&pubkey(&SigningKey::from_bytes(&[5; 32])));
     let r = w.call("login", json!({"proto": PROTO, "address": a5, "worker": "t"}));
     let t0 = parse_u64hex(r["result"]["share_target"].as_str().unwrap()).unwrap();
+    // wait for the first job: until the pool has one, a hint is computed with default parameters and could equal the login target
+    // (on a slow machine the pool is not ready yet when the test logs in), which made this test fail now and then
+    let _ = w.next_job();
     assert_eq!(code(&w.call("hint", json!({"sigma_rate": "fast"}))), E_BAD_REQUEST as i64);
     assert_eq!(code(&w.call("hint", json!({"sigma_rate": -3.0}))), E_BAD_REQUEST as i64);
     let r = w.call("hint", json!({"sigma_rate": 100000.0}));
