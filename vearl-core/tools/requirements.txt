@@ -1,0 +1,6 @@
+# Python packages for the independent reference implementations, the light client and the lightweight demos.
+# Install with:  pip install -r tools/requirements.txt   (from vearl-core/)
+numpy
+blake3
+cryptography
+pillow

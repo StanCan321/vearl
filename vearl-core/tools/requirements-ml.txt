@@ -1,0 +1,8 @@
+# Extra packages for model training, quantization and the AI demos (large downloads; a GPU is recommended).
+# Install with:  pip install -r tools/requirements.txt -r tools/requirements-ml.txt   (from vearl-core/)
+torch
+transformers
+datasets
+sentence-transformers
+scikit-learn
+onnx
