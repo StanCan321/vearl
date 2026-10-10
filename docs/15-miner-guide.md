@@ -6,7 +6,7 @@
 
 | | requirement | status |
 |---|---|---|
-| System | Linux x86_64 (tested: Ubuntu 24.04) or Windows 10/11 x86_64 (tested 2026-10-07 on an RTX 4070 SUPER: node, GPU kernels and the 10 GPU tests of `tests/gpu.rs` pass, about 33 M attempts/s at n = 1024; build needs Visual Studio 2022 Build Tools + CUDA 13, see `deploy/pc-worker/build-gpu-windows.bat`, or use the prebuilt release) | — |
+| System | Linux x86_64 (tested: Ubuntu 24.04) or Windows 10/11 x86_64 (tested 2026-10-07 on an RTX 4070 SUPER: node, GPU kernels and the 10 GPU tests of `tests/gpu.rs` pass, about 33 M attempts/s at n = 1024; build needs Visual Studio 2022 Build Tools + CUDA 13, see `deploy/windows/build-gpu-windows.bat`, or use the prebuilt release) | — |
 | GPU | NVIDIA **Ampere or newer** (compute capability ≥ 8.0): A100 (8.0), RTX 30xx / A10 / A40 (8.6), RTX 40xx / L4 / L40 (8.9), H100 (9.0), B200 (10.0), **RTX 50xx (12.0)** | **measured on A10 and on RTX 5060 Ti (Blackwell, 16 GB)**; compiled for 8.0, 8.6, 8.9, 9.0 and, with CUDA 12.8 or newer, 10.0 and 12.0 (+ PTX of the newest); the other cards are not measured |
 | Not supported | Turing and older (RTX 20xx, T4, capability 7.5): the kernel uses `cp.async`, `ldmatrix` and `mma.m16n8k32` int8 | the node refuses to start with `--gpu` and says so |
 | Driver + CUDA | recent NVIDIA driver, CUDA Toolkit 12.x (`nvcc`); **12.8 or newer for RTX 50xx** | tested: CUDA 12.0 (A10), 12.9 (RTX 5060 Ti) |
