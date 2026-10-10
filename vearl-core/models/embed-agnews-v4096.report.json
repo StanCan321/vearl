@@ -1,0 +1,22 @@
+{
+ "act": "relu",
+ "bias": false,
+ "clipped_biases": 0,
+ "shifts": [
+  8,
+  7
+ ],
+ "ops": 20,
+ "weights": 10,
+ "hidden": 2048,
+ "test_texts": 7424,
+ "cos_student_float_vs_teacher": 0.7840926051139832,
+ "cos_int8_vs_float_student": 0.9551760279576048,
+ "cos_int8_vs_teacher": 0.7488321411595197,
+ "nn_same_class": {
+  "teacher_minilm": 0.8603178879310345,
+  "student_float": 0.8529094827586207,
+  "student_int8": 0.8485991379310345,
+  "tfidf_1024_baseline": 0.8103448275862069
+ }
+}

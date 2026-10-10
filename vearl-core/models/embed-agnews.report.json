@@ -1,0 +1,19 @@
+{
+ "shifts": [
+  7,
+  8
+ ],
+ "ops": 5,
+ "weights": 4,
+ "hidden": 2048,
+ "test_texts": 7168,
+ "cos_student_float_vs_teacher": 0.6735867261886597,
+ "cos_int8_vs_float_student": 0.988850643439945,
+ "cos_int8_vs_teacher": 0.6668624743024408,
+ "nn_same_class": {
+  "teacher_minilm": 0.8572823660714286,
+  "student_float": 0.8225446428571429,
+  "student_int8": 0.8215680803571429,
+  "tfidf_1024_baseline": 0.7398158482142857
+ }
+}

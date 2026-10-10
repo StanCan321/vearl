@@ -1,0 +1,11 @@
+{
+ "float_test_acc": 0.982,
+ "int8_test_acc": 0.9812,
+ "agreement": 0.998,
+ "shifts": [
+  10,
+  7,
+  9
+ ],
+ "test_images": 10000
+}
