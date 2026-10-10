@@ -23,6 +23,8 @@ First public release of the source code.
 - CUDA kernels for Ampere and newer GPUs, bit-for-bit identical to the CPU code; Windows and Linux builds.
 
 ### Tooling and documentation
+- Testnet contributors program (`docs/19`): scoring from the blocks of the chain (`tools/testnet_rewards.py`), registration by message signature
+  (`vearl-wallet sign` / `verify`, `tools/verify_registration.py`) and a public leaderboard page (`site/leaderboard/`).
 - Independent Python implementations of the work layer, the chain, the market, tiled products, tensor programs, level 2 and ASERT, checked
   against frozen vectors.
 - Specification, threat model, economics, miner guide and runbook in `docs/`.

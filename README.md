@@ -77,6 +77,7 @@ Running a testnet from scratch (genesis, seed node, faucet, explorer) is in `doc
 | `docs/13`, `docs/14` | consensus (reorganizations, ASERT, attack simulations); chain cryptography and light clients |
 | `docs/15`, `docs/16`, `docs/17` | miner guide; pool protocol; protection of the development fee of the optional add-on |
 | `docs/18` | demos, models and tools |
+| `docs/19` | **testnet contributors program**: how contributions are counted and what a contributor must do (a plan, not a promise) |
 
 ## Security, contributing, license
 
