@@ -20,7 +20,15 @@ fn password(args: &[String]) -> String {
     read_password("Faucet wallet password: ", arg(args, "--password-file").as_deref()).unwrap_or_else(|e| die(&e))
 }
 
+const HELP: &str = r#"vearl-faucet: a small service that gives test tokens to anyone who asks (testnet only).
+
+  vearl-faucet --node HOST:PORT --wallet FAUCET.json [--listen 127.0.0.1:8081] [--amount 10] [--cooldown-secs 3600] [--max-per-day 10000]
+
+Use a DEDICATED wallet. Its password is asked in the terminal, or given in VEARL_WALLET_PASSWORD or with --password-file FILE.
+Details: docs/06."#;
+
 fn main() {
+    vearl_core::launcher::help_or_continue(HELP);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let node = arg(&args, "--node").unwrap_or_else(|| die("--node required"));
     let wallet = arg(&args, "--wallet").unwrap_or_else(|| die("--wallet required"));

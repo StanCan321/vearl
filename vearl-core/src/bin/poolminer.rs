@@ -12,7 +12,15 @@ fn die(m: &str) -> ! {
     std::process::exit(1)
 }
 
+const HELP: &str = r#"vearl-poolminer: a miner for a Vearl pool (protocol vpool/1).
+
+  vearl-poolminer --pool HOST:PORT --address vrl1... [--worker NAME] [--threads N] [--gpu] [--rate-hint SIGMA_PER_S]
+
+The address is the one that receives your payouts: no private key is needed here. To mine on your own, use vearl-miner instead.
+Details: docs/16."#;
+
 fn main() {
+    vearl_core::launcher::help_or_continue(HELP);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let arg = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     for a in &args {

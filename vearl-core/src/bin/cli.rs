@@ -1117,7 +1117,27 @@ fn run_cmd() {
 
 /// An `Ack ok` only means "accepted into the node's mempool": a fraud proof only has an effect if it is
 /// INCLUDED in a block before the end of the dispute window. The `*-finish` commands therefore wait for the final state.
+const HELP: &str = r#"vearl-cli: command-line client of a Vearl node (tokens have no value, not audited).
+
+A key is written wallet:FILE (a wallet made by vearl-wallet; the password is asked) or seed:N (PUBLIC development key, devnet only).
+NODE is HOST:PORT of a node API.
+
+  vearl-cli address (wallet:FILE | seed:N | HEX64 | vrl1...)       the vrl1... address of a key (no node needed)
+  vearl-cli status NODE                                            state of the chain (height, peers, supply...)
+  vearl-cli balance NODE (vrl1... | seed:N | HEX64)                balance of an account
+  vearl-cli transfer NODE KEY (TO_ADDRESS) AMOUNT [FEE]            send tokens
+  vearl-cli job-submit | job-status | job-finish | job-audit ...   matrix product jobs
+  vearl-cli tiled-submit | tiled-run | tiled-status | tiled-finish ...   large products
+  vearl-cli prog-submit | prog-status | prog-finish ...            tensor programs (CNN, transformer)
+  vearl-cli infer NODE WORKER KEY ESCROW MODEL.json FIRST LAST OUT.i8   batch inference with a verified model
+  vearl-cli l2-submit | l2-status | l2-finish ...                  Monte Carlo and 3D rendering jobs
+  vearl-cli mlp-submit | mlp-status | mlp-finish ...               multi-layer inference
+
+The exact arguments of every command are in the documentation: docs/06 (running a network) and docs/07 (specification).
+Example:  vearl-cli status 127.0.0.1:8545"#;
+
 fn main() {
+    vearl_core::launcher::help_or_continue(HELP);
     run_cmd();
     let a: Vec<String> = std::env::args().skip(1).collect();
     let cmd = a.first().map(String::as_str).unwrap_or("");

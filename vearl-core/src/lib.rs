@@ -2,6 +2,7 @@
 //!
 //! Status: UNAUDITED PROTOTYPE. No security property here is proven;
 //! see docs/02-design-vearl-v1.md for what is [LIT] (literature), [HYP] (hypothesis) or [RESEARCH NEEDED].
+pub mod launcher;
 pub mod chain;
 pub mod crypto;
 pub mod pq;

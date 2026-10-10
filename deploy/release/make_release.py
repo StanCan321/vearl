@@ -64,6 +64,14 @@ The assistant creates a wallet.json protected by a password and shows you 24 rec
 the words has the funds, and without them a lost password or a lost file cannot be recovered. Do not put them in a file, a photo
 or a message, and never give them to anybody (nobody from the project will ever ask for them).
 
+Command-line tools
+------------------
+vearl-wallet{exe}, vearl-cli{exe} and the other programs of this folder, except vearl-miner{exe}, are command-line tools: they have no
+window, so a double-click only shows their help and waits for Enter. Open a terminal in this folder (Windows: click the address bar of
+the folder, type cmd and press Enter; Linux: any terminal) and type a command. Run a tool without arguments to see its help, for example:
+   vearl-wallet{exe}
+   vearl-wallet{exe} address --file wallet.json     (shows your address; the password is asked)
+
 Files in this folder
 --------------------
  vearl-miner{exe}        the program to open (everything else is started by it)
@@ -252,7 +260,7 @@ def main():
         with open(os.path.join(a.out, "genesis.json"), "wb") as f:
             f.write(gen)
         sums.append((sha256(gen), "genesis.json"))
-    with open(os.path.join(a.out, "SHA256SUMS.txt"), "w") as f:
+    with open(os.path.join(a.out, "SHA256SUMS.txt"), "w", newline="\n") as f:
         for h, n in sums:
             f.write(f"{h}  {n}\n")
     for h, n in sums:

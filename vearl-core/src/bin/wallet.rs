@@ -53,7 +53,23 @@ fn unlock(args: &[String]) -> (Keystore, SigningKey) {
     (ks, derive_account(&m, 0))
 }
 
+const HELP: &str = r#"vearl-wallet: command-line wallet for the Vearl testnet (tokens have no value, not audited).
+
+  vearl-wallet new        --file wallet.json                    create a wallet; shows 24 recovery words ONCE (write them on paper)
+  vearl-wallet restore    --file wallet.json                    restore a wallet from its 24 words (read from standard input)
+  vearl-wallet address    --file wallet.json                    show the address (vrl1...) of a wallet
+  vearl-wallet pq-address --file wallet.json                    show the post-quantum address (vrlq1...)
+  vearl-wallet phrase     --file wallet.json                    show the recovery words again (asks the password)
+  vearl-wallet balance    --file wallet.json --node HOST:PORT   balance of a wallet (or --address vrl1... instead of --file)
+  vearl-wallet send       --file wallet.json --node HOST:PORT --to vrl1... --amount 12.5 [--fee 0.01] [--pq]
+
+The password is asked in the terminal (hidden); it can also be given in the VEARL_WALLET_PASSWORD variable or with --password-file FILE.
+Never type it as a command-line argument.
+
+Example:  vearl-wallet new --file wallet.json"#;
+
 fn main() {
+    vearl_core::launcher::help_or_continue(HELP);
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("new") => {

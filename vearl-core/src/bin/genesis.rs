@@ -47,7 +47,18 @@ fn summary(name: &str, c: &GenesisConfig) -> String {
     s
 }
 
+const HELP: &str = r#"vearl-genesis: creates or checks the genesis file of a Vearl network (every node of a network must use the same file).
+
+  vearl-genesis --network NAME --preset public --faucet vrl1... --launch 2026-10-23T16:00:00Z --hashrate 100000000 > genesis.json
+        [--faucet-amount 1000000] [--alloc vrl1...=500]... [--retarget Asert|Lwma|Ema|Fixed]
+  vearl-genesis --check genesis.json        validate a file, print its summary and the GENESIS HASH
+
+--preset devnet (default) is small and fast, for tests. --preset public is the real size (n = 1024) and needs --launch.
+The faucet address must come from a DEDICATED wallet created offline (vearl-wallet new): only its address is needed here.
+Details: docs/06."#;
+
 fn main() {
+    vearl_core::launcher::help_or_continue(HELP);
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(i) = args.iter().position(|a| a == "--check") {
         let f = args.get(i + 1).unwrap_or_else(|| die("--check FILE"));

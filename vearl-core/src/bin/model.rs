@@ -10,7 +10,16 @@ fn die(m: &str) -> ! {
     std::process::exit(1)
 }
 
+const HELP: &str = r#"vearl-model: tools for imported quantized models.
+
+  vearl-model info MODEL.json              summary: operations, weights, samples
+  vearl-model eval MODEL.json [--all]      run the samples and compare with the labels (int8 accuracy)
+  vearl-model dump PROGRAM.json            run a program and print all its tensors (base64), for checks against another engine
+
+Details: docs/12."#;
+
 fn main() {
+    vearl_core::launcher::help_or_continue(HELP);
     let args: Vec<String> = std::env::args().skip(1).collect();
     match (args.first().map(String::as_str), args.get(1)) {
         (Some("info"), Some(p)) => {

@@ -21,7 +21,17 @@ fn die(m: &str) -> ! {
     std::process::exit(1)
 }
 
+const HELP: &str = r#"vearl-pool: a Vearl mining pool (protocol vpool/1). It runs a full node (without mining of its own) and the pool server.
+
+  vearl-pool --wallet POOL.json [--genesis genesis.json] [--peer HOST:PORT]... [--listen 0.0.0.0:9000] [--pool-listen 0.0.0.0:3333]
+             [--http 127.0.0.1:8650] [--data-dir DIR] [--fee 1.0] [--min-payout 1] [--payout-interval 600] [--confirmations 10]
+             [--password-file FILE]
+
+The pool wallet receives the block rewards and signs the payouts: use a DEDICATED wallet with few funds of its own.
+All the options and the protocol are in docs/16."#;
+
 fn main() {
+    vearl_core::launcher::help_or_continue(HELP);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let arg = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     let flag = |name: &str| args.iter().any(|a| a == name);

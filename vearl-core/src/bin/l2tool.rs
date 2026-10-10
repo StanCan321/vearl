@@ -10,7 +10,19 @@ fn hx(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
+const HELP: &str = r#"vearl-l2: level 2 tools (Monte Carlo and 3D rendering) that run on your machine, without a network.
+
+  vearl-l2 render WIDTH HEIGHT SPP OUT.ppm                                      render the demonstration scene
+  vearl-l2 render2 WIDTH HEIGHT SPP BOUNCES ANGLE CAM_HEIGHT OUT.ppm [gpu]      render the Render2 scene (reflections, soft shadows)
+  vearl-l2 render3 SCENE WIDTH HEIGHT SPP_PER_PASS PASSES OUT.ppm [gpu]       Monte Carlo path tracer; SCENE = watch | mini | cocktail | orb | gallery
+  vearl-l2 pi NB_CHUNKS                                                         estimate pi by Monte Carlo
+  vearl-l2 vectors                                                              print the kernel test vectors (JSON)
+
+Example:  vearl-l2 render 256 256 2 image.ppm
+Details: docs/10."#;
+
 fn main() {
+    vearl_core::launcher::help_or_continue(HELP);
     let a: Vec<String> = std::env::args().skip(1).collect();
     match a.first().map(String::as_str) {
         Some("render") => {

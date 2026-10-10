@@ -73,7 +73,15 @@ fn run_with_log_file(path: &str) -> ! {
     std::process::exit(code)
 }
 
+const HELP: &str = r#"node: the Vearl node, the server program of the network. Most people do not need to open it: double-click vearl-miner.exe to mine.
+
+  node --genesis genesis.json --peer HOST:PORT@KEY --listen 0.0.0.0:9000 --data-dir data
+       [--miner-wallet wallet.json] [--gpu] [--worker] [--api 127.0.0.1:8545] [--log-file node.log]
+
+The seed nodes (HOST:PORT@KEY) are in network.json. All the options are in docs/06 and docs/15."#;
+
 fn main() {
+    vearl_core::launcher::explain_if_double_clicked(HELP);
     if std::env::var("VEARL_LOG_CHILD").is_err() {
         let a: Vec<String> = std::env::args().collect();
         if let Some(i) = a.iter().position(|x| x == "--log-file") {
