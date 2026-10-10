@@ -67,6 +67,7 @@
       if (xhr.status !== 200) return setStatus('The leaderboard opens with the testnet, on October 23, 2026 at 16:00 UTC, and is refreshed regularly.');
       try { data = JSON.parse(xhr.responseText); } catch (e) { return setStatus('The leaderboard file could not be read. Try again in a moment.'); }
       if (!data.miners || !data.totals) return setStatus('The leaderboard file has an unexpected format.');
+      if (!data.totals.blocks) return setStatus('No block counted yet. The leaderboard fills up from the start of the testnet, on October 23, 2026 at 16:00 UTC, and is refreshed every hour.');
       summary(data);
       $('table-panel').hidden = false;
       $('q').addEventListener('input', render);
