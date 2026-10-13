@@ -59,17 +59,33 @@ The team may exclude an address that breaks these rules, and publishes the addre
 
 ## 5. How to register
 
-1. Create your wallet with `vearl-wallet new` (or use the one the miner created) and mine with that address.
-2. Sign the registration message with your wallet, replacing ADDRESS and CONTACT (your Discord name or e-mail):
+Registration is done by e-mail, but you do not have to write the e-mail yourself: the wallet sends it.
+
+1. Mine with an address of your wallet (the one the miner created, or `vearl-wallet new`).
+2. In the folder of the wallet, run (replace the contact with your Discord name or an e-mail address):
 
    ```
-   vearl-wallet sign --file wallet.json --message "Vearl testnet rewards registration. Address: ADDRESS. Contact: CONTACT. I accept the terms in docs/19."
+   vearl-wallet register --file wallet.json --contact "YOUR_DISCORD_NAME_OR_EMAIL"
    ```
 
-3. Send the three lines it prints (address, message, signature) through the channel announced by the team. Nobody will ever ask for your 24
-   words, your password or your wallet file. A signature proves ownership without revealing any secret.
-4. Anyone can check a registration with `vearl-wallet verify --address ADDRESS --message "..." --signature HEX`, and the team does it in bulk with
-   `tools/verify_registration.py`.
+   The wallet asks your password, signs the registration message
+   `Vearl testnet rewards registration. Address: ADDRESS. Contact: CONTACT. I accept the terms in docs/19.`, **shows you the three lines**
+   (address, message, signature) and asks you to confirm before it sends **one** e-mail from `registrar@vearl.org` to `register@vearl.org`.
+   Nothing secret is sent: a signature proves that you own the address without revealing any key. Nobody will ever ask for your 24 words, your
+   password or your wallet file.
+3. A script on the server reads that mailbox every two minutes, checks the signature and publishes the list of registered addresses (addresses
+   only, never the contacts) at <https://vearl.org/rewards/registered.json>. Your address should appear there within a few minutes. The
+   leaderboard marks only registered addresses as eligible.
+4. If sending fails (some networks block outgoing mail), the wallet says why and shows the three lines: send them yourself in an e-mail to
+   `register@vearl.org` (subject: Vearl testnet registration). `vearl-wallet register --file wallet.json --contact "..." --print-only` prints
+   them without sending anything. The old way still works too: `vearl-wallet sign --file wallet.json --message "..."`.
+5. Anyone can check a registration with `vearl-wallet verify --address ADDRESS --message "..." --signature HEX`, and the team does it in bulk with
+   `tools/process_registration_mail.py` (the script that reads the mailbox) and `tools/verify_registration.py`.
+
+How it is protected: `registrar@vearl.org` is a send-only account whose password is public (it is in `vearl-core/src/regmail.rs`, because the
+wallet needs it). The mail server lets it write to `register@vearl.org` only, on a dedicated port, with a small size and a rate limit, and it has
+no mailbox. Nobody can register an address that they do not own: the script accepts a registration only if the signature is valid, whoever sent
+the mail. A registration sent twice counts once; a contact that registers several addresses is reviewed by hand (one participant per person).
 
 ## 6. Snapshot, disputes and distribution
 
@@ -83,7 +99,7 @@ The team may exclude an address that breaks these rules, and publishes the addre
 
 ## 7. Personal data
 
-Only what is needed: your wallet address, the contact you give at registration, and what is public on the chain. The team does not collect
+Only what is needed: your wallet address, the contact you give at registration (kept private, never published), and what is public on the chain. The mail server sees the IP address that sends the registration, like any web server, and keeps its usual logs. The team does not collect
 identity documents for this program, and may ask for more information later only if the law requires it. You can ask the team to delete your
 contact details at any time (the on-chain data stays).
 

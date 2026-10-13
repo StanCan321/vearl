@@ -17,6 +17,9 @@ First public release of the source code.
 - Noise XX encrypted peer protocol with pinned node keys.
 
 ### Release candidates
+- next (rc12): `vearl-wallet register` signs the testnet-rewards registration and, after confirmation, e-mails it to `register@vearl.org`
+  (TLS, public send-only account that can write to that address only); a server script (`tools/process_registration_mail.py`) checks the
+  signatures and publishes `registered.json`. `--print-only` shows the three lines to send by hand. See `docs/19`.
 - rc11: `vearl-wallet sign` and `vearl-wallet verify` (signature proving ownership of an address).
 - rc10: the command-line tools print a help text and, on Windows, wait for Enter instead of closing when double-clicked.
 

@@ -1,0 +1,18 @@
+[Unit]
+Description=Vearl testnet registrations: reads the mailbox of register@vearl.org and publishes the list (docs/19)
+After=dovecot.service
+
+[Service]
+Type=oneshot
+User=vmail
+Group=vmail
+# vearl-rewards writes /var/www/vearl-rewards as user vearl: the group lets this service add registered.json there
+SupplementaryGroups=vearl
+StateDirectory=vearl-register
+ExecStart=/usr/bin/python3 /opt/vearl/tools/process_registration_mail.py --maildir /var/vmail/vearl.org/register/Maildir --state /var/lib/vearl-register --public /var/www/vearl-rewards
+Nice=10
+ProtectSystem=strict
+ReadWritePaths=/var/vmail/vearl.org/register /var/www/vearl-rewards
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true

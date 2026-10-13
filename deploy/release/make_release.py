@@ -71,6 +71,7 @@ window, so a double-click only shows their help and waits for Enter. Open a term
 the folder, type cmd and press Enter; Linux: any terminal) and type a command. Run a tool without arguments to see its help, for example:
    vearl-wallet{exe}
    vearl-wallet{exe} address --file wallet.json     (shows your address; the password is asked)
+   vearl-wallet{exe} register --file wallet.json --contact "YOUR_DISCORD_NAME_OR_EMAIL"   (testnet rewards: signs your registration and, after you confirm, e-mails it to register@vearl.org)
 
 Files in this folder
 --------------------

@@ -6,6 +6,7 @@
 //!   vearl-wallet phrase   --file W.json                       shows the phrase (after the password)
 //!   vearl-wallet balance  (--file W.json | --address vrl1...)  --node HOST:PORT
 //!   vearl-wallet send     --file W.json --node HOST:PORT --to vrl1... --amount 12.5 [--fee 0.01]
+//!   vearl-wallet register --file W.json --contact "NAME or E-MAIL" [--yes] [--print-only]   registration for the testnet rewards (docs/19)
 //!
 //! Password: variable VEARL_WALLET_PASSWORD, or --password-file F, or masked prompt on a terminal, or one
 //! line on standard input. NEVER pass it as a command-line argument (visible in `ps`).
@@ -64,6 +65,8 @@ const HELP: &str = r#"vearl-wallet: command-line wallet for the Vearl testnet (t
   vearl-wallet send       --file wallet.json --node HOST:PORT --to vrl1... --amount 12.5 [--fee 0.01] [--pq]
   vearl-wallet sign       --file wallet.json --message "TEXT"                 sign a text to prove that you own the address (testnet rewards)
   vearl-wallet verify     --address vrl1... --message "TEXT" --signature HEX   check such a signature
+  vearl-wallet register   --file wallet.json --contact "NAME or E-MAIL"   register your address for the testnet rewards: signs the registration
+                          and, after you confirm, e-mails it to register@vearl.org (--print-only: only shows the three lines to send yourself)
 
 The password is asked in the terminal (hidden); it can also be given in the VEARL_WALLET_PASSWORD variable or with --password-file FILE.
 Never type it as a command-line argument.
@@ -157,6 +160,60 @@ fn main() {
                 m => die(&format!("unexpected reply: {m:?}")),
             }
         }
+        Some("register") => {
+            let contact = arg(&args, "--contact").unwrap_or_else(|| die("--contact required (your Discord name or an e-mail address)"));
+            vearl_core::regmail::check_contact(&contact).unwrap_or_else(|e| die(&e));
+            let print_only = args.iter().any(|a| a == "--print-only");
+            let yes = args.iter().any(|a| a == "--yes");
+            let (_, m) = unlock_mnemonic(&args);
+            let sk = derive_account(&m, 0);
+            let address = address_of(&pubkey(&sk));
+            let message = vearl_core::regmail::registration_message(&address, &contact);
+            let signature_hex: String = sign_message(&sk, message.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+            println!("address:   {address}");
+            println!("message:   {message}");
+            println!("signature: {signature_hex}");
+            let manual = || {
+                println!();
+                println!("To register by yourself, send these three lines in an e-mail to {} (subject: Vearl testnet registration).", vearl_core::regmail::RECIPIENT);
+                println!("Nobody will ever ask for your 24 words, your password or your wallet file.");
+            };
+            if print_only {
+                manual();
+                return;
+            }
+            println!();
+            println!("This will send ONE e-mail from {} to {} with the three lines above.", vearl_core::regmail::SENDER, vearl_core::regmail::RECIPIENT);
+            println!("Nothing secret is sent: a signature proves that you own the address without revealing any key. The server will see your IP address, as with any website.");
+            if !yes {
+                if !std::io::stdin().is_terminal() {
+                    die("not a terminal: add --yes to confirm, or --print-only to send the three lines yourself");
+                }
+                print!("Send it now? [y/N] ");
+                use std::io::Write;
+                std::io::stdout().flush().ok();
+                let mut a = String::new();
+                std::io::stdin().lock().read_line(&mut a).ok();
+                if !matches!(a.trim().to_lowercase().as_str(), "y" | "yes") {
+                    println!("Not sent. {}", "You can send the three lines yourself (see below).");
+                    manual();
+                    return;
+                }
+            }
+            let reg = vearl_core::regmail::Registration { address: address.clone(), message, signature_hex };
+            match vearl_core::regmail::send_registration(&reg) {
+                Ok(()) => {
+                    println!("Registration sent. It is processed within a few minutes: your address then appears in the public list");
+                    println!("{}", vearl_core::regmail::PUBLIC_LIST_URL);
+                    println!("If it is not there after an hour, ask for help on the Discord (never send your recovery words).");
+                }
+                Err(e) => {
+                    eprintln!("The registration could not be sent: {e}");
+                    manual();
+                    std::process::exit(1);
+                }
+            }
+        }
         Some("sign") => {
             let msg = arg(&args, "--message").unwrap_or_else(|| die("--message required"));
             let (_, m) = unlock_mnemonic(&args);
@@ -179,7 +236,7 @@ fn main() {
             }
         }
         _ => {
-            eprintln!("usage: vearl-wallet (new | restore | address | pq-address | phrase | balance | send | sign | verify) ... (run it without arguments for the help)");
+            eprintln!("usage: vearl-wallet (new | restore | address | pq-address | phrase | balance | send | sign | verify | register) ... (run it without arguments for the help)");
             std::process::exit(2);
         }
     }

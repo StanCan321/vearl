@@ -20,6 +20,7 @@ pub mod netfuzz;
 pub mod secure;
 pub mod attack;
 pub mod wallet;
+pub mod regmail;
 pub mod api;
 pub mod faucet;
 pub mod genesis;

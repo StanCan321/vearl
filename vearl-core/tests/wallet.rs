@@ -110,3 +110,25 @@ fn message_signatures_prove_ownership_of_an_address_and_cannot_be_forged_or_reus
     // the signature is made over a domain-separated string: the same bytes signed without the domain do not verify
     assert!(!vearl_core::crypto::verify_sig(&pk, msg, &sig), "not a plain signature of the message");
 }
+
+#[test]
+fn a_registration_for_the_testnet_rewards_is_signed_by_the_wallet_and_cannot_be_moved_to_another_contact() {
+    use vearl_core::regmail::{check_contact, registration_mail, registration_message, Registration, RECIPIENT, SENDER};
+    let m = new_mnemonic();
+    let sk = derive_account(&m, 0);
+    let address = address_of(&pubkey(&sk));
+    let contact = "tester#0001";
+    check_contact(contact).unwrap();
+    let message = registration_message(&address, contact);
+    let sig = sign_message(&sk, message.as_bytes());
+    assert!(verify_message(&pubkey(&sk), message.as_bytes(), &sig), "the owner's signature verifies");
+    // the same signature is worthless for another contact (nobody can redirect a registration) or another address
+    assert!(!verify_message(&pubkey(&sk), registration_message(&address, "someone-else").as_bytes(), &sig));
+    let other = pubkey(&derive_account(&m, 1));
+    assert!(!verify_message(&other, message.as_bytes(), &sig));
+    // the e-mail carries exactly the three lines that tools/process_registration_mail.py reads, from the registrar to the register address
+    let hexsig: String = sig.iter().map(|b| format!("{b:02x}")).collect();
+    let mail = registration_mail(&Registration { address: address.clone(), message: message.clone(), signature_hex: hexsig.clone() });
+    assert_eq!((mail.from.as_str(), mail.to.as_str()), (SENDER, RECIPIENT));
+    assert!(mail.body.contains(&format!("address: {address}\r\n")) && mail.body.contains(&format!("message: {message}\r\n")) && mail.body.contains(&format!("signature: {hexsig}\r\n")));
+}

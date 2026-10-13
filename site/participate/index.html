@@ -132,18 +132,17 @@
     <section class="panel">
       <div class="panel-head"><h2>5. Register your address</h2></div>
       <div class="panel-body">
-        <p>Registration opens during the testnet. The date and the way to send your registration will be announced on the <a class="lnk" href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Discord</a> and on <a class="lnk" href="https://x.com/vearl_org" target="_blank" rel="noopener">X</a>. You can already prepare it, it takes a minute. A signature proves that you own the address without revealing any secret.</p>
+        <p>Registration is one command: the wallet signs a message that proves that you own your address, shows it to you, and, after you confirm, sends it by e-mail to <span class="mono">register@vearl.org</span>. A signature proves ownership without revealing any secret. Registration opens during the testnet: the date will be announced on the <a class="lnk" href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Discord</a> and on <a class="lnk" href="https://x.com/vearl_org" target="_blank" rel="noopener">X</a>.</p>
         <ol>
           <li>Open a terminal in the miner folder (Windows: click the address bar of the folder, type <span class="mono">cmd</span> and press Enter). Your wallet file is <span class="mono">wallet.json</span>, in that folder.</li>
-          <li>Show your address:
-            <span class="cmd">vearl-wallet address --file wallet.json</span>
+          <li>Run this, with your Discord name or your e-mail address instead of the capitals (the wallet asks your password):
+            <span class="cmd">vearl-wallet register --file wallet.json --contact "YOUR_DISCORD_NAME_OR_EMAIL"</span>
           </li>
-          <li>Sign the registration message, replacing ADDRESS with your address and CONTACT with your Discord name or e-mail (the wallet asks your password):
-            <span class="cmd">vearl-wallet sign --file wallet.json --message "Vearl testnet rewards registration. Address: ADDRESS. Contact: CONTACT. I accept the terms in docs/19."</span>
-          </li>
-          <li>Keep the three lines it prints (address, message, signature). When registration opens, you will send them through the channel announced by the team.</li>
+          <li>The wallet shows you the three lines it will send (address, message, signature) and asks <span class="mono">Send it now? [y/N]</span>. Type <span class="mono">y</span>.</li>
+          <li>Within a few minutes your address appears in the <a class="lnk" href="/rewards/registered.json">public list of registered addresses</a> (addresses only, never your contact). The <a class="lnk" href="/leaderboard/">leaderboard</a> then marks it as registered.</li>
         </ol>
-        <p>On Linux, use <span class="mono">./vearl-wallet</span> in the same way. This needs release rc11 or newer.</p>
+        <p>If the wallet cannot send the e-mail (some networks block it), it tells you why and shows the three lines: send them yourself in an e-mail to <span class="mono">register@vearl.org</span>. You can also run the command with <span class="mono">--print-only</span> to only show them. On Linux, use <span class="mono">./vearl-wallet</span> in the same way. This needs the release that includes the <span class="mono">register</span> command.</p>
+        <p><b>Nobody will ever ask for your 24 words, your password or your wallet file.</b> The only address that receives registrations is <span class="mono">register@vearl.org</span>.</p>
       </div>
     </section>
 

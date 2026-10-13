@@ -23,6 +23,9 @@ bincode = "1.3"
 rand = "0.8"
 # post-quantum signatures SLH-DSA-SHAKE-128s: `fips205` crate (final FIPS 205, pure Rust, no unsafe; UNAUDITED)
 fips205 = "=0.4.1"
+# e-mail registration for the testnet rewards (docs/19): TLS client, pure Rust trust anchors; only used by `vearl-wallet register`
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+webpki-roots = { version = "0.26", optional = true }
 
 [[bin]]
 name = "devnet"
@@ -32,7 +35,8 @@ path = "src/bin/devnet.rs"
 opt-level = 3
 
 [features]
-default = []
+default = ["mail"]
+mail = ["dep:rustls", "dep:webpki-roots"] # `vearl-wallet register` (build with --no-default-features where no C compiler is available for the target)
 devtools = [] # test options (--partner-cmd, free --qtc-args) ABSENT from release builds (docs/17)
 gpu = [] # CUDA kernel (nvcc required); VEARL_CUDA_ARCH=86 by default (A10)
 
