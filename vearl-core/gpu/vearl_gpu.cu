@@ -12,7 +12,7 @@
 using namespace nvcuda;
 
 #define CK(x) do { cudaError_t e = (x); if (e != cudaSuccess) { \
-    fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(e)); return -1; } } while (0)
+    fprintf(stderr, "CUDA error %s:%d: %s\n", "vearl_gpu.cu", __LINE__, cudaGetErrorString(e)); return -1; } } while (0)
 
 // ---------------- blake3 (single chunk, plain hash mode) ----------------
 __constant__ uint32_t B3_IV[8] = {0x6A09E667u, 0xBB67AE85u, 0x3C6EF372u, 0xA54FF53Au,
