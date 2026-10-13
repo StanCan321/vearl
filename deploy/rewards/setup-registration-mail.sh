@@ -10,6 +10,8 @@
 #                          * it can send to register@vearl.org and to nobody else;
 #                          * it can only use the address registrar@vearl.org as sender;
 #                          * 16 KB per message, 10 messages per minute per client IP, 20 connections per minute;
+#                          * no host-name (HELO) check on this authenticated port, so the wallet's greeting is accepted;
+#                          (a value with spaces must be written between braces in master.cf: Postfix 3.0 and newer)
 #                          * it cannot receive mail (no mailbox on Postfix) and its IMAP mailbox cannot be created (mail location set to /nonexistent).
 #                        Port 587 (submission) is NOT changed: contact@vearl.org keeps sending from the mail apps there.
 set -euo pipefail
@@ -61,7 +63,8 @@ s = s.rstrip("\n") + "\n" + """smtps     inet n       -       y       -       - 
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject
   -o smtpd_sender_restrictions=reject_sender_login_mismatch
   -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
-  -o smtpd_recipient_restrictions=check_sasl_access hash:/etc/postfix/sasl_access,reject
+  -o { smtpd_recipient_restrictions = check_sasl_access hash:/etc/postfix/sasl_access, reject }
+  -o smtpd_helo_restrictions=
   -o message_size_limit=16384
   -o smtpd_client_message_rate_limit=10
   -o smtpd_client_recipient_rate_limit=10
