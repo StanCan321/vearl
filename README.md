@@ -1,5 +1,7 @@
 # Vearl
 
+[![CI](https://github.com/vearl-verified-compute/vearl/actions/workflows/ci.yml/badge.svg)](https://github.com/vearl-verified-compute/vearl/actions/workflows/ci.yml) · [Latest release](https://github.com/vearl-verified-compute/vearl/releases/latest) · [Website](https://vearl.org) · [Security policy](SECURITY.md)
+
 **A proof-of-useful-work blockchain for GPUs.** Miners do not burn energy on pointless hashes: the work that secures the chain is an
 int8 matrix product that can be the product a paying client asked for (AI inference, rendering, linear algebra). Everyone can check it at
 almost no cost, so a result is audited before any miner is paid.
