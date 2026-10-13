@@ -1,0 +1,34 @@
+name: release-linux
+
+# Manual workflow: builds the Linux binaries of a release (CPU and CUDA kernels, glibc 2.35 like Ubuntu 22.04) in a clean CUDA container,
+# so they can be assembled with the Windows build by deploy/release/make_release.py. Run it from the Actions tab ("Run workflow").
+on:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: Linux release binaries
+    runs-on: ubuntu-22.04
+    container: nvidia/cuda:12.9.0-devel-ubuntu22.04
+    steps:
+      - name: tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl build-essential pkg-config git
+      - uses: actions/checkout@v4
+      - name: rust
+        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+      - name: build
+        working-directory: vearl-core
+        run: |
+          . "$HOME/.cargo/env"
+          cargo build --release --features gpu --bins
+      - name: collect
+        run: |
+          mkdir out
+          for b in vearl-miner node vearl-cli vearl-wallet vearl-genesis vearl-faucet vearl-pool vearl-poolminer; do cp vearl-core/target/release/$b out/; done
+          cd out && sha256sum * > SHA256SUMS.txt && tar czf ../vearl-linux-x86_64-binaries.tar.gz *
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vearl-linux-x86_64-binaries
+          path: vearl-linux-x86_64-binaries.tar.gz
