@@ -30,6 +30,7 @@ attack", "anonymity" or "ASIC resistance".
 |---|---|
 | `vearl-core/src/` | the Rust implementation: consensus (`work`, `chain`, `state`), verifiable compute (`mlp`, `tiled`, `prog`, `l2`, `render2`, `render3`), network (`net`, `secure`, `api`, `pool`), wallet, miner (`dual`, `feeguard`) |
 | `vearl-core/src/bin/` | the programs: `node`, `vearl-miner`, `vearl-cli`, `vearl-wallet`, `vearl-genesis`, `vearl-faucet`, `vearl-pool`, `vearl-poolminer`, the test-vector generators |
+| `vearl-wallet-gui/` | Vearl Wallet: the wallet with a window (Windows, Linux), same wallet files as `vearl-wallet` (`docs/20`) |
 | `vearl-core/gpu/` | CUDA kernels (tensor cores, batched mining, rendering), bit-for-bit identical to the CPU code |
 | `vearl-core/tests/` | integration tests and the frozen consensus vectors in `tests/vectors/` |
 | `vearl-core/tools/` | independent Python implementations, model quantization and training scripts, demos, endurance tests |

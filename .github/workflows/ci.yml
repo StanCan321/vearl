@@ -40,3 +40,26 @@ jobs:
         run: |
           pip install cryptography
           python -m unittest discover -s tools -p "test_*.py"
+
+  wallet-gui:
+    name: wallet window (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: vearl-wallet-gui
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vearl-wallet-gui
+      # the window itself needs a display: CI only builds it and runs the logic tests (the end-to-end test needs a node and is skipped)
+      - name: build
+        run: cargo build --release --locked
+      - name: test
+        run: cargo test --release --locked

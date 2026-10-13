@@ -4,7 +4,7 @@
     python deploy/release/make_release.py --version testnet-1 --linux DIR --windows DIR --genesis genesis.json \
         --peer HOST:9000@PUBLIC_KEY [--network vearl-testnet-1] [--out dist]
 
-DIR holds the files of one platform (the same names on both): vearl-miner (THE program users open), node, vearl-wallet, vearl-cli,
+DIR holds the files of one platform (the same names on both): vearl-miner (THE program users open), node, vearl-wallet, vearl-wallet-gui, vearl-cli,
 vearl-genesis, vearl-faucet, optionally vearl-pool / vearl-poolminer (mining pools, docs/16). The Linux files are glibc builds made on
 Ubuntu 22.04 with the CUDA runtime linked in, the Windows ones the multi-architecture CUDA build: both need only the NVIDIA driver.
 
@@ -30,7 +30,7 @@ import tarfile
 import time
 import zipfile
 
-BINS = ["vearl-miner", "node", "vearl-cli", "vearl-wallet", "vearl-genesis", "vearl-faucet"]
+BINS = ["vearl-miner", "node", "vearl-cli", "vearl-wallet", "vearl-wallet-gui", "vearl-genesis", "vearl-faucet"]
 # pools (docs/16): included when present in the platform directory
 OPTIONAL_BINS = ["vearl-poolminer", "vearl-pool"]
 # optional Quantus add-on (docs/15 section 4 bis): a separate archive
@@ -64,10 +64,18 @@ The assistant creates a wallet.json protected by a password and shows you 24 rec
 the words has the funds, and without them a lost password or a lost file cannot be recovered. Do not put them in a file, a photo
 or a message, and never give them to anybody (nobody from the project will ever ask for them).
 
+Vearl Wallet (the wallet window)
+--------------------------------
+vearl-wallet-gui{exe} is the wallet with a window: it shows your balance and your activity, receives (address and QR code), sends (with a
+summary and your password before anything leaves), registers for the testnet rewards, signs messages and keeps your recovery words one
+click away. {wallet_start} It lists the wallet.json of this folder (the one the miner made), and the wallets it creates are kept in
+{wallet_dir}. It uses the same wallet files as the command-line wallet. Your keys stay encrypted on disk and are only opened for the
+moment of a payment or a signature.
+
 Command-line tools
 ------------------
-vearl-wallet{exe}, vearl-cli{exe} and the other programs of this folder, except vearl-miner{exe}, are command-line tools: they have no
-window, so a double-click only shows their help and waits for Enter. Open a terminal in this folder (Windows: click the address bar of
+vearl-wallet{exe}, vearl-cli{exe} and the other programs of this folder, except vearl-miner{exe} and vearl-wallet-gui{exe}, are command-line
+tools: they have no window, so a double-click only shows their help and waits for Enter. Open a terminal in this folder (Windows: click the address bar of
 the folder, type cmd and press Enter; Linux: any terminal) and type a command. Run a tool without arguments to see its help, for example:
    vearl-wallet{exe}
    vearl-wallet{exe} address --file wallet.json     (shows your address; the password is asked)
@@ -77,6 +85,7 @@ Files in this folder
 --------------------
  vearl-miner{exe}        the program to open (everything else is started by it)
  node{exe}               the Vearl node
+ vearl-wallet-gui{exe}   the wallet with a window (balance, send, receive, rewards)
  vearl-wallet{exe}, vearl-cli{exe}   wallet and command line tools
  vearl-pool{exe}, vearl-poolminer{exe}   for pool operators / mining in a pool (docs/16 in the source repository)
  network.json, genesis.json   the network (do not edit: every miner must use the same files)
@@ -231,7 +240,9 @@ def main():
         start += "\n The first time, an assistant creates your Vearl wallet."
         driver = "Windows: 580 or newer" if win else "Linux: 575 or newer; `nvidia-smi` must work"
         adv = "vearl-miner setup (run the assistant again), vearl-miner check (test GPU and files), miner.json (settings)."
-        return README.format(version=a.version, date=date, exe=".exe" if win else "", start_here=start, driver=driver, advanced=adv).encode()
+        wallet_start = "Double-click it to open it." if win else "Run ./vearl-wallet-gui from a desktop session (it needs a graphical desktop with OpenGL; on a server use the command-line vearl-wallet)."
+        wallet_dir = r"%APPDATA%\Vearl\wallets" if win else "~/.local/share/vearl/wallets"
+        return README.format(version=a.version, date=date, exe=".exe" if win else "", start_here=start, driver=driver, advanced=adv, wallet_start=wallet_start, wallet_dir=wallet_dir).encode()
 
     def readme_addon(win):
         return README_ADDON.format(version=a.version, date=date, exe=".exe" if win else "", dev_address=DEV_ADDRESS).encode()

@@ -90,6 +90,7 @@
           <li>The first time, an assistant creates your wallet. It shows <b>24 recovery words once</b>: write them on paper. They are the only backup of your wallet. Never photograph them, never type them anywhere, and never give them to anybody: nobody from the project will ever ask for them.</li>
           <li>Leave the window open. The miner starts mining as soon as the testnet opens, and prints a status line every 10 seconds (it is also saved in <span class="mono">miner.log</span>).</li>
         </ol>
+        <p><b>Vearl Wallet</b> (<span class="mono">vearl-wallet-gui</span>) is in the same folder: a wallet with a window, to see your balance, receive, send and register for the rewards. Double-click it on Windows, or run it from a desktop session on Linux. It lists the <span class="mono">wallet.json</span> that the miner made, and it can also create a wallet or restore one from its 24 words.</p>
         <p>The miner mines <b>Vearl only</b>. An optional add-on can also mine Quantus (QTC) with the same GPU, but it is off by default and <b>does not count</b> for the testnet rewards.</p>
         <p>Windows may warn about an unknown program (the files are not code-signed yet) and some antivirus programs flag any miner. You can read the source code and build it yourself: <a class="lnk" href="https://github.com/vearl-verified-compute/vearl" target="_blank" rel="noopener">github.com/vearl-verified-compute/vearl</a>.</p>
         <div class="pp-cta"><a class="btn primary" href="https://github.com/vearl-verified-compute/vearl/releases" target="_blank" rel="noopener">Download the miner</a></div>
@@ -133,6 +134,7 @@
       <div class="panel-head"><h2>5. Register your address</h2></div>
       <div class="panel-body">
         <p>Registration is one command: the wallet signs a message that proves that you own your address, shows it to you, and, after you confirm, sends it by e-mail to <span class="mono">register@vearl.org</span>. A signature proves ownership without revealing any secret. Registration opens during the testnet: the date will be announced on the <a class="lnk" href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Discord</a> and on <a class="lnk" href="https://x.com/vearl_org" target="_blank" rel="noopener">X</a>.</p>
+        <p><b>The easy way:</b> open Vearl Wallet, choose your wallet, go to <b>Rewards</b>, type your Discord name or your e-mail address, press <b>Sign the registration</b> (it asks your password), check the three lines it shows and press <b>Send the registration</b>. The command line below does exactly the same thing.</p>
         <ol>
           <li>Open a terminal in the miner folder (Windows: click the address bar of the folder, type <span class="mono">cmd</span> and press Enter). Your wallet file is <span class="mono">wallet.json</span>, in that folder.</li>
           <li>Run this, with your Discord name or your e-mail address instead of the capitals (the wallet asks your password):

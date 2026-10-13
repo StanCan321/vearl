@@ -59,7 +59,7 @@ The team may exclude an address that breaks these rules, and publishes the addre
 
 ## 5. How to register
 
-Registration is done by e-mail, but you do not have to write the e-mail yourself: the wallet sends it.
+Registration is done by e-mail, but you do not have to write the e-mail yourself: the wallet sends it. With the wallet window (`vearl-wallet-gui`, docs/20) it is the **Rewards** page: type your contact, press *Sign the registration*, check the three lines, press *Send the registration*. The command line below does the same.
 
 1. Mine with an address of your wallet (the one the miner created, or `vearl-wallet new`).
 2. In the folder of the wallet, run (replace the contact with your Discord name or an e-mail address):
