@@ -10,6 +10,9 @@ use vearl_core::crypto::pubkey;
 use vearl_core::state::COIN;
 use vearl_core::wallet::{address_of, derive_account, derive_pq_account, new_mnemonic, parse_mnemonic, pq_address_of};
 
+/// The genesis of the public testnet (only its allocations are replaced by the test).
+const GENESIS_TEMPLATE: &str = r#"{"network":"vearl-testnet-1","params":{"n":1024,"tile":16,"rank":63,"fold_k":64},"alloc":[{"address":"vrl1pjz76654u725l28d5krylnweyk0yay53cw5pdamsj9g0kqpp232qr5nucm","amount":"1000000.00000000"}],"timestamp":1792771200,"target":"6148914691","timing":{"challenge_secs":300,"serve_secs":120},"retarget":"Asert"}"#;
+
 fn wait_until(app: &mut App, what: &str, mut cond: impl FnMut(&mut App) -> bool) {
     let t0 = Instant::now();
     loop {
@@ -44,15 +47,15 @@ fn window_logic_against_a_real_node() {
         eprintln!("skipped: set VEARL_NODE_BIN to run the end-to-end test");
         return;
     };
+    let _lock = crate::core::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let tmp = std::env::temp_dir().join(format!("vearl-gui-e2e-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    std::env::set_var("APPDATA", &tmp);
-    std::env::set_var("XDG_DATA_HOME", &tmp);
+    std::env::set_var("VEARL_WALLET_HOME", &tmp);
 
     let ctx = egui::Context::default();
     let logo = ctx.load_texture("t", egui::ColorImage::example(), Default::default());
-    let mut app = App::new(ctx, logo);
+    let mut app = App::new(ctx, logo, false);
 
     // ---- create a wallet with the buttons' commands
     app.cmds.push(Cmd::StartCreate);
@@ -60,14 +63,33 @@ fn window_logic_against_a_real_node() {
     {
         let Screen::Create(c) = &mut app.screen else { panic!() };
         c.name = "e2e wallet".into();
+        c.password = "short".into();
+        c.confirm = "short".into();
+    }
+    app.cmds.push(Cmd::CreateNext);
+    app.run_cmds();
+    {
+        let Screen::Create(c) = &mut app.screen else { panic!() };
+        assert_eq!(c.step, 0, "a short password is refused: {:?}", c.error);
         c.password = "first-password-123".into();
         c.confirm = "first-password-123".into();
     }
     app.cmds.push(Cmd::CreateNext);
     app.run_cmds();
-    let words = {
+    {
         let Screen::Create(c) = &mut app.screen else { panic!() };
         assert_eq!(c.step, 1, "{:?}", c.error);
+        // the pointer adds randomness, then the words are drawn
+        for i in 0..200 {
+            c.entropy.add(eframe::egui::pos2(i as f32 * 30.0, (i % 7) as f32 * 50.0), i as f64);
+        }
+        assert_eq!(c.entropy.progress(), 1.0);
+    }
+    app.cmds.push(Cmd::CreateNext);
+    app.run_cmds();
+    let words = {
+        let Screen::Create(c) = &mut app.screen else { panic!() };
+        assert_eq!(c.step, 2, "{:?}", c.error);
         c.words()
     };
     assert_eq!(words.len(), 24);
@@ -75,37 +97,43 @@ fn window_logic_against_a_real_node() {
     app.run_cmds();
     {
         let Screen::Create(c) = &mut app.screen else { panic!() };
-        assert_eq!(c.step, 1, "must refuse until the paper box is ticked");
+        assert_eq!(c.step, 2, "must refuse until the words were shown and the paper box is ticked");
+        c.reveal_t0 = Some(0.0);
+    }
+    app.cmds.push(Cmd::CreateNext);
+    app.run_cmds();
+    {
+        let Screen::Create(c) = &mut app.screen else { panic!() };
+        assert_eq!(c.step, 2, "the paper box is not ticked yet");
         c.written = true;
     }
     app.cmds.push(Cmd::CreateNext);
     app.run_cmds();
     {
         let Screen::Create(c) = &mut app.screen else { panic!() };
-        assert_eq!(c.step, 2);
+        assert_eq!(c.step, 3);
         c.check_in = [words[c.check_idx[0]].clone(), "wrong".into(), words[c.check_idx[2]].clone()];
     }
     app.cmds.push(Cmd::CreateFinish);
     app.run_cmds();
     {
         let Screen::Create(c) = &mut app.screen else { panic!() };
-        assert!(c.error.is_some() && !c.busy, "a wrong word must be refused");
+        assert!(c.error.is_some() && c.step == 3, "a wrong word must be refused");
         c.check_in[1] = words[c.check_idx[1]].clone();
     }
     app.cmds.push(Cmd::CreateFinish);
-    wait_until(&mut app, "wallet created", |a| matches!(&a.screen, Screen::Create(c) if c.step == 3));
+    wait_until(&mut app, "wallet created", |a| matches!(&a.screen, Screen::Create(c) if c.step == 4 && c.result.is_some()));
     let entry = match &app.screen {
-        Screen::Create(c) => c.done.clone().unwrap(),
+        Screen::Create(c) => c.result.clone().unwrap().expect("the wallet was created"),
         _ => unreachable!(),
     };
     assert!(entry.path.exists() && entry.path.ends_with("e2e-wallet.json"));
+    // the title bar of the window moves on by itself once the animation has played; the command line of the buttons is what is tested here
     let m = parse_mnemonic(&words.join(" ")).unwrap();
     let pq_addr = pq_address_of(&derive_pq_account(&m, 0).pubkey());
 
     // ---- a local node whose genesis pays the two accounts of that wallet
-    let node_dir = std::path::Path::new(&node_bin).parent().unwrap().to_path_buf();
-    let genesis = std::fs::read_to_string(node_dir.join("genesis.json")).expect("genesis.json next to the node program");
-    let mut g: serde_json::Value = serde_json::from_str(&genesis).unwrap();
+    let mut g: serde_json::Value = serde_json::from_str(GENESIS_TEMPLATE).unwrap();
     g["alloc"] = serde_json::json!([{ "address": entry.address, "amount": "1000.00000000" }, { "address": pq_addr, "amount": "500.00000000" }]);
     let gpath = tmp.join("genesis.json");
     std::fs::write(&gpath, serde_json::to_string(&g).unwrap()).unwrap();
@@ -126,6 +154,12 @@ fn window_logic_against_a_real_node() {
         assert!(t0.elapsed() < Duration::from_secs(40), "the node did not start");
         std::thread::sleep(Duration::from_millis(200));
     }
+    // the node is recognised as being on the network of that genesis, and refused for any other
+    let (_, cfg) = vearl_core::genesis::parse_genesis(&std::fs::read_to_string(&gpath).unwrap()).unwrap();
+    let gh = vearl_core::net::genesis_hash(&cfg);
+    assert_eq!(status_of(&node, Some(gh)).unwrap().genesis_ok, Some(true));
+    assert_eq!(status_of(&node, Some([9u8; 32])).unwrap().genesis_ok, Some(false), "another network is detected");
+    assert_eq!(status_of(&node, None).unwrap().genesis_ok, None);
     app.settings.node = node.clone();
     app.network.nodes = vec![node.clone()];
 

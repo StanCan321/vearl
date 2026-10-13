@@ -1,16 +1,25 @@
 //! State of the window and everything that happens in the background. Drawing is in `ui_start.rs` and `ui_wallet.rs`: they only change
 //! the state and push [`Cmd`]s, which are carried out here (threads, files, settings), so no drawing code ever blocks or touches the disk.
+use crate::anim;
 use crate::core::*;
+use crate::demodata;
 use crate::theme::Tone;
 use eframe::egui;
+use rand::RngCore;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 use vearl_core::crypto::PubKey;
-use vearl_core::wallet::{derive_pq_account, new_mnemonic, parse_address, parse_amount, parse_mnemonic, pq_address_of};
+use vearl_core::wallet::{derive_pq_account, parse_address, parse_amount, parse_mnemonic, pq_address_of};
 use zeroize::Zeroize;
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(15);
+/// Mouse movements gathered as extra randomness when a wallet is created.
+pub const ENTROPY_SAMPLES: u32 = 160;
+/// The recovery words hide themselves again after this many seconds on screen.
+pub const WORDS_VISIBLE_SECS: f64 = 90.0;
+/// A new password must have at least this many characters (the wallet file format accepts 8).
+pub const MIN_PASSWORD: usize = 10;
 
 // ------------------------------------------------------------------------------------------------ screens
 
@@ -21,43 +30,118 @@ pub enum Screen {
     Wallet(Box<Session>),
 }
 
-#[derive(Default)]
 pub struct StartState {
+    /// When the screen appeared (for the opening animation).
+    pub t0: f64,
     pub show_open: bool,
     pub open_path: String,
     pub error: Option<String>,
+    pub notice: Option<(Tone, String)>,
+}
+
+impl StartState {
+    pub fn new(t0: f64, notice: Option<(Tone, String)>) -> StartState {
+        StartState { t0, show_open: false, open_path: String::new(), error: None, notice }
+    }
+}
+
+/// Randomness for a new wallet: the system generator (always) plus the movements of the pointer, hashed together. The pointer can only
+/// add: whatever it does, the result is at least as unpredictable as the system generator alone.
+pub struct Entropy {
+    hasher: blake3::Hasher,
+    pub samples: u32,
+    pub last: Option<egui::Pos2>,
+    /// (position, time, hue) of the dots drawn along the path of the pointer.
+    pub dots: Vec<(egui::Pos2, f64, f32)>,
+}
+
+impl Entropy {
+    pub fn new() -> Entropy {
+        let mut os = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut os);
+        let mut hasher = blake3::Hasher::new_derive_key("vearl wallet entropy v1");
+        hasher.update(&os);
+        os.zeroize();
+        Entropy { hasher, samples: 0, last: None, dots: vec![] }
+    }
+
+    /// One movement of the pointer; counted only if it moved far enough from the last one.
+    pub fn add(&mut self, pos: egui::Pos2, now: f64) -> bool {
+        if let Some(l) = self.last {
+            if (pos - l).length() < 14.0 {
+                return false;
+            }
+        }
+        self.last = Some(pos);
+        self.hasher.update(&pos.x.to_le_bytes());
+        self.hasher.update(&pos.y.to_le_bytes());
+        self.hasher.update(&now.to_le_bytes());
+        self.hasher.update(&(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())).to_le_bytes());
+        self.samples += 1;
+        self.dots.push((pos, now, anim::noise(self.samples as u64, 77, 3)));
+        if self.dots.len() > 90 {
+            self.dots.remove(0);
+        }
+        true
+    }
+
+    pub fn progress(&self) -> f32 {
+        (self.samples as f32 / ENTROPY_SAMPLES as f32).min(1.0)
+    }
+
+    /// The 24 words: 256 bits drawn from everything gathered, plus fresh system randomness.
+    pub fn finish(&self) -> bip39::Mnemonic {
+        let mut h = self.hasher.clone();
+        let mut fresh = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut fresh);
+        h.update(&fresh);
+        fresh.zeroize();
+        let mut out = [0u8; 32];
+        h.finalize_xof().fill(&mut out);
+        let m = bip39::Mnemonic::from_entropy_in(bip39::Language::English, &out).expect("32 bytes make 24 words");
+        out.zeroize();
+        m
+    }
 }
 
 pub struct Create {
-    /// 0 = name and password, 1 = write the words down, 2 = check them, 3 = done
+    /// 0 name and password, 1 randomness, 2 write the words down, 3 check them, 4 securing the file, 5 ready
     pub step: u8,
+    /// When the current step started (for its animation).
+    pub t_step: f64,
     pub name: String,
     pub password: String,
     pub confirm: String,
+    pub entropy: Entropy,
     pub phrase: Option<bip39::Mnemonic>,
-    pub revealed: bool,
+    /// When the words were revealed (they hide again by themselves).
+    pub reveal_t0: Option<f64>,
     pub written: bool,
     pub check_idx: [usize; 3],
     pub check_in: [String; 3],
     pub error: Option<String>,
-    pub busy: bool,
+    pub secure_t0: f64,
+    pub result: Option<Result<WalletEntry, String>>,
     pub done: Option<WalletEntry>,
 }
 
 impl Create {
-    pub fn new() -> Create {
+    pub fn new(now: f64) -> Create {
         Create {
             step: 0,
+            t_step: now,
             name: "my-wallet".into(),
             password: String::new(),
             confirm: String::new(),
+            entropy: Entropy::new(),
             phrase: None,
-            revealed: false,
+            reveal_t0: None,
             written: false,
             check_idx: [0, 8, 16],
             check_in: Default::default(),
             error: None,
-            busy: false,
+            secure_t0: 0.0,
+            result: None,
             done: None,
         }
     }
@@ -66,14 +150,42 @@ impl Create {
     }
 }
 
+impl Drop for Create {
+    fn drop(&mut self) {
+        self.password.zeroize();
+        self.confirm.zeroize();
+        for w in self.check_in.iter_mut() {
+            w.zeroize();
+        }
+    }
+}
+
 pub struct Restore {
+    /// 0 form, 1 securing the file, 2 ready
+    pub step: u8,
+    pub t_step: f64,
     pub name: String,
     pub phrase: String,
     pub password: String,
     pub confirm: String,
     pub error: Option<String>,
-    pub busy: bool,
+    pub secure_t0: f64,
+    pub result: Option<Result<WalletEntry, String>>,
     pub done: Option<WalletEntry>,
+}
+
+impl Restore {
+    pub fn new(now: f64) -> Restore {
+        Restore { step: 0, t_step: now, name: "restored-wallet".into(), phrase: String::new(), password: String::new(), confirm: String::new(), error: None, secure_t0: 0.0, result: None, done: None }
+    }
+}
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        self.phrase.zeroize();
+        self.password.zeroize();
+        self.confirm.zeroize();
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -146,6 +258,13 @@ pub struct SettingsForm {
     pub saved: bool,
 }
 
+impl Drop for SettingsForm {
+    fn drop(&mut self) {
+        self.new_password.zeroize();
+        self.new_confirm.zeroize();
+    }
+}
+
 /// What a password is asked for.
 #[derive(Clone)]
 pub enum Action {
@@ -157,11 +276,36 @@ pub enum Action {
     ChangePassword { new: String },
 }
 
+impl Action {
+    /// A secret travels with the action (the new password): wipe it when the action is done with.
+    pub fn wipe(&mut self) {
+        if let Action::ChangePassword { new } = self {
+            new.zeroize();
+        }
+    }
+}
+
 pub struct PwPrompt {
     pub action: Action,
     pub password: String,
     pub error: Option<String>,
     pub busy: bool,
+    /// Wrong passwords in a row, and when the next try is allowed (it slows down after three).
+    pub failures: u32,
+    pub locked_until: f64,
+}
+
+impl PwPrompt {
+    pub fn new(action: Action) -> PwPrompt {
+        PwPrompt { action, password: String::new(), error: None, busy: false, failures: 0, locked_until: 0.0 }
+    }
+}
+
+impl Drop for PwPrompt {
+    fn drop(&mut self) {
+        self.password.zeroize();
+        self.action.wipe();
+    }
 }
 
 pub enum Modal {
@@ -170,11 +314,24 @@ pub enum Modal {
     Sent { txid: String, from: String, to: String, amount: u64, fee: u64 },
 }
 
+impl Drop for Modal {
+    fn drop(&mut self) {
+        if let Modal::Phrase(words) = self {
+            for w in words.iter_mut() {
+                w.zeroize();
+            }
+        }
+    }
+}
+
 pub struct Session {
     pub sid: u64,
     pub entry: WalletEntry,
     pub pk: PubKey,
     pub page: Page,
+    /// The page whose opening animation is running, and when it started.
+    pub shown_page: Page,
+    pub page_t0: f64,
     pub status: Option<Result<NodeStatus, String>>,
     pub account: Option<Account>,
     pub account_error: Option<String>,
@@ -191,7 +348,19 @@ pub struct Session {
     pub tools: ToolsForm,
     pub settings: SettingsForm,
     pub modal: Option<Modal>,
+    pub modal_t0: f64,
+    pub modal_was_open: bool,
     pub toast: Option<(Tone, String, Instant)>,
+}
+
+impl Session {
+    /// Addresses this wallet has already paid (from the activity list): a payment to anyone else is flagged as a new recipient.
+    pub fn known_recipient(&self, address: &str) -> bool {
+        match &self.activity {
+            Some(Ok(rows)) => rows.iter().any(|r| r.direction == "out" && r.counterparty.as_deref() == Some(address)),
+            _ => false,
+        }
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ messages
@@ -220,6 +389,8 @@ pub enum Cmd {
     OpenWallet(WalletEntry),
     OpenPath(String),
     GoStart,
+    /// Back to the start screen because nothing was touched for a while.
+    LockIdle,
     StartCreate,
     StartRestore,
     CreateNext,
@@ -234,10 +405,17 @@ pub enum Cmd {
     CancelModal,
     SendMail,
     SaveSettings,
+    /// The program's own settings (lock delay, motion...) changed.
+    PersistSettings,
     TestNode,
     Link(String),
     Reveal(PathBuf),
     Forget(String),
+}
+
+/// Removes what the text fields remember (their undo history keeps copies of what was typed, passwords included).
+pub fn wipe_text_state(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove_by_type::<egui::text_edit::TextEditState>());
 }
 
 // ------------------------------------------------------------------------------------------------ the application
@@ -251,6 +429,7 @@ pub struct App {
     pub screen: Screen,
     pub demo: bool,
     pub cmds: Vec<Cmd>,
+    pub last_activity: Instant,
     tx: Sender<Ev>,
     rx: Receiver<Ev>,
     next_sid: u64,
@@ -259,26 +438,33 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(ctx: egui::Context, logo: egui::TextureHandle) -> App {
+    pub fn new(ctx: egui::Context, logo: egui::TextureHandle, demo: bool) -> App {
         let settings = Settings::load();
         let network = load_network();
-        let wallets = list_wallets(&settings);
+        let wallets = if demo { demodata::entries() } else { list_wallets(&settings) };
         let (tx, rx) = channel();
+        let now = anim::time(&ctx);
+        anim::set_reduce_motion(settings.reduce_motion);
         App {
             ctx,
             logo,
             settings,
             network,
             wallets,
-            screen: Screen::Start(StartState::default()),
-            demo: false,
+            screen: Screen::Start(StartState::new(now, None)),
+            demo,
             cmds: vec![],
+            last_activity: Instant::now(),
             tx,
             rx,
             next_sid: 1,
             #[cfg(feature = "devshots")]
             shots: None,
         }
+    }
+
+    pub fn now(&self) -> f64 {
+        anim::time(&self.ctx)
     }
 
     pub fn nodes(&self) -> Vec<String> {
@@ -310,17 +496,31 @@ impl App {
         }
     }
 
+    /// True while the 24 recovery words are on screen (the window can then hide itself from screen capture).
+    pub fn words_on_screen(&self) -> bool {
+        match &self.screen {
+            Screen::Create(c) => c.step == 2 && c.reveal_t0.is_some(),
+            Screen::Wallet(s) => matches!(s.modal, Some(Modal::Phrase(_))),
+            _ => false,
+        }
+    }
+
     pub fn open_session(&mut self, entry: WalletEntry) {
         let Ok(pk) = parse_address(&entry.address) else { return };
         let sid = self.next_sid;
         self.next_sid += 1;
-        self.settings.last_wallet = entry.path.display().to_string();
-        self.settings.save();
-        let s = Session {
+        if !self.demo {
+            self.settings.last_wallet = entry.path.display().to_string();
+            self.settings.save();
+        }
+        let now = self.now();
+        let mut s = Session {
             sid,
             entry,
             pk,
             page: Page::Overview,
+            shown_page: Page::Overview,
+            page_t0: now,
             status: None,
             account: None,
             account_error: None,
@@ -335,13 +535,42 @@ impl App {
             send: SendForm { fee: FEE_DEFAULT.into(), ..Default::default() },
             rewards: RewardsForm::default(),
             tools: ToolsForm::default(),
-            settings: SettingsForm { node: self.settings.node.clone(), explorer: self.settings.explorer.clone(), ..Default::default() },
+            settings: {
+                let mut f = SettingsForm::default();
+                f.node = self.settings.node.clone();
+                f.explorer = self.settings.explorer.clone();
+                f
+            },
             modal: None,
+            modal_t0: now,
+            modal_was_open: false,
             toast: None,
         };
+        if self.demo {
+            demodata::fill_session(&mut s);
+        }
         self.screen = Screen::Wallet(Box::new(s));
+        wipe_text_state(&self.ctx);
+        self.last_activity = Instant::now();
         self.cmds.push(Cmd::Refresh);
         self.cmds.push(Cmd::RefreshActivity);
+    }
+
+    /// Called every frame: idle lock, and the settings that act on the whole program.
+    pub fn tick(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| !i.events.is_empty() || i.pointer.delta() != egui::Vec2::ZERO) {
+            self.last_activity = Instant::now();
+        }
+        anim::set_reduce_motion(self.settings.reduce_motion);
+        let mins = self.settings.autolock_minutes as u64;
+        if mins > 0 && matches!(self.screen, Screen::Wallet(_)) && !self.demo {
+            let idle = self.last_activity.elapsed();
+            if idle >= Duration::from_secs(mins * 60) {
+                self.cmds.push(Cmd::LockIdle);
+            } else {
+                ctx.request_repaint_after(Duration::from_secs(mins * 60) - idle + Duration::from_millis(50));
+            }
+        }
     }
 
     // -------------------------------------------------------------------------------------------- events from the threads
@@ -353,29 +582,15 @@ impl App {
     }
 
     fn handle(&mut self, ev: Ev) {
+        let now = self.now();
         match ev {
             Ev::Created(res) => {
-                match (&mut self.screen, res) {
-                    (Screen::Create(c), Ok(entry)) => {
-                        c.busy = false;
-                        c.step = 3;
-                        c.done = Some(entry);
-                    }
-                    (Screen::Create(c), Err(e)) => {
-                        c.busy = false;
-                        c.error = Some(e);
-                    }
-                    (Screen::Restore(r), Ok(entry)) => {
-                        r.busy = false;
-                        r.done = Some(entry);
-                    }
-                    (Screen::Restore(r), Err(e)) => {
-                        r.busy = false;
-                        r.error = Some(e);
-                    }
+                match &mut self.screen {
+                    Screen::Create(c) => c.result = Some(res),
+                    Screen::Restore(r) => r.result = Some(res),
                     _ => {}
                 }
-                self.wallets = list_wallets(&self.settings);
+                self.wallets = if self.demo { demodata::entries() } else { list_wallets(&self.settings) };
             }
             Ev::Refresh { sid, status, account, pq } => {
                 if let Some(s) = self.session_mut().filter(|s| s.sid == sid) {
@@ -425,14 +640,16 @@ impl App {
             }
             Ev::Action { sid, res } => {
                 let Some(s) = self.session_mut().filter(|s| s.sid == sid) else { return };
-                let action = match &s.modal {
-                    Some(Modal::Password(p)) => Some(p.action.clone()),
-                    _ => None,
-                };
                 match res {
                     Err(e) => {
                         if let Some(Modal::Password(p)) = &mut s.modal {
                             p.busy = false;
+                            if e.starts_with("wrong password") {
+                                p.failures += 1;
+                                if p.failures >= 3 {
+                                    p.locked_until = now + (2u64.pow((p.failures - 3).min(4)) as f64) * 2.0;
+                                }
+                            }
                             p.error = Some(e);
                             p.password.zeroize();
                         }
@@ -465,7 +682,7 @@ impl App {
                                 s.toast = Some((Tone::Ok, "Password changed. The wallet file was re-encrypted.".into(), Instant::now()));
                             }
                         }
-                        let _ = action;
+                        wipe_text_state(&self.ctx);
                     }
                 }
             }
@@ -479,6 +696,13 @@ impl App {
         for c in cmds {
             self.run(c);
         }
+    }
+
+    fn go_start(&mut self, notice: Option<(Tone, String)>) {
+        self.wallets = if self.demo { demodata::entries() } else { list_wallets(&self.settings) };
+        let now = self.now();
+        self.screen = Screen::Start(StartState::new(now, notice));
+        wipe_text_state(&self.ctx);
     }
 
     fn run(&mut self, cmd: Cmd) {
@@ -508,19 +732,41 @@ impl App {
                 self.settings.save();
                 self.wallets = list_wallets(&self.settings);
             }
-            Cmd::GoStart => {
-                self.wallets = list_wallets(&self.settings);
-                self.screen = Screen::Start(StartState::default());
+            Cmd::GoStart => self.go_start(None),
+            Cmd::LockIdle => {
+                let m = self.settings.autolock_minutes;
+                self.go_start(Some((Tone::Info, format!("Locked after {m} minute{} without activity.", if m == 1 { "" } else { "s" }))));
             }
-            Cmd::StartCreate => self.screen = Screen::Create(Box::new(Create::new())),
+            Cmd::StartCreate => {
+                let now = self.now();
+                self.screen = Screen::Create(Box::new(Create::new(now)));
+            }
             Cmd::StartRestore => {
-                self.screen = Screen::Restore(Box::new(Restore { name: "restored-wallet".into(), phrase: String::new(), password: String::new(), confirm: String::new(), error: None, busy: false, done: None }))
+                let now = self.now();
+                self.screen = Screen::Restore(Box::new(Restore::new(now)));
             }
             Cmd::CreateNext => self.create_next(),
             Cmd::CreateBack => {
+                let now = self.now();
                 if let Screen::Create(c) = &mut self.screen {
                     c.error = None;
-                    c.step = c.step.saturating_sub(1);
+                    match c.step {
+                        1 => {
+                            c.step = 0;
+                            c.t_step = now;
+                        }
+                        3 => {
+                            c.step = 2;
+                            c.t_step = now;
+                            c.reveal_t0 = None;
+                        }
+                        4 => {
+                            c.step = 3;
+                            c.t_step = now;
+                            c.result = None;
+                        }
+                        _ => {}
+                    }
                 }
             }
             Cmd::CreateFinish => self.create_finish(),
@@ -528,6 +774,13 @@ impl App {
             Cmd::Refresh => self.refresh(),
             Cmd::RefreshActivity => self.refresh_activity(),
             Cmd::CheckRegistered => {
+                if self.demo {
+                    if let Some(s) = self.session_mut() {
+                        s.registered = Some(Ok(false));
+                        s.standing = Some(Ok(Some(demodata::standing())));
+                    }
+                    return;
+                }
                 if let Some((sid, addr)) = self.session_mut().map(|s| (s.sid, s.entry.address.clone())) {
                     let addr2 = addr.clone();
                     self.spawn(move || Ev::Registered { sid, res: is_registered(&addr) });
@@ -535,17 +788,17 @@ impl App {
                 }
             }
             Cmd::Ask(action) => {
+                let now = self.now();
                 if let Some(s) = self.session_mut() {
-                    s.modal = Some(Modal::Password(PwPrompt { action, password: String::new(), error: None, busy: false }));
+                    s.modal = Some(Modal::Password(PwPrompt::new(action)));
+                    s.modal_t0 = now;
                 }
             }
             Cmd::CancelModal => {
                 if let Some(s) = self.session_mut() {
-                    if let Some(Modal::Password(p)) = &mut s.modal {
-                        p.password.zeroize();
-                    }
                     s.modal = None;
                 }
+                wipe_text_state(&self.ctx);
             }
             Cmd::SubmitPassword => self.submit_password(),
             Cmd::SendMail => self.send_mail(),
@@ -560,7 +813,13 @@ impl App {
                     self.cmds.push(Cmd::RefreshActivity);
                 }
             }
+            Cmd::PersistSettings => {
+                if !self.demo {
+                    self.settings.save();
+                }
+            }
             Cmd::TestNode => {
+                let demo = self.demo;
                 let nodes: Vec<String> = match self.session_mut() {
                     Some(s) => {
                         s.settings.testing = true;
@@ -576,9 +835,19 @@ impl App {
                 };
                 let nodes = if nodes.is_empty() { self.nodes() } else { nodes };
                 let sid = self.session_mut().map_or(0, |s| s.sid);
-                self.spawn(move || Ev::NodeTest { sid, res: node_status(&nodes) });
+                self.spawn(move || {
+                    if demo {
+                        std::thread::sleep(Duration::from_millis(900));
+                        return Ev::NodeTest { sid, res: Ok(demodata::status()) };
+                    }
+                    Ev::NodeTest { sid, res: node_status(&nodes) }
+                });
             }
-            Cmd::Link(u) => open_link(&u),
+            Cmd::Link(u) => {
+                if !self.demo {
+                    open_link(&u)
+                }
+            }
             Cmd::Reveal(p) => reveal(&p),
         }
     }
@@ -619,10 +888,15 @@ impl App {
 
     fn submit_password(&mut self) {
         let nodes = self.nodes();
+        let demo = self.demo;
+        let now = self.now();
         let Some(s) = self.session_mut() else { return };
         let (sid, path) = (s.sid, s.entry.path.clone());
         let Some(Modal::Password(p)) = &mut s.modal else { return };
         if p.busy {
+            return;
+        }
+        if now < p.locked_until {
             return;
         }
         if p.password.is_empty() {
@@ -635,13 +909,21 @@ impl App {
         let action = p.action.clone();
         self.spawn(move || {
             let mut password = password;
-            let res = run_action(&path, &password, action, &nodes);
+            let mut action = action;
+            let res = if demo {
+                std::thread::sleep(Duration::from_millis(1300));
+                Ok(demodata::done_for(&action))
+            } else {
+                run_action(&path, &password, action.clone(), &nodes)
+            };
             password.zeroize();
+            action.wipe();
             Ev::Action { sid, res }
         });
     }
 
     fn send_mail(&mut self) {
+        let demo = self.demo;
         let Some(s) = self.session_mut() else { return };
         let Some(l) = s.rewards.lines.clone() else { return };
         if s.rewards.sending {
@@ -651,6 +933,10 @@ impl App {
         s.rewards.sent = None;
         let sid = s.sid;
         self.spawn(move || {
+            if demo {
+                std::thread::sleep(Duration::from_millis(1500));
+                return Ev::Mail { sid, res: Ok(()) };
+            }
             let reg = vearl_core::regmail::Registration { address: l.address, message: l.message, signature_hex: l.signature };
             Ev::Mail { sid, res: vearl_core::regmail::send_registration(&reg) }
         });
@@ -659,6 +945,8 @@ impl App {
     // -------------------------------------------------------------------------------------------- creating and restoring
 
     fn create_next(&mut self) {
+        let now = self.now();
+        let demo = self.demo;
         let Screen::Create(c) = &mut self.screen else { return };
         c.error = None;
         match c.step {
@@ -667,37 +955,49 @@ impl App {
                     c.error = Some(e);
                     return;
                 }
-                if c.password.chars().count() < 8 {
-                    c.error = Some("The password needs at least 8 characters.".into());
+                if let Err(e) = check_new_password(&c.password, &c.name) {
+                    c.error = Some(e);
                     return;
                 }
                 if c.password != c.confirm {
                     c.error = Some("The two passwords are not the same.".into());
                     return;
                 }
-                if c.phrase.is_none() {
-                    let m = new_mnemonic();
-                    let e = m.to_entropy();
-                    c.check_idx = [(e[0] % 8) as usize, 8 + (e[1] % 8) as usize, 16 + (e[2] % 8) as usize];
-                    c.phrase = Some(m);
-                }
-                c.revealed = false;
-                c.written = false;
                 c.step = 1;
+                c.t_step = now;
             }
             1 => {
+                // the words are drawn now, from everything gathered
+                let m = if demo { demodata::creation_mnemonic() } else { c.entropy.finish() };
+                let e = m.to_entropy();
+                c.check_idx = [(e[0] % 8) as usize, 8 + (e[1] % 8) as usize, 16 + (e[2] % 8) as usize];
+                c.phrase = Some(m);
+                c.entropy = Entropy::new();
+                c.reveal_t0 = None;
+                c.written = false;
+                c.step = 2;
+                c.t_step = now;
+            }
+            2 => {
+                if c.reveal_t0.is_none() {
+                    c.error = Some("Show the 24 words first, and write them down.".into());
+                    return;
+                }
                 if !c.written {
                     c.error = Some("Tick the box once the 24 words are written on paper.".into());
                     return;
                 }
                 c.check_in = Default::default();
-                c.step = 2;
+                c.reveal_t0 = None;
+                c.step = 3;
+                c.t_step = now;
             }
             _ => {}
         }
     }
 
     fn create_finish(&mut self) {
+        let now = self.now();
         let Screen::Create(c) = &mut self.screen else { return };
         let words = c.words();
         for (k, &i) in c.check_idx.iter().enumerate() {
@@ -707,18 +1007,23 @@ impl App {
             }
         }
         let (Some(m), Ok(path)) = (c.phrase.clone(), wallet_path_for(&c.name)) else { return };
-        c.busy = true;
         c.error = None;
+        c.step = 4;
+        c.t_step = now;
+        c.secure_t0 = now;
+        c.result = None;
         let pw = c.password.clone();
+        let demo = self.demo;
         self.spawn(move || {
             let mut pw = pw;
-            let r = create_wallet(&path, &m, &pw);
+            let r = if demo { std::thread::sleep(Duration::from_millis(600)); Ok(demodata::entry("my-wallet", 11)) } else { create_wallet(&path, &m, &pw) };
             pw.zeroize();
             Ev::Created(r)
         });
     }
 
     fn restore_finish(&mut self) {
+        let now = self.now();
         let Screen::Restore(r) = &mut self.screen else { return };
         r.error = None;
         let path = match wallet_path_for(&r.name) {
@@ -744,19 +1049,23 @@ impl App {
                 return;
             }
         };
-        if r.password.chars().count() < 8 {
-            r.error = Some("The new password needs at least 8 characters.".into());
+        if let Err(e) = check_new_password(&r.password, &r.name) {
+            r.error = Some(e);
             return;
         }
         if r.password != r.confirm {
             r.error = Some("The two passwords are not the same.".into());
             return;
         }
-        r.busy = true;
+        r.step = 1;
+        r.t_step = now;
+        r.secure_t0 = now;
+        r.result = None;
         let pw = r.password.clone();
+        let demo = self.demo;
         self.spawn(move || {
             let mut pw = pw;
-            let res = create_wallet(&path, &m, &pw);
+            let res = if demo { std::thread::sleep(Duration::from_millis(600)); Ok(demodata::entry("restored-wallet", 5)) } else { create_wallet(&path, &m, &pw) };
             pw.zeroize();
             Ev::Created(res)
         });
@@ -791,6 +1100,38 @@ fn run_action(path: &std::path::Path, password: &str, action: Action, nodes: &[S
     }
 }
 
+/// The rules for a new password (the wallet file format itself accepts 8 characters; the window asks for more).
+pub fn check_new_password(p: &str, wallet_name: &str) -> Result<(), String> {
+    if p.chars().count() < MIN_PASSWORD {
+        return Err(format!("The password needs at least {MIN_PASSWORD} characters."));
+    }
+    let lower = p.to_lowercase();
+    if lower == wallet_name.trim().to_lowercase() {
+        return Err("The password must not be the name of the wallet.".into());
+    }
+    if is_common_password(&lower) {
+        return Err("This password is one of the most common ones: choose another.".into());
+    }
+    Ok(())
+}
+
+/// The passwords that every guessing attack tries first (and trivial variations).
+pub fn is_common_password(lower: &str) -> bool {
+    const COMMON: &[&str] = &[
+        "password", "password1", "password12", "password123", "1234567890", "12345678910", "qwertyuiop", "qwertyuiopasdf", "azertyuiop", "iloveyou123", "letmein123",
+        "administrator", "welcome123", "abcdefghij", "0123456789", "passw0rd123", "vearlvearl", "vearlwallet", "bitcoinbitcoin", "changeme123", "1q2w3e4r5t", "1qaz2wsx3edc",
+    ];
+    if COMMON.contains(&lower) {
+        return true;
+    }
+    // one character repeated, or a short block repeated ("abababababab")
+    let c: Vec<char> = lower.chars().collect();
+    if c.iter().all(|x| *x == c[0]) {
+        return true;
+    }
+    (1..=8).any(|n| c.len() % n == 0 && c.len() / n >= 2 && c.chunks(n).all(|ch| ch == &c[..n]))
+}
+
 /// The checks of the send form (shared by the window and the tests): the address, the amount and the fee as typed -> values.
 pub fn validate_send(to: &str, amount: &str, fee: &str, balance: Option<u64>) -> Result<(String, u64, u64), String> {
     let to = to.trim();
@@ -815,7 +1156,7 @@ pub fn validate_send(to: &str, amount: &str, fee: &str, balance: Option<u64>) ->
 mod tests {
     use super::*;
     use vearl_core::crypto::pubkey;
-    use vearl_core::wallet::{address_of, derive_account};
+    use vearl_core::wallet::{address_of, derive_account, new_mnemonic};
 
     #[test]
     fn send_form_checks() {
@@ -830,5 +1171,36 @@ mod tests {
         assert_eq!(ok, (addr.clone(), 1_250_000_000, 1_000_000));
         assert!(validate_send(&addr, "12.5", "", Some(12 * vearl_core::state::COIN)).is_err());
         assert_eq!(validate_send(&addr, "1", "", None).unwrap().2, 0);
+    }
+
+    #[test]
+    fn password_rules() {
+        assert!(check_new_password("short", "w").is_err());
+        assert!(check_new_password("123456789", "w").is_err(), "nine characters");
+        assert!(check_new_password("passwordpassword", "w").is_err(), "a short block repeated");
+        assert!(check_new_password("aaaaaaaaaaaa", "w").is_err());
+        assert!(check_new_password("my-wallet-name", "my-wallet-name").is_err());
+        assert!(check_new_password("1234567890", "w").is_err());
+        assert!(check_new_password("correct horse battery", "w").is_ok());
+        assert!(check_new_password("Tr0ub4dor&3-xyz", "w").is_ok());
+    }
+
+    #[test]
+    fn entropy_changes_with_the_pointer_and_never_repeats() {
+        let a = Entropy::new();
+        let b = Entropy::new();
+        assert_ne!(a.finish().to_entropy(), b.finish().to_entropy(), "the system generator alone already differs");
+        assert_ne!(a.finish().to_entropy(), a.finish().to_entropy(), "fresh system randomness is added every time");
+        let mut e = Entropy::new();
+        assert!(e.add(egui::pos2(10.0, 10.0), 1.0));
+        assert!(!e.add(egui::pos2(12.0, 11.0), 1.1), "a tiny move is not counted");
+        assert!(e.add(egui::pos2(60.0, 40.0), 1.2));
+        assert_eq!(e.samples, 2);
+        assert_eq!(e.finish().word_count(), 24);
+        for i in 0..400 {
+            e.add(egui::pos2(i as f32 * 20.0, 0.0), 2.0 + i as f64);
+        }
+        assert_eq!(e.progress(), 1.0);
+        assert!(e.dots.len() <= 90);
     }
 }

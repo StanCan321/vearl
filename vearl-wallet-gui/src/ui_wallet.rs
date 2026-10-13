@@ -1,24 +1,38 @@
 //! The screens of an open wallet: overview, send, receive, activity, rewards, tools, settings, and the dialogs.
+use crate::anim;
 use crate::app::*;
 use crate::core::*;
+use crate::fx;
 use crate::theme::{self as t, Kind, Tone};
-use crate::ui_start::{column, word_grid};
+use crate::ui_start::{column, word_cards};
 use eframe::egui::{self, pos2, vec2, Align, Color32, Frame, Layout, Margin, Rect, RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder};
-use std::time::Instant;
 use vearl_core::wallet::fmt_amount;
 
 pub fn wallet(ui: &mut Ui, a: &mut App) {
     let explorer = a.explorer();
+    let demo = a.demo;
     let App { logo, cmds, screen, settings, .. } = a;
     let Screen::Wallet(s) = screen else { return };
+    let ctx = ui.ctx().clone();
+    let now = anim::time(&ctx);
+    // a new page starts its opening animation; a new dialog too
+    if s.shown_page != s.page {
+        s.shown_page = s.page;
+        s.page_t0 = now;
+    }
+    if s.modal.is_some() && !s.modal_was_open {
+        s.modal_t0 = now;
+    }
+    s.modal_was_open = s.modal.is_some();
 
     egui::Panel::left("nav").exact_size(236.0).resizable(false).frame(Frame::new().fill(t::BG2).inner_margin(Margin::symmetric(0, 0))).show(ui, |ui| {
-        sidebar(ui, logo, s, cmds);
+        sidebar(ui, logo, s, cmds, demo);
     });
     egui::CentralPanel::default().frame(Frame::new().fill(t::BG).inner_margin(Margin::symmetric(36, 0))).show(ui, |ui| {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.add_space(34.0);
             column(ui, 880.0, |ui| {
+                anim::scene_begin(ui.ctx(), s.page_t0);
                 if let Some((tone, msg, at)) = s.toast.clone() {
                     if at.elapsed().as_secs() < 8 {
                         t::notice(ui, tone, &msg);
@@ -54,7 +68,8 @@ pub fn wallet(ui: &mut Ui, a: &mut App) {
 
 // ------------------------------------------------------------------------------------------------ sidebar
 
-fn sidebar(ui: &mut Ui, logo: &egui::TextureHandle, s: &mut Session, cmds: &mut Vec<Cmd>) {
+fn sidebar(ui: &mut Ui, logo: &egui::TextureHandle, s: &mut Session, cmds: &mut Vec<Cmd>, demo: bool) {
+    let ctx = ui.ctx().clone();
     let full = ui.max_rect();
     ui.painter().line_segment([full.right_top(), full.right_bottom()], Stroke::new(1.0, t::LINE));
     ui.add_space(26.0);
@@ -66,24 +81,32 @@ fn sidebar(ui: &mut Ui, logo: &egui::TextureHandle, s: &mut Session, cmds: &mut 
     ui.horizontal(|ui| {
         ui.add_space(24.0);
         t::chip(ui, "Testnet", t::LAV);
+        if demo {
+            t::chip(ui, "Demo data", t::ROSE);
+        }
     });
     ui.add_space(22.0);
     ui.spacing_mut().item_spacing.y = 2.0;
+    // the highlight is drawn first (it slides from item to item), the items on top of it
+    let hl = ui.painter().add(egui::Shape::Noop);
+    let mut active_top: Option<f32> = None;
     for (page, n, name) in Page::ALL {
         let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 42.0), Sense::click());
         let on = s.page == page;
-        let hover = resp.hovered();
         if on {
-            ui.painter().rect_filled(rect, 0.0, t::alpha(t::MINT, 12));
-            ui.painter().rect_filled(Rect::from_min_size(rect.left_top(), vec2(2.0, rect.height())), 0.0, t::MINT);
-        } else if hover {
-            ui.painter().rect_filled(rect, 0.0, t::alpha(t::INK, 6));
+            active_top = Some(rect.top());
         }
-        let col = if on { t::MINT } else if hover { t::INK } else { t::MUTE };
-        t::paint_tracked(ui.painter(), pos2(rect.left() + 24.0, rect.center().y - 7.5), n, &t::mono(11.0), if on { t::MINT } else { t::DIM }, 1.2);
-        t::paint_tracked(ui.painter(), pos2(rect.left() + 58.0, rect.center().y - 8.0), &name.to_uppercase(), &t::mono_medium(12.0), col, 1.6);
-        if hover {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        let h = anim::fade(&ctx, resp.id.with("h"), resp.hovered() && !on, 0.15);
+        let act = anim::fade(&ctx, resp.id.with("act"), on, 0.3);
+        if h > 0.0 {
+            ui.painter().rect_filled(rect, 0.0, t::alpha(t::INK, (8.0 * h) as u8));
+        }
+        let col = anim::mix(anim::mix(t::MUTE, t::INK, h), t::MINT, act);
+        let shift = 3.0 * h;
+        t::paint_tracked(ui.painter(), pos2(rect.left() + 24.0 + shift, rect.center().y - 7.5), n, &t::mono(11.0), anim::mix(t::DIM, t::MINT, act), 1.2);
+        t::paint_tracked(ui.painter(), pos2(rect.left() + 58.0 + shift, rect.center().y - 8.0), &name.to_uppercase(), &t::mono_medium(12.0), col, 1.6);
+        if resp.hovered() {
+            ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
         }
         if resp.clicked() {
             s.page = page;
@@ -95,31 +118,51 @@ fn sidebar(ui: &mut Ui, logo: &egui::TextureHandle, s: &mut Session, cmds: &mut 
             }
         }
     }
+    if let Some(top) = active_top {
+        let y = ctx.animate_value_with_time(egui::Id::new("nav-y"), top, if anim::reduced() { 0.0 } else { 0.32 });
+        let r = Rect::from_min_size(pos2(full.left(), y), vec2(full.width() - 1.0, 42.0));
+        ui.painter().set(hl, egui::Shape::rect_filled(r, 0.0, t::alpha(t::MINT, 13)));
+        ui.painter().rect_filled(Rect::from_min_size(r.min, vec2(2.0, r.height())), 0.0, t::MINT);
+    }
     // bottom block: the wallet, the network, lock
     let bottom = full.bottom() - 18.0;
-    let block = Rect::from_min_max(pos2(full.left() + 24.0, bottom - 160.0), pos2(full.right() - 20.0, bottom));
+    let block = Rect::from_min_max(pos2(full.left() + 24.0, bottom - 170.0), pos2(full.right() - 20.0, bottom));
     ui.scope_builder(UiBuilder::new().max_rect(block), |ui| {
         ui.with_layout(Layout::bottom_up(Align::LEFT), |ui| {
             if t::button_ex(ui, "Lock wallet", Kind::Ghost, true, false, ui.available_width()).clicked() {
                 cmds.push(Cmd::GoStart);
             }
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                match &s.status {
-                    Some(Ok(st)) => {
-                        t::dot(ui, t::OK);
-                        ui.label(RichText::new(format!("Block {}", fmt_int(st.height))).font(t::mono(12.0)).color(t::INK2));
+            match &s.status {
+                Some(Ok(st)) => {
+                    match st.genesis_ok {
+                        Some(true) => {
+                            ui.label(RichText::new("Network verified").font(t::mono(10.0)).color(t::DIM));
+                        }
+                        Some(false) => {
+                            ui.label(RichText::new("OTHER NETWORK").font(t::mono_semibold(10.0)).color(t::BAD));
+                        }
+                        None => {}
                     }
-                    Some(Err(_)) => {
+                    ui.horizontal(|ui| {
+                        let (r, _) = ui.allocate_exact_size(vec2(12.0, 18.0), Sense::hover());
+                        fx::pulse_dot_timed(&ctx, ui.painter(), r.center(), if st.genesis_ok == Some(false) { t::BAD } else { t::OK });
+                        ui.label(RichText::new(format!("Block {}", fmt_int(st.height))).font(t::mono(12.0)).color(t::INK2));
+                    });
+                }
+                Some(Err(_)) => {
+                    ui.horizontal(|ui| {
                         t::dot(ui, t::BAD);
                         ui.label(RichText::new("Offline").font(t::mono(12.0)).color(t::BAD));
-                    }
-                    None => {
+                    });
+                }
+                None => {
+                    ui.horizontal(|ui| {
                         t::dot(ui, t::WARN);
                         ui.label(RichText::new("Connecting...").font(t::mono(12.0)).color(t::MUTE));
-                    }
+                    });
                 }
-            });
+            }
             ui.add_space(8.0);
             ui.label(RichText::new(short_addr(&s.entry.address)).font(t::mono(11.5)).color(t::MUTE));
             ui.label(RichText::new(&s.entry.name).font(t::sans_semibold(14.5)).color(t::INK));
@@ -140,25 +183,34 @@ fn page_title(ui: &mut Ui, n: &str, eyebrow: &str, plain: &str, accent: &str) {
 
 /// `rule`: draw the gradient line under the title (not above a card that has its own gradient edge).
 fn page_title_ex(ui: &mut Ui, n: &str, eyebrow: &str, plain: &str, accent: &str, rule: bool) {
-    t::eyebrow(ui, Some(n), eyebrow);
-    ui.add_space(4.0);
-    t::headline(ui, plain, accent, 38.0);
-    ui.add_space(6.0);
-    if rule {
-        t::nacre_line(ui);
-    }
+    let (t0, delay) = anim::scene_next(ui.ctx());
+    anim::reveal(ui, t0, delay, 10.0, |ui| {
+        t::eyebrow(ui, Some(n), eyebrow);
+        ui.add_space(4.0);
+        t::headline(ui, plain, accent, 38.0);
+        ui.add_space(6.0);
+        if rule {
+            t::nacre_line(ui);
+        }
+    });
     ui.add_space(22.0);
 }
 
-/// The balance written big: "1,234.56" in serif, the six last decimals small and dim.
-fn balance_text(ui: &mut Ui, v: Option<u64>, size: f32) {
+/// The balance written big: "1,234.56" in serif, the six last decimals small and dim. It counts up to a new value; a shimmering bar
+/// stands in until the first answer of the node.
+fn balance_text(ui: &mut Ui, id: &str, v: Option<u64>, loading: bool, size: f32) {
+    let ctx = ui.ctx().clone();
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         match v {
             Some(v) => {
-                let (int, dec) = fmt_grouped(v);
+                let shown = anim::count_to(&ctx, egui::Id::new(("balance", id)), v as f64, 0.9).round().max(0.0) as u64;
+                let (int, dec) = fmt_grouped(shown);
                 ui.label(RichText::new(format!("{int}.{}", &dec[..2])).font(t::serif(size)).color(t::INK));
                 ui.label(RichText::new(&dec[2..]).font(t::mono(size * 0.30)).color(t::DIM));
+            }
+            None if loading => {
+                fx::skeleton(ui, size * 3.4, size * 0.72);
             }
             None => {
                 ui.label(RichText::new("—").font(t::serif(size)).color(t::DIM));
@@ -188,9 +240,11 @@ fn explorer_link(explorer: &str, id: &str) -> Cmd {
 
 fn activity_row(ui: &mut Ui, r: &TxRow, cmds: &mut Vec<Cmd>, explorer: &str) {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 66.0), Sense::click());
-    let hover = resp.hovered();
-    if hover {
-        ui.painter().rect_filled(rect, 0.0, t::alpha(t::INK, 6));
+    let hv = anim::fade(ui.ctx(), resp.id.with("h"), resp.hovered(), 0.15);
+    if hv > 0.0 {
+        ui.painter().rect_filled(rect, 0.0, t::alpha(t::INK, (9.0 * hv) as u8));
+    }
+    if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     let incoming = r.direction == "in";
@@ -224,11 +278,18 @@ fn activity_row(ui: &mut Ui, r: &TxRow, cmds: &mut Vec<Cmd>, explorer: &str) {
 // ------------------------------------------------------------------------------------------------ overview
 
 fn overview(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>, explorer: &str) {
+    let t0 = s.page_t0;
     page_title_ex(ui, "01", "Overview", "Your ", "balance.", false);
     t::hero_card(ui, |ui| {
         t::label(ui, "Available");
         ui.add_space(6.0);
-        balance_text(ui, s.account.as_ref().map(|a| a.balance), 66.0);
+        balance_text(ui, "main", s.account.as_ref().map(|a| a.balance), s.status.is_none(), 66.0);
+        if let Some(Ok(st)) = &s.status {
+            if st.genesis_ok == Some(false) {
+                ui.add_space(8.0);
+                t::notice(ui, Tone::Bad, "This node is on a different network than your release (the genesis hash does not match). Sending is blocked: nothing will be signed.");
+            }
+        }
         let problem = match &s.status {
             Some(Err(e)) => Some(e.clone()),
             _ => s.account_error.clone(),
@@ -263,7 +324,7 @@ fn overview(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>, explorer: &str) {
         ui.add_space(10.0);
         match s.pq_address.clone() {
             Some(a) => {
-                balance_text(ui, s.pq_account.as_ref().map(|x| x.balance), 34.0);
+                balance_text(ui, "pq", s.pq_account.as_ref().map(|x| x.balance), false, 34.0);
                 ui.add_space(8.0);
                 address_box(ui, "ov-pq", "Post-quantum address", &a);
             }
@@ -286,15 +347,17 @@ fn overview(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>, explorer: &str) {
     ui.add_space(6.0);
     match &s.activity {
         Some(Ok(rows)) if !rows.is_empty() => {
-            for r in rows.iter().take(5) {
-                activity_row(ui, r, cmds, explorer);
+            for (i, r) in rows.iter().take(5).enumerate() {
+                anim::reveal(ui, t0, 0.4 + i as f32 * 0.05, 10.0, |ui| activity_row(ui, r, cmds, explorer));
             }
         }
         Some(Ok(_)) => empty_state(ui, "No transaction yet.", "Payments you send or receive appear here."),
         Some(Err(e)) => empty_state(ui, "The activity list is not available.", e),
         None => {
-            ui.add_space(14.0);
-            ui.add(egui::Spinner::new().color(t::MINT));
+            for _ in 0..3 {
+                ui.add_space(10.0);
+                fx::skeleton(ui, ui.available_width(), 46.0);
+            }
         }
     }
 }
@@ -429,6 +492,7 @@ fn receive(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>) {
 // ------------------------------------------------------------------------------------------------ activity
 
 fn activity(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>, explorer: &str) {
+    let t0 = s.page_t0;
     page_title(ui, "04", "Activity", "What ", "happened.");
     ui.horizontal(|ui| {
         if t::ghost(ui, "Refresh").clicked() {
@@ -442,8 +506,8 @@ fn activity(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>, explorer: &str) {
     ui.add_space(12.0);
     match &s.activity {
         Some(Ok(rows)) if !rows.is_empty() => {
-            for r in rows {
-                activity_row(ui, r, cmds, explorer);
+            for (i, r) in rows.iter().enumerate() {
+                anim::reveal(ui, t0, 0.2 + (i.min(12) as f32) * 0.04, 10.0, |ui| activity_row(ui, r, cmds, explorer));
             }
             ui.add_space(8.0);
             t::muted(ui, "The list shows your payments and transactions. Mining rewards are visible in the explorer.");
@@ -453,7 +517,10 @@ fn activity(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>, explorer: &str) {
             t::notice(ui, Tone::Warn, &format!("The activity list could not be loaded. {e}"));
         }
         None => {
-            ui.add(egui::Spinner::new().color(t::MINT));
+            for _ in 0..4 {
+                ui.add_space(10.0);
+                fx::skeleton(ui, ui.available_width(), 46.0);
+            }
         }
     }
 }
@@ -476,7 +543,7 @@ fn rewards(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>) {
                     t::chip(ui, "Could not check", t::MUTE);
                 }
                 None => {
-                    ui.add(egui::Spinner::new().color(t::MINT));
+                    crate::fx::spinner(ui, 26.0);
                 }
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -498,7 +565,7 @@ fn rewards(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>) {
         ui.add_space(10.0);
         match &s.standing {
             None => {
-                ui.add(egui::Spinner::new().color(t::MINT));
+                crate::fx::spinner(ui, 26.0);
             }
             Some(Err(e)) => {
                 t::muted(ui, &format!("The leaderboard could not be read: {e}"));
@@ -594,7 +661,7 @@ fn rewards(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>) {
                     cmds.push(Cmd::SendMail);
                 }
                 if busy {
-                    ui.add(egui::Spinner::new().color(t::MINT));
+                    crate::fx::spinner(ui, 26.0);
                 }
             });
             ui.add_space(8.0);
@@ -670,7 +737,7 @@ fn tools(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>) {
 
 // ------------------------------------------------------------------------------------------------ settings
 
-fn settings_page(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>, app_settings: &Settings, explorer: &str) {
+fn settings_page(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>, app_settings: &mut Settings, explorer: &str) {
     page_title(ui, "07", "Settings", "Your ", "wallet.");
     t::card(ui, |ui| {
         t::eyebrow(ui, Some("1"), "Network");
@@ -689,7 +756,7 @@ fn settings_page(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>, app_settings
                 cmds.push(Cmd::TestNode);
             }
             if s.settings.testing {
-                ui.add(egui::Spinner::new().color(t::MINT));
+                crate::fx::spinner(ui, 26.0);
             }
         });
         if s.settings.saved && s.settings.node.trim() == app_settings.node && s.settings.explorer.trim() == app_settings.explorer {
@@ -721,11 +788,33 @@ fn settings_page(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>, app_settings
     });
     ui.add_space(16.0);
     t::card(ui, |ui| {
-        t::eyebrow(ui, Some("3"), "Password");
+        t::eyebrow(ui, Some("3"), "Security and comfort");
+        ui.add_space(10.0);
+        t::label(ui, "Lock the wallet after");
+        ui.add_space(2.0);
+        let mut mins = app_settings.autolock_minutes;
+        if t::segmented(ui, "autolock", &[("Never", 0), ("5 min", 5), ("10 min", 10), ("30 min", 30)], &mut mins) {
+            app_settings.autolock_minutes = mins;
+            cmds.push(Cmd::PersistSettings);
+        }
+        ui.add_space(4.0);
+        t::muted(ui, "Without any click or key press the wallet goes back to the start screen. Your keys are never kept in memory between two actions anyway.");
+        ui.add_space(12.0);
+        if t::checkbox(ui, &mut app_settings.protect_capture, "Hide the window from screenshots and recordings while the 24 words are shown (Windows)").changed() {
+            cmds.push(Cmd::PersistSettings);
+        }
+        ui.add_space(8.0);
+        if t::checkbox(ui, &mut app_settings.reduce_motion, "Reduce motion (no animations)").changed() {
+            cmds.push(Cmd::PersistSettings);
+        }
+    });
+    ui.add_space(16.0);
+    t::card(ui, |ui| {
+        t::eyebrow(ui, Some("4"), "Password");
         ui.add_space(8.0);
         t::muted(ui, "Changing the password re-encrypts the wallet file. The 24 words and the address stay the same.");
         ui.add_space(10.0);
-        t::field(ui, "New password (8 characters or more)", &mut s.settings.new_password, "", true, false);
+        t::field(ui, &format!("New password ({MIN_PASSWORD} characters or more)"), &mut s.settings.new_password, "", true, false);
         let (lvl, txt) = password_strength(&s.settings.new_password);
         ui.add_space(2.0);
         t::strength_meter(ui, lvl, if s.settings.new_password.is_empty() { "" } else { txt });
@@ -737,8 +826,8 @@ fn settings_page(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>, app_settings
         }
         ui.add_space(12.0);
         if t::ghost(ui, "Change the password").clicked() {
-            if s.settings.new_password.chars().count() < 8 {
-                s.settings.pw_error = Some("The new password needs at least 8 characters.".into());
+            if let Err(e) = check_new_password(&s.settings.new_password, &s.entry.name) {
+                s.settings.pw_error = Some(e);
             } else if s.settings.new_password != s.settings.new_confirm {
                 s.settings.pw_error = Some("The two passwords are not the same.".into());
             } else {
@@ -749,7 +838,7 @@ fn settings_page(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>, app_settings
     });
     ui.add_space(16.0);
     t::card(ui, |ui| {
-        t::eyebrow(ui, Some("4"), "Wallet file");
+        t::eyebrow(ui, Some("5"), "Wallet file");
         ui.add_space(8.0);
         ui.add(egui::Label::new(RichText::new(s.entry.path.display().to_string()).font(t::mono(12.5)).color(t::INK2)).wrap().selectable(true));
         ui.add_space(6.0);
@@ -761,9 +850,21 @@ fn settings_page(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>, app_settings
     });
     ui.add_space(16.0);
     t::card(ui, |ui| {
-        t::eyebrow(ui, Some("5"), "About");
+        t::eyebrow(ui, Some("6"), "About");
         ui.add_space(8.0);
         t::body(ui, &format!("Vearl Wallet {}. Testnet software, not audited: tokens have no value.", env!("CARGO_PKG_VERSION")));
+        ui.add_space(4.0);
+        match &s.status {
+            Some(Ok(st)) => {
+                let (txt, col) = match st.genesis_ok {
+                    Some(true) => ("The node you are connected to is on the network of your release (genesis hash checked).", t::OK),
+                    Some(false) => ("The node you are connected to is on ANOTHER network than your release.", t::BAD),
+                    None => ("Network not checked: there is no genesis.json next to the program.", t::MUTE),
+                };
+                ui.add(egui::Label::new(RichText::new(txt).font(t::sans(13.0)).color(col)).wrap());
+            }
+            _ => {}
+        }
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             for (name, url) in [("Website", "https://vearl.org"), ("Source code", "https://github.com/vearl-verified-compute/vearl"), ("Discord", "https://discord.gg/jya8meKnvM")] {
@@ -782,57 +883,93 @@ fn modal_frame() -> Frame {
     Frame::new().fill(t::PANEL).stroke(Stroke::new(1.0, t::LINE2)).inner_margin(Margin::same(28))
 }
 
+/// An address in groups of four characters, to be compared with the eyes.
+fn grouped(addr: &str) -> String {
+    let c: Vec<char> = addr.chars().collect();
+    c.chunks(4).map(|ch| ch.iter().collect::<String>()).collect::<Vec<_>>().join(" ")
+}
+
 fn modal(ctx: &egui::Context, s: &mut Session, cmds: &mut Vec<Cmd>, explorer: &str) {
+    let t0 = s.modal_t0;
+    let now = anim::time(ctx);
+    // a payment to somebody this wallet has never paid is flagged
+    let known = match &s.modal {
+        Some(Modal::Password(p)) => match &p.action {
+            Action::Send { to, .. } => Some(s.known_recipient(to)),
+            _ => None,
+        },
+        _ => None,
+    };
     let Some(m) = s.modal.as_mut() else { return };
-    let backdrop = Color32::from_black_alpha(190);
+    let k = anim::ease_out(anim::progress(ctx, t0, 0.0, 0.3));
+    let backdrop = Color32::from_black_alpha((190.0 * k) as u8);
     match m {
         Modal::Password(p) => {
             let mut submit = false;
             let mut cancel = false;
+            let wait = (p.locked_until - now).max(0.0);
             egui::Modal::new(egui::Id::new("pw-modal")).frame(modal_frame()).backdrop_color(backdrop).show(ctx, |ui| {
-                ui.set_width(460.0);
-                let (title, accent, detail) = prompt_texts(&p.action);
-                t::eyebrow(ui, None, "Password needed");
-                ui.add_space(8.0);
-                t::headline(ui, title, accent, 28.0);
-                ui.add_space(12.0);
-                if let Action::Send { to, amount, fee, pq } = &p.action {
-                    summary_row(ui, "To", to, true);
-                    summary_row(ui, "Amount", &format!("{} {SYMBOL}", fmt_amount(*amount)), false);
-                    summary_row(ui, "Fee", &format!("{} {SYMBOL}", fmt_amount(*fee)), false);
-                    summary_row(ui, "Total", &format!("{} {SYMBOL}", fmt_amount(amount + fee)), false);
-                    summary_row(ui, "Signature", if *pq { "Post-quantum (SLH-DSA)" } else { "Standard (Ed25519)" }, false);
-                    ui.add_space(10.0);
-                } else if !detail.is_empty() {
-                    t::muted(ui, detail);
-                    ui.add_space(10.0);
-                }
-                let r = t::field(ui, "Wallet password", &mut p.password, "", true, false);
-                if !p.busy && !r.has_focus() && p.password.is_empty() {
-                    r.request_focus();
-                }
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    submit = true;
-                }
-                if let Some(e) = &p.error {
-                    ui.add_space(10.0);
-                    t::notice(ui, Tone::Bad, e);
-                }
-                ui.add_space(18.0);
-                ui.horizontal(|ui| {
-                    if t::button_ex(ui, "Cancel", Kind::Ghost, !p.busy, false, 0.0).clicked() {
-                        cancel = true;
+                anim::reveal(ui, t0, 0.0, 22.0, |ui| {
+                    ui.set_width(460.0);
+                    let (title, accent, detail) = prompt_texts(&p.action);
+                    t::eyebrow(ui, None, "Password needed");
+                    ui.add_space(8.0);
+                    t::headline(ui, title, accent, 28.0);
+                    ui.add_space(12.0);
+                    if let Action::Send { to, amount, fee, pq } = &p.action {
+                        summary_row(ui, "To", &grouped(to), true);
+                        if let Some(known) = known {
+                            ui.horizontal(|ui| {
+                                ui.add_space(96.0);
+                                if known {
+                                    t::chip(ui, "Paid before", t::OK);
+                                } else {
+                                    t::chip(ui, "New recipient: check every character", t::WARN);
+                                }
+                            });
+                            ui.add_space(4.0);
+                        }
+                        summary_row(ui, "Amount", &format!("{} {SYMBOL}", fmt_amount(*amount)), false);
+                        summary_row(ui, "Fee", &format!("{} {SYMBOL}", fmt_amount(*fee)), false);
+                        summary_row(ui, "Total", &format!("{} {SYMBOL}", fmt_amount(amount + fee)), false);
+                        summary_row(ui, "Signature", if *pq { "Post-quantum (SLH-DSA)" } else { "Standard (Ed25519)" }, false);
+                        ui.add_space(10.0);
+                    } else if !detail.is_empty() {
+                        t::muted(ui, detail);
+                        ui.add_space(10.0);
                     }
-                    if t::button_ex(ui, if p.busy { "Working..." } else { confirm_label(&p.action) }, Kind::Primary, !p.busy, !p.busy, 0.0).clicked() {
+                    let r = t::field(ui, "Wallet password", &mut p.password, "", true, false);
+                    if !p.busy && !r.has_focus() && p.password.is_empty() && wait <= 0.0 {
+                        r.request_focus();
+                    }
+                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         submit = true;
                     }
-                    if p.busy {
-                        ui.add(egui::Spinner::new().color(t::MINT));
+                    if wait > 0.0 {
+                        ui.add_space(10.0);
+                        t::notice(ui, Tone::Warn, &format!("Too many wrong passwords. Wait {} s before trying again.", wait.ceil() as u32));
+                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+                    } else if let Some(e) = &p.error {
+                        ui.add_space(10.0);
+                        t::notice(ui, Tone::Bad, e);
+                    }
+                    ui.add_space(18.0);
+                    ui.horizontal(|ui| {
+                        if t::button_ex(ui, "Cancel", Kind::Ghost, !p.busy, false, 0.0).clicked() {
+                            cancel = true;
+                        }
+                        let can = !p.busy && wait <= 0.0;
+                        if t::button_ex(ui, if p.busy { "Working..." } else { confirm_label(&p.action) }, Kind::Primary, can, !p.busy, 0.0).clicked() {
+                            submit = true;
+                        }
+                        if p.busy {
+                            fx::spinner(ui, 26.0);
+                        }
+                    });
+                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) && !p.busy {
+                        cancel = true;
                     }
                 });
-                if ui.input(|i| i.key_pressed(egui::Key::Escape)) && !p.busy {
-                    cancel = true;
-                }
             });
             if submit {
                 cmds.push(Cmd::SubmitPassword);
@@ -842,52 +979,69 @@ fn modal(ctx: &egui::Context, s: &mut Session, cmds: &mut Vec<Cmd>, explorer: &s
             }
         }
         Modal::Phrase(words) => {
-            let mut close = false;
+            let mut close = now - t0 > WORDS_VISIBLE_SECS;
             egui::Modal::new(egui::Id::new("phrase-modal")).frame(modal_frame()).backdrop_color(backdrop).show(ctx, |ui| {
-                ui.set_width(600.0);
-                t::eyebrow(ui, None, "Recovery words");
-                ui.add_space(8.0);
-                t::headline(ui, "Your ", "24 words.", 30.0);
-                ui.add_space(14.0);
-                t::card(ui, |ui| word_grid(ui, words, None));
-                ui.add_space(12.0);
-                t::notice(ui, Tone::Warn, "Whoever sees these words controls your funds. Nobody from Vearl will ever ask for them.");
-                ui.add_space(16.0);
-                if t::primary(ui, "Hide them", true).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    close = true;
-                }
+                anim::reveal(ui, t0, 0.0, 22.0, |ui| {
+                    ui.set_width(600.0);
+                    t::eyebrow(ui, None, "Recovery words");
+                    ui.add_space(8.0);
+                    t::headline(ui, "Your ", "24 words.", 30.0);
+                    ui.add_space(14.0);
+                    word_cards(ui, words, Some(t0 + 0.25), None);
+                    ui.add_space(12.0);
+                    t::notice(ui, Tone::Warn, &format!("Whoever sees these words controls your funds. Nobody from Vearl will ever ask for them. They hide again in {} s.", (WORDS_VISIBLE_SECS - (now - t0)).max(0.0).ceil() as u32));
+                    ui.add_space(16.0);
+                    if t::primary(ui, "Hide them", true).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        close = true;
+                    }
+                });
             });
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
             if close {
-                for w in words.iter_mut() {
-                    zeroize::Zeroize::zeroize(w);
-                }
                 s.modal = None;
+                wipe_text_state(ctx);
             }
         }
         Modal::Sent { txid, from, to, amount, fee } => {
             let mut close = false;
             let (txid, from, to, amount, fee) = (txid.clone(), from.clone(), to.clone(), *amount, *fee);
             egui::Modal::new(egui::Id::new("sent-modal")).frame(modal_frame()).backdrop_color(backdrop).show(ctx, |ui| {
-                ui.set_width(520.0);
-                t::eyebrow(ui, None, "Accepted by the network");
-                ui.add_space(8.0);
-                t::headline(ui, "Payment ", "sent.", 30.0);
-                ui.add_space(12.0);
-                summary_row(ui, "From", &from, true);
-                summary_row(ui, "To", &to, true);
-                summary_row(ui, "Amount", &format!("{} {SYMBOL}", fmt_amount(amount)), false);
-                summary_row(ui, "Fee", &format!("{} {SYMBOL}", fmt_amount(fee)), false);
-                summary_row(ui, "Transaction", &txid, true);
-                ui.add_space(8.0);
-                t::muted(ui, "It becomes final once a miner includes it in a block (about 30 seconds).");
-                ui.add_space(16.0);
-                ui.horizontal(|ui| {
-                    if t::primary(ui, "Done", true).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                        close = true;
-                    }
-                    if t::ghost(ui, "View in the explorer").clicked() {
-                        cmds.push(explorer_link(explorer, &txid));
-                    }
+                anim::reveal(ui, t0, 0.0, 22.0, |ui| {
+                    ui.set_width(520.0);
+                    ui.horizontal(|ui| {
+                        let (r, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
+                        let el = (now - t0) as f32;
+                        fx::ring(ui.painter(), r.center(), 24.0, 3.0, anim::ease_out((el / 0.7).clamp(0.0, 1.0)));
+                        fx::check(ui.painter(), r.center(), 22.0, anim::ease_in_out(((el - 0.45) / 0.4).clamp(0.0, 1.0)), t::MINT, 3.0);
+                        if !anim::reduced() {
+                            fx::burst(ui.painter(), r.center(), el - 0.8);
+                            if el < 2.6 {
+                                ui.ctx().request_repaint();
+                            }
+                        }
+                        ui.vertical(|ui| {
+                            t::eyebrow(ui, None, "Accepted by the network");
+                            ui.add_space(4.0);
+                            t::headline(ui, "Payment ", "sent.", 30.0);
+                        });
+                    });
+                    ui.add_space(12.0);
+                    summary_row(ui, "From", &from, true);
+                    summary_row(ui, "To", &to, true);
+                    summary_row(ui, "Amount", &format!("{} {SYMBOL}", fmt_amount(amount)), false);
+                    summary_row(ui, "Fee", &format!("{} {SYMBOL}", fmt_amount(fee)), false);
+                    summary_row(ui, "Transaction", &txid, true);
+                    ui.add_space(8.0);
+                    t::muted(ui, "It becomes final once a miner includes it in a block (about 30 seconds).");
+                    ui.add_space(16.0);
+                    ui.horizontal(|ui| {
+                        if t::primary(ui, "Done", true).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            close = true;
+                        }
+                        if t::ghost(ui, "View in the explorer").clicked() {
+                            cmds.push(explorer_link(explorer, &txid));
+                        }
+                    });
                 });
             });
             if close {
@@ -895,7 +1049,6 @@ fn modal(ctx: &egui::Context, s: &mut Session, cmds: &mut Vec<Cmd>, explorer: &s
             }
         }
     }
-    let _ = Instant::now();
 }
 
 fn summary_row(ui: &mut Ui, k: &str, v: &str, mono: bool) {

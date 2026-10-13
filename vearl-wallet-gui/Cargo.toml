@@ -19,12 +19,18 @@ qrcode = { version = "0.14", default-features = false }
 serde_json = "1"
 bip39 = { version = "2", features = ["zeroize"] }
 zeroize = "1"
+blake3 = "1"
+rand = "0.8"
+raw-window-handle = "0.6"
 png = "0.18"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "0.26"
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 
 [features]
 # Screenshots of every screen with demo data (design work only): ABSENT from release builds.

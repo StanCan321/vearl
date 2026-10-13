@@ -1,5 +1,6 @@
 //! The look of vearl.org: the same colours, the same three fonts (Instrument Sans, Instrument Serif, IBM Plex Mono), sharp corners,
 //! mono capital labels with wide letter spacing, hairlines, and the mint -> lavender -> rose "nacre" gradient.
+use crate::anim;
 use eframe::egui::{
     self, epaint::Mesh, vec2, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Pos2, Rect, Response, RichText, Sense, Shape, Stroke,
     StrokeKind, Ui,
@@ -222,22 +223,59 @@ pub fn nacre_line(ui: &mut Ui) {
 // ------------------------------------------------------------------------------------------------ containers
 
 pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let r = egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, LINE)).inner_margin(Margin::same(24)).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        add(ui)
-    });
-    r.inner
+    let (t0, delay) = anim::scene_next(ui.ctx());
+    anim::reveal(ui, t0, delay, 14.0, |ui| {
+        egui::Frame::new()
+            .fill(PANEL)
+            .stroke(Stroke::new(1.0, LINE))
+            .inner_margin(Margin::same(24))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                add(ui)
+            })
+            .inner
+    })
 }
 
-/// A card with a one-pixel nacre edge on top (the highlighted blocks of the site).
+/// A card with a nacre edge on top (the highlighted blocks of the site); a light glides along that edge now and then.
 pub fn hero_card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let r = egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, LINE2)).inner_margin(Margin::same(28)).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        add(ui)
-    });
-    let rr = r.response.rect;
-    nacre_rect(ui.painter(), Rect::from_min_max(rr.left_top(), Pos2::new(rr.right(), rr.top() + 2.0)), 255);
-    r.inner
+    let (t0, delay) = anim::scene_next(ui.ctx());
+    anim::reveal(ui, t0, delay, 14.0, |ui| {
+        let r = egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, LINE2)).inner_margin(Margin::same(28)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            add(ui)
+        });
+        let rr = r.response.rect;
+        let edge = Rect::from_min_max(rr.left_top(), Pos2::new(rr.right(), rr.top() + 2.0));
+        nacre_rect(ui.painter(), edge, 255);
+        // a glint that crosses the edge now and then (the screen is only redrawn while it moves)
+        let now = anim::time(ui.ctx());
+        let (period, glint) = (9.0, 1.3);
+        let ph = (now % period) as f32;
+        if anim::reduced() {
+            // no motion
+        } else if ph < glint {
+            let k = ph / glint;
+            let x = edge.left() + (edge.width() + 160.0) * anim::ease_in_out(k) - 80.0;
+            let cp = ui.painter().with_clip_rect(edge);
+            let mut mesh = Mesh::default();
+            let (c0, c1) = (alpha(Color32::WHITE, 0), alpha(Color32::WHITE, 200));
+            for (i, (dx, c)) in [(0.0, c0), (80.0, c1), (160.0, c0)].into_iter().enumerate() {
+                mesh.colored_vertex(Pos2::new(x + dx, edge.top()), c);
+                mesh.colored_vertex(Pos2::new(x + dx, edge.bottom()), c);
+                if i > 0 {
+                    let q = (i as u32 - 1) * 2;
+                    mesh.add_triangle(q, q + 1, q + 2);
+                    mesh.add_triangle(q + 1, q + 3, q + 2);
+                }
+            }
+            cp.add(Shape::mesh(mesh));
+            ui.ctx().request_repaint();
+        } else {
+            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(period as f64 - ph as f64 + 0.02));
+        }
+        r.inner
+    })
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -248,7 +286,7 @@ pub enum Tone {
     Bad,
 }
 
-/// A message bar: a coloured edge, a tinted background, text.
+/// A message bar: a coloured edge, a tinted background, text. It slides in when it first appears.
 pub fn notice(ui: &mut Ui, tone: Tone, text: &str) {
     let c = match tone {
         Tone::Info => MINT,
@@ -256,12 +294,15 @@ pub fn notice(ui: &mut Ui, tone: Tone, text: &str) {
         Tone::Warn => WARN,
         Tone::Bad => BAD,
     };
-    let r = egui::Frame::new().fill(alpha(c, 18)).stroke(Stroke::new(1.0, alpha(c, 70))).inner_margin(Margin::symmetric(16, 12)).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        ui.add(egui::Label::new(RichText::new(text).font(sans(14.0)).color(INK)).wrap());
+    let t0 = anim::first_seen(ui.ctx(), egui::Id::new(("notice", text)));
+    anim::reveal(ui, t0, 0.0, 8.0, |ui| {
+        let r = egui::Frame::new().fill(alpha(c, 18)).stroke(Stroke::new(1.0, alpha(c, 70))).inner_margin(Margin::symmetric(16, 12)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.add(egui::Label::new(RichText::new(text).font(sans(14.0)).color(INK)).wrap());
+        });
+        let rr = r.response.rect;
+        ui.painter().rect_filled(Rect::from_min_size(rr.left_top(), vec2(3.0, rr.height())), 0.0, c);
     });
-    let rr = r.response.rect;
-    ui.painter().rect_filled(Rect::from_min_size(rr.left_top(), vec2(3.0, rr.height())), 0.0, c);
 }
 
 // ------------------------------------------------------------------------------------------------ buttons
@@ -279,13 +320,6 @@ pub fn draw_arrow(painter: &egui::Painter, center: Pos2, color: Color32) {
     painter.line_segment([center + vec2(2.0, 4.0), center + vec2(6.0, 0.0)], s);
 }
 
-pub fn draw_check(painter: &egui::Painter, center: Pos2, size: f32, color: Color32) {
-    let s = Stroke::new(2.0, color);
-    let k = size / 2.0;
-    painter.line_segment([center + vec2(-k, 0.0), center + vec2(-k * 0.35, k * 0.7)], s);
-    painter.line_segment([center + vec2(-k * 0.35, k * 0.7), center + vec2(k, -k * 0.7)], s);
-}
-
 pub fn button_ex(ui: &mut Ui, text: &str, kind: Kind, enabled: bool, arrow: bool, min_width: f32) -> Response {
     let font = mono_semibold(12.0);
     let tracking = 1.5;
@@ -293,27 +327,52 @@ pub fn button_ex(ui: &mut Ui, text: &str, kind: Kind, enabled: bool, arrow: bool
     let tw = tracked_width(ui.ctx(), &label, &font, tracking);
     let w = (tw + 44.0 + if arrow { 26.0 } else { 0.0 }).max(min_width);
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 46.0), if enabled { Sense::click() } else { Sense::hover() });
-    let hover = enabled && resp.hovered();
-    let down = enabled && resp.is_pointer_button_down_on();
+    let ctx = ui.ctx().clone();
+    let h = if enabled { anim::fade(&ctx, resp.id.with("hover"), resp.hovered(), 0.16) } else { 0.0 };
+    let press = if enabled { anim::fade(&ctx, resp.id.with("press"), resp.is_pointer_button_down_on(), 0.07) } else { 0.0 };
     let (fill, stroke, fg) = match (kind, enabled) {
         (_, false) => (Color32::TRANSPARENT, Stroke::new(1.0, LINE), DIM),
         (Kind::Primary, true) => {
-            let f = if hover { MINT_HOVER } else { MINT };
-            (f, Stroke::new(1.0, f), ACCENT_INK)
+            let f = anim::mix(MINT, MINT_HOVER, h);
+            (anim::mix(f, MINT, press * 0.5), Stroke::new(1.0, f), ACCENT_INK)
         }
-        (Kind::Ghost, true) => (if down { alpha(MINT, 14) } else { Color32::TRANSPARENT }, Stroke::new(1.0, if hover { MINT } else { LINE2 }), if hover { MINT } else { INK }),
+        (Kind::Ghost, true) => (alpha(MINT, (9.0 * h + 16.0 * press) as u8), Stroke::new(1.0, anim::mix(LINE2, MINT, h)), anim::mix(INK, MINT, h)),
     };
     let p = ui.painter();
-    p.rect(rect, 0.0, fill, stroke, StrokeKind::Inside);
-    let content_w = tw + if arrow { 26.0 } else { 0.0 };
-    let x0 = rect.center().x - content_w / 2.0;
-    paint_tracked(p, Pos2::new(x0, rect.center().y - font.size * 0.68), &label, &font, fg, tracking);
-    if arrow {
-        let nudge = if hover { 3.0 } else { 0.0 };
-        draw_arrow(p, Pos2::new(x0 + tw + 15.0 + nudge, rect.center().y), fg);
+    if kind == Kind::Primary && enabled && h > 0.01 {
+        // a soft glow that grows on hover
+        for k in 1..=4 {
+            p.rect_filled(rect.expand(k as f32 * 2.6 * h), 0.0, alpha(MINT, (20.0 * h / k as f32) as u8));
+        }
     }
-    if enabled {
-        ui.ctx().set_cursor_icon(if hover { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Default });
+    let r = rect.shrink(press * 1.0);
+    p.rect(r, 0.0, fill, stroke, StrokeKind::Inside);
+    if kind == Kind::Primary && enabled && h > 0.01 {
+        // a band of light that sweeps across the button
+        let band = 46.0;
+        let x = r.left() - band + (r.width() + band * 2.0) * anim::ease_out(h);
+        let cp = p.with_clip_rect(r);
+        let mut mesh = egui::epaint::Mesh::default();
+        let (c0, c1) = (alpha(Color32::WHITE, 0), alpha(Color32::WHITE, (70.0 * (1.0 - (h - 0.5).abs() * 2.0).max(0.0)) as u8));
+        for (i, (dx, c)) in [(0.0, c0), (band * 0.5, c1), (band, c0)].into_iter().enumerate() {
+            mesh.colored_vertex(Pos2::new(x + dx, r.top()), c);
+            mesh.colored_vertex(Pos2::new(x + dx - 12.0, r.bottom()), c);
+            if i > 0 {
+                let k = (i as u32 - 1) * 2;
+                mesh.add_triangle(k, k + 1, k + 2);
+                mesh.add_triangle(k + 1, k + 3, k + 2);
+            }
+        }
+        cp.add(Shape::mesh(mesh));
+    }
+    let content_w = tw + if arrow { 26.0 } else { 0.0 };
+    let x0 = r.center().x - content_w / 2.0;
+    paint_tracked(p, Pos2::new(x0, r.center().y - font.size * 0.68), &label, &font, fg, tracking);
+    if arrow {
+        draw_arrow(p, Pos2::new(x0 + tw + 15.0 + 4.0 * anim::ease_out(h), r.center().y), fg);
+    }
+    if enabled && resp.hovered() {
+        ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     resp
 }
@@ -326,16 +385,17 @@ pub fn ghost(ui: &mut Ui, text: &str) -> Response {
     button_ex(ui, text, Kind::Ghost, true, false, 0.0)
 }
 
-/// A small text link (mint on hover), mono capitals.
+/// A small text link (mint, with an underline that grows on hover), mono capitals.
 pub fn link(ui: &mut Ui, text: &str) -> Response {
     let font = mono_medium(11.5);
     let label = text.to_uppercase();
     let w = tracked_width(ui.ctx(), &label, &font, 1.4);
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 22.0), Sense::click());
-    let c = if resp.hovered() { MINT_HOVER } else { MINT };
+    let h = anim::fade(ui.ctx(), resp.id.with("hover"), resp.hovered(), 0.16);
+    let c = anim::mix(MINT, MINT_HOVER, h);
     paint_tracked(ui.painter(), Pos2::new(rect.left(), rect.top() + 3.0), &label, &font, c, 1.4);
+    ui.painter().line_segment([Pos2::new(rect.left(), rect.bottom() - 1.0), Pos2::new(rect.left() + w * h, rect.bottom() - 1.0)], Stroke::new(1.0, c));
     if resp.hovered() {
-        ui.painter().line_segment([Pos2::new(rect.left(), rect.bottom() - 1.0), Pos2::new(rect.right(), rect.bottom() - 1.0)], Stroke::new(1.0, c));
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     resp
@@ -351,19 +411,24 @@ pub fn copy_button(ui: &mut Ui, id: &str, text: &str) -> Response {
     let font = mono_semibold(10.5);
     let up = label.to_uppercase();
     let w = tracked_width(ui.ctx(), &up, &font, 1.3) + 24.0;
-    let (rect, resp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click());
-    let hover = resp.hovered();
-    let c = if just { OK } else if hover { MINT } else { INK2 };
-    ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0, if just { alpha(OK, 140) } else if hover { MINT } else { LINE2 }), StrokeKind::Inside);
-    paint_tracked(ui.painter(), Pos2::new(rect.left() + 12.0, rect.center().y - font.size * 0.68), &up, &font, c, 1.3);
+    let (rect, resp) = ui.allocate_exact_size(vec2(w.max(86.0), 30.0), Sense::click());
+    let h = anim::fade(ui.ctx(), resp.id.with("hover"), resp.hovered(), 0.16);
+    let ok = anim::fade(ui.ctx(), resp.id.with("ok"), just, 0.2);
+    let c = anim::mix(anim::mix(INK2, MINT, h), OK, ok);
+    ui.painter().rect(rect, 0.0, alpha(OK, (22.0 * ok) as u8), Stroke::new(1.0, anim::mix(anim::mix(LINE2, MINT, h), alpha(OK, 160), ok)), StrokeKind::Inside);
+    let tw = tracked_width(ui.ctx(), &up, &font, 1.3);
+    paint_tracked(ui.painter(), Pos2::new(rect.center().x - tw / 2.0 + if just { 8.0 } else { 0.0 }, rect.center().y - font.size * 0.68), &up, &font, c, 1.3);
+    if just {
+        crate::fx::check(ui.painter(), Pos2::new(rect.center().x - tw / 2.0 - 4.0, rect.center().y), 9.0, ok, OK, 1.6);
+    }
     if resp.clicked() {
         ui.ctx().copy_text(text.to_string());
         ui.data_mut(|d| d.insert_temp(key, now));
     }
     if just {
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(400));
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
     }
-    if hover {
+    if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     resp
@@ -371,11 +436,21 @@ pub fn copy_button(ui: &mut Ui, id: &str, text: &str) -> Response {
 
 // ------------------------------------------------------------------------------------------------ fields
 
-/// A labelled text field in the style of the site: the label in mono capitals, then a sharp dark box that turns mint when focused.
+/// Draws the glow of a focused field over its box.
+fn focus_glow(ui: &Ui, resp: &Response) {
+    let f = anim::fade(ui.ctx(), resp.id.with("focus"), resp.has_focus(), 0.22);
+    if f > 0.01 {
+        for k in 1..=3 {
+            ui.painter().rect_stroke(resp.rect.expand(k as f32 * 1.6), 0.0, Stroke::new(1.5, alpha(MINT, (34.0 * f / k as f32) as u8)), StrokeKind::Outside);
+        }
+    }
+}
+
+/// A labelled text field in the style of the site: the label in mono capitals, then a sharp dark box that glows mint when focused.
 pub fn field(ui: &mut Ui, title: &str, text: &mut String, hint: &str, password: bool, monospace: bool) -> Response {
     label(ui, title);
     ui.add_space(-4.0);
-    ui.add(
+    let r = ui.add(
         egui::TextEdit::singleline(text)
             .password(password)
             .hint_text(RichText::new(hint).color(DIM))
@@ -383,13 +458,15 @@ pub fn field(ui: &mut Ui, title: &str, text: &mut String, hint: &str, password: 
             .text_color(INK)
             .margin(Margin::symmetric(14, 12))
             .desired_width(f32::INFINITY),
-    )
+    );
+    focus_glow(ui, &r);
+    r
 }
 
 pub fn field_multiline(ui: &mut Ui, title: &str, text: &mut String, hint: &str, rows: usize, monospace: bool) -> Response {
     label(ui, title);
     ui.add_space(-4.0);
-    ui.add(
+    let r = ui.add(
         egui::TextEdit::multiline(text)
             .hint_text(RichText::new(hint).color(DIM))
             .font(if monospace { mono(14.0) } else { sans(15.5) })
@@ -397,38 +474,46 @@ pub fn field_multiline(ui: &mut Ui, title: &str, text: &mut String, hint: &str, 
             .margin(Margin::symmetric(14, 12))
             .desired_rows(rows)
             .desired_width(f32::INFINITY),
-    )
+    );
+    focus_glow(ui, &r);
+    r
 }
 
-/// A square check box in the style of the site.
+/// A square check box in the style of the site; the tick draws itself.
 pub fn checkbox(ui: &mut Ui, checked: &mut bool, text: &str) -> Response {
     let galley = ui.painter().layout(text.to_string(), sans(14.5), INK2, (ui.available_width() - 40.0).max(120.0));
     let h = galley.size().y.max(22.0);
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::click());
+    let (rect, mut resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::click());
     if resp.clicked() {
         *checked = !*checked;
+        resp.mark_changed();
     }
     let b = Rect::from_min_size(rect.left_top() + vec2(0.0, (h - 20.0) / 2.0), vec2(20.0, 20.0));
-    let hover = resp.hovered();
-    ui.painter().rect(b, 0.0, if *checked { MINT } else { BG2 }, Stroke::new(1.0, if *checked || hover { MINT } else { LINE2 }), StrokeKind::Inside);
-    if *checked {
-        draw_check(ui.painter(), b.center(), 11.0, ACCENT_INK);
+    let hv = anim::fade(ui.ctx(), resp.id.with("hover"), resp.hovered(), 0.15);
+    let on = anim::fade(ui.ctx(), resp.id.with("on"), *checked, 0.22);
+    ui.painter().rect(b, 0.0, anim::mix(BG2, MINT, on), Stroke::new(1.0, anim::mix(anim::mix(LINE2, MINT, hv), MINT, on)), StrokeKind::Inside);
+    if on > 0.0 {
+        crate::fx::check(ui.painter(), b.center(), 11.0, on, ACCENT_INK, 2.0);
     }
     ui.painter().galley(rect.left_top() + vec2(32.0, 0.0), galley, INK2);
-    if hover {
+    if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     resp
 }
 
-/// A password-strength meter: four bars.
+/// A password-strength meter: four bars that fill and change colour.
 pub fn strength_meter(ui: &mut Ui, level: u8, text: &str) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let colors = [BAD, WARN, MINT, OK];
         for i in 0..4u8 {
             let (r, _) = ui.allocate_exact_size(vec2(44.0, 4.0), Sense::hover());
-            ui.painter().rect_filled(r, 0.0, if text.is_empty() { LINE } else if i <= level && !(level == 0 && i > 0) { colors[level as usize] } else { LINE });
+            let on = !text.is_empty() && (i <= level);
+            let k = anim::fade(ui.ctx(), egui::Id::new(("meter", r.min.x as i32, r.min.y as i32)), on, 0.25);
+            ui.painter().rect_filled(r, 0.0, LINE);
+            let w = r.width() * k;
+            ui.painter().rect_filled(Rect::from_min_size(r.min, vec2(w, r.height())), 0.0, colors[level as usize]);
         }
         ui.add_space(8.0);
         if !text.is_empty() {
@@ -452,4 +537,32 @@ pub fn dot(ui: &mut Ui, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(vec2(10.0, 18.0), Sense::hover());
     ui.painter().circle_filled(rect.center(), 3.5, color);
     ui.painter().circle_filled(rect.center(), 6.0, alpha(color, 36));
+}
+
+/// A row of exclusive choices (a segmented control). Returns true when the value changed.
+pub fn segmented(ui: &mut Ui, id: &str, options: &[(&str, u32)], value: &mut u32) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for (label, v) in options {
+            let font = mono_medium(11.0);
+            let up = label.to_uppercase();
+            let w = tracked_width(ui.ctx(), &up, &font, 1.4) + 32.0;
+            let (rect, resp) = ui.allocate_exact_size(vec2(w, 38.0), Sense::click());
+            let on = *value == *v;
+            let h = anim::fade(ui.ctx(), resp.id.with(("seg", id)), resp.hovered(), 0.15);
+            let a = anim::fade(ui.ctx(), resp.id.with(("segon", id)), on, 0.25);
+            ui.painter().rect(rect, 0.0, alpha(MINT, (22.0 * a) as u8), Stroke::new(1.0, anim::mix(anim::mix(LINE2, DIM, h), MINT, a)), StrokeKind::Inside);
+            let tw = tracked_width(ui.ctx(), &up, &font, 1.4);
+            paint_tracked(ui.painter(), Pos2::new(rect.center().x - tw / 2.0, rect.center().y - font.size * 0.68), &up, &font, anim::mix(anim::mix(MUTE, INK, h), MINT, a), 1.4);
+            if resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if resp.clicked() && !on {
+                *value = *v;
+                changed = true;
+            }
+        }
+    });
+    changed
 }

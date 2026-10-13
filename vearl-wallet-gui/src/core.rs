@@ -17,6 +17,10 @@ pub const FEE_DEFAULT: &str = "0.01";
 
 /// Where the program keeps its files: `%APPDATA%\Vearl` on Windows, `~/.local/share/vearl` (or `$XDG_DATA_HOME/vearl`) elsewhere.
 pub fn data_dir() -> PathBuf {
+    // VEARL_WALLET_HOME: keep every file of the program in one folder of your choice (portable use, recordings, tests)
+    if let Some(h) = std::env::var_os("VEARL_WALLET_HOME").filter(|v| !v.is_empty()) {
+        return PathBuf::from(h);
+    }
     #[cfg(windows)]
     {
         if let Some(a) = std::env::var_os("APPDATA") {
@@ -45,11 +49,17 @@ pub struct Settings {
     /// Wallet files opened from other folders.
     pub extra_wallets: Vec<String>,
     pub last_wallet: String,
+    /// Back to the start screen after this many minutes without any input (0 = never).
+    pub autolock_minutes: u32,
+    /// Windows: hide the window from screenshots and recordings while the recovery words are on screen.
+    pub protect_capture: bool,
+    /// No animations (accessibility, slow computers).
+    pub reduce_motion: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { node: String::new(), explorer: DEFAULT_EXPLORER.into(), extra_wallets: vec![], last_wallet: String::new() }
+        Settings { node: String::new(), explorer: DEFAULT_EXPLORER.into(), extra_wallets: vec![], last_wallet: String::new(), autolock_minutes: 10, protect_capture: true, reduce_motion: false }
     }
 }
 
@@ -71,6 +81,15 @@ impl Settings {
                 if let Some(l) = get("last_wallet") {
                     s.last_wallet = l;
                 }
+                if let Some(m) = v.get("autolock_minutes").and_then(|x| x.as_u64()) {
+                    s.autolock_minutes = m.min(240) as u32;
+                }
+                if let Some(b) = v.get("protect_capture").and_then(|x| x.as_bool()) {
+                    s.protect_capture = b;
+                }
+                if let Some(b) = v.get("reduce_motion").and_then(|x| x.as_bool()) {
+                    s.reduce_motion = b;
+                }
                 if let Some(a) = v.get("extra_wallets").and_then(|x| x.as_array()) {
                     s.extra_wallets = a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect();
                 }
@@ -79,9 +98,18 @@ impl Settings {
         s
     }
     pub fn save(&self) {
-        let v = serde_json::json!({ "node": self.node, "explorer": self.explorer, "extra_wallets": self.extra_wallets, "last_wallet": self.last_wallet });
+        let v = serde_json::json!({
+            "node": self.node, "explorer": self.explorer, "extra_wallets": self.extra_wallets, "last_wallet": self.last_wallet,
+            "autolock_minutes": self.autolock_minutes, "protect_capture": self.protect_capture, "reduce_motion": self.reduce_motion,
+        });
         let _ = std::fs::create_dir_all(data_dir());
-        let _ = std::fs::write(Self::file(), serde_json::to_string_pretty(&v).unwrap());
+        let f = Self::file();
+        let _ = std::fs::write(&f, serde_json::to_string_pretty(&v).unwrap());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600));
+        }
     }
 }
 
@@ -289,6 +317,9 @@ pub struct NodeStatus {
     pub height: u64,
     pub peers: usize,
     pub mempool: usize,
+    /// `Some(true)`: the node is on the network of your release (same genesis hash). `Some(false)`: ANOTHER network. `None`: not checked
+    /// (no genesis.json next to the program).
+    pub genesis_ok: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -302,13 +333,43 @@ fn ask(node: &str, m: &Msg) -> Result<Msg, String> {
     request(node, m).map_err(|e| format!("{node}: {e}"))
 }
 
+/// The genesis hash of the release (genesis.json next to the program): the network this wallet is meant for.
+pub fn expected_genesis() -> Option<[u8; 32]> {
+    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    let txt = std::fs::read_to_string(dir.join("genesis.json")).ok()?;
+    let (_, cfg) = vearl_core::genesis::parse_genesis(&txt).ok()?;
+    Some(vearl_core::net::genesis_hash(&cfg))
+}
+
+/// Asks one node for its status and checks that it is on the expected network.
+pub fn status_of(node: &str, expected: Option<[u8; 32]>) -> Result<NodeStatus, String> {
+    let mut c = vearl_core::net::Conn::connect(node).map_err(|e| format!("{node}: {e}"))?;
+    c.set_timeout(std::time::Duration::from_secs(10));
+    c.send(&Msg::GetStatus).map_err(|e| format!("{node}: {e}"))?;
+    let mut genesis: Option<[u8; 32]> = None;
+    for _ in 0..8 {
+        match c.recv().map_err(|e| format!("{node}: {e}"))? {
+            Msg::Hello { genesis: g, .. } => genesis = Some(g),
+            Msg::Status { height, peers, mempool, .. } => {
+                let genesis_ok = match (expected, genesis) {
+                    (Some(e), Some(g)) => Some(e == g),
+                    _ => None,
+                };
+                return Ok(NodeStatus { node: node.to_string(), height, peers, mempool, genesis_ok });
+            }
+            _ => continue,
+        }
+    }
+    Err(format!("{node}: no status in the reply"))
+}
+
 /// First node of the list that answers: its status.
 pub fn node_status(nodes: &[String]) -> Result<NodeStatus, String> {
+    let expected = expected_genesis();
     let mut last = "no node configured".to_string();
     for n in nodes {
-        match ask(n, &Msg::GetStatus) {
-            Ok(Msg::Status { height, peers, mempool, .. }) => return Ok(NodeStatus { node: n.clone(), height, peers, mempool }),
-            Ok(other) => last = format!("{n}: unexpected reply {other:?}").chars().take(120).collect(),
+        match status_of(n, expected) {
+            Ok(st) => return Ok(st),
             Err(e) => last = e,
         }
     }
@@ -325,6 +386,10 @@ pub fn account_of(node: &str, pk: PubKey) -> Result<Account, String> {
 /// Signs and submits a transfer exactly as `vearl-wallet send` does. Returns the transaction id and the address it was paid from.
 pub fn send_transfer(node: &str, mnemonic: &Mnemonic, to: &str, amount: u64, fee: u64, pq: bool) -> Result<(String, String), String> {
     let to = parse_address(to)?;
+    // never sign for a node that is on another network than the release of this program
+    if status_of(node, expected_genesis())?.genesis_ok == Some(false) {
+        return Err("This node is on a different network than your release (the genesis hash does not match). Nothing was signed or sent.".into());
+    }
     let sk = derive_account(mnemonic, 0);
     let pqk = pq.then(|| derive_pq_account(mnemonic, 0));
     let from = pqk.as_ref().map_or_else(|| pubkey(&sk), |k| k.pubkey());
@@ -517,6 +582,9 @@ pub fn reveal(path: &Path) {
 }
 
 #[cfg(test)]
+pub static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -623,6 +691,25 @@ mod tests {
         let rows = parse_txs(&json).unwrap();
         assert!(rows[0].id.chars().count() <= 64 && rows[0].label.chars().count() <= 40);
         assert!(rows[0].counterparty.as_deref().unwrap_or("").chars().count() <= 90);
+    }
+
+    #[test]
+    fn settings_survive_a_save() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("vearl-gui-settings-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::env::set_var("VEARL_WALLET_HOME", &dir);
+        let mut s = Settings::default();
+        assert_eq!((s.autolock_minutes, s.protect_capture, s.reduce_motion), (10, true, false));
+        s.autolock_minutes = 30;
+        s.protect_capture = false;
+        s.reduce_motion = true;
+        s.node = "1.2.3.4:9000".into();
+        s.save();
+        let back = Settings::load();
+        assert_eq!(back, s);
+        std::env::remove_var("VEARL_WALLET_HOME");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -2925,9 +2925,13 @@ name = "vearl-wallet-gui"
 version = "0.1.0"
 dependencies = [
  "bip39",
+ "blake3",
  "eframe",
+ "libc",
  "png",
  "qrcode",
+ "rand",
+ "raw-window-handle",
  "rustls",
  "serde_json",
  "vearl-core",

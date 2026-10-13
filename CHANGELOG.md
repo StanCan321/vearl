@@ -20,7 +20,10 @@ First public release of the source code.
 - next (rc13): **Vearl Wallet** (`vearl-wallet-gui`, Windows and Linux): the wallet with a window, in the Vearl look. Balance, activity,
   receive (address and QR code), send (standard or post-quantum signature, with a summary and the password before anything leaves),
   registration for the testnet rewards, sign and verify messages, recovery words, password change. Same wallet files as `vearl-wallet`:
-  the keys are opened only for the moment of an action. See `docs/20`.
+  the keys are opened only for the moment of an action. A six-step creation (pointer randomness mixed with the system generator, 24 words
+  that decode and hide again by themselves, a check of three words, the file written and read back), animations throughout (reduce-motion
+  setting), refusal to sign for a node on another network (genesis check), new-recipient warning, slow-down after wrong passwords, lock after
+  inactivity, recovery words hidden from screen capture on Windows, a demo mode for recordings (`--demo`). See `docs/20`.
 - rc12: `vearl-wallet register` signs the testnet-rewards registration and, after confirmation, e-mails it to `register@vearl.org`
   (TLS, public send-only account that can write to that address only); a server script (`tools/process_registration_mail.py`) checks the
   signatures and publishes `registered.json`. `--print-only` shows the three lines to send by hand. See `docs/19`.

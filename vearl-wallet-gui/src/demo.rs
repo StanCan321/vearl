@@ -1,26 +1,84 @@
-//! Design tool (feature `devshots`, NOT in release builds): fills every screen with demo data and saves a PNG of each one.
+//! Design tool (feature `devshots`, NOT in release builds): fills every screen with demo data and saves a PNG of each one, some of them
+//! at a chosen moment of their animation.
 //!   set VEARL_GUI_SHOTS=C:\some\folder   then start the program: it walks through the screens, writes the pictures and exits.
+//!   VEARL_GUI_SIZE=1440x900 sets the size of the window. The mean time of a frame is printed at the end.
 use crate::app::*;
 use crate::core::*;
+use crate::demodata as dd;
 use crate::theme::Tone;
-use eframe::egui;
+use eframe::egui::{self, pos2};
 use std::path::PathBuf;
 use std::time::Instant;
-use vearl_core::crypto::pubkey;
 use vearl_core::state::COIN;
-use vearl_core::wallet::{address_of, derive_account, derive_pq_account, new_mnemonic, pq_address_of};
 
 pub struct Shots {
     dir: PathBuf,
     step: usize,
     frames: u32,
+    t_setup: f64,
     asked: bool,
+    frame_times: Vec<f32>,
 }
 
-const NAMES: [&str; 20] = [
-    "01-start-empty", "02-start-wallets", "03-create-name", "04-create-hidden", "05-create-words", "06-create-check", "07-create-done", "08-restore", "09-overview", "10-send",
-    "11-receive", "12-activity", "13-rewards", "14-tools", "15-settings", "16-modal-password", "17-modal-send", "18-modal-phrase", "19-modal-sent", "20-overview-offline",
-];
+struct Spec {
+    name: &'static str,
+    /// Seconds to wait after the setup before the picture is taken (the animations run in real time).
+    wait: f64,
+    setup: fn(&mut App, f64),
+}
+
+fn specs() -> Vec<Spec> {
+    vec![
+        Spec { name: "01-start-empty", wait: 2.00, setup: |a, _| { a.wallets.clear(); go_start(a) } },
+        Spec { name: "02-start-wallets", wait: 2.00, setup: |a, _| { a.wallets = dd::entries(); go_start(a) } },
+        Spec { name: "03-start-opening", wait: 0.23, setup: |a, _| { a.wallets = dd::entries(); go_start(a) } },
+        Spec { name: "04-create-name", wait: 0.67, setup: |a, n| create(a, n, 0, |_, _| {}) },
+        Spec { name: "05-create-entropy-start", wait: 0.40, setup: |a, n| create(a, n, 1, |_, _| {}) },
+        Spec { name: "06-create-entropy-70", wait: 0.33, setup: |a, n| create(a, n, 1, |c, n| spiral(c, n, 112)) },
+        Spec { name: "07-create-entropy-done", wait: 1.00, setup: |a, n| create(a, n, 1, |c, n| spiral(c, n, 170)) },
+        Spec { name: "08-create-words-hidden", wait: 0.67, setup: |a, n| create(a, n, 2, |_, _| {}) },
+        Spec { name: "09-create-words-decoding", wait: 0.23, setup: |a, n| create(a, n, 2, |c, n| c.reveal_t0 = Some(n)) },
+        Spec { name: "10-create-words", wait: 1.50, setup: |a, n| create(a, n, 2, |c, n| { c.reveal_t0 = Some(n - 3.0); c.written = true }) },
+        Spec { name: "11-create-verify", wait: 1.00, setup: |a, n| create(a, n, 3, |c, _| { let w = c.words(); c.check_in[0] = w[c.check_idx[0]].clone(); c.check_in[1] = "ab".into() }) },
+        Spec { name: "12-create-securing", wait: 0.13, setup: |a, n| create(a, n, 4, |c, n| { c.secure_t0 = n - 1.9; c.t_step = n - 1.9 }) },
+        Spec { name: "13-ready-burst", wait: 0.13, setup: |a, n| create(a, n, 5, |c, n| { c.done = Some(dd::entry("my-wallet", 11)); c.t_step = n - 1.0 }) },
+        Spec { name: "14-ready", wait: 0.13, setup: |a, n| create(a, n, 5, |c, n| { c.done = Some(dd::entry("my-wallet", 11)); c.t_step = n - 3.4 }) },
+        Spec { name: "15-restore", wait: 1.00, setup: |a, n| {
+            a.screen = Screen::Restore(Box::new(Restore::new(n)));
+            if let Screen::Restore(r) = &mut a.screen {
+                r.phrase = dd::mnemonic(5).words().take(17).collect::<Vec<_>>().join(" ");
+                r.password = "a-long-enough-password".into();
+            }
+        } },
+        Spec { name: "16-overview", wait: 1.50, setup: |a, _| session(a, Page::Overview, |_| {}) },
+        Spec { name: "17-overview-opening", wait: 0.08, setup: |a, _| session(a, Page::Overview, |_| {}) },
+        Spec { name: "18-send", wait: 1.00, setup: |a, _| session(a, Page::Send, |s| { s.send.to = dd::entry("x", 9).address; s.send.amount = "12.5".into(); s.send.fee = "0.01".into(); }) },
+        Spec { name: "19-receive", wait: 1.00, setup: |a, _| session(a, Page::Receive, |_| {}) },
+        Spec { name: "20-activity", wait: 1.00, setup: |a, _| session(a, Page::Activity, |_| {}) },
+        Spec { name: "21-rewards", wait: 1.00, setup: |a, _| session(a, Page::Rewards, |s| {
+            s.rewards.contact = "jane@example.org".into();
+            s.rewards.lines = Some(RegLines { address: s.entry.address.clone(), message: format!("Vearl testnet rewards registration. Address: {}. Contact: jane@example.org. I accept the terms in docs/19.", s.entry.address), signature: "9f".repeat(64) });
+        }) },
+        Spec { name: "22-tools", wait: 1.00, setup: |a, _| session(a, Page::Tools, |s| {
+            s.tools.message = "I own this address".into();
+            s.tools.signed = Some(RegLines { address: s.entry.address.clone(), message: "I own this address".into(), signature: "3c".repeat(64) });
+            s.tools.verdict = Some(Ok(true));
+        }) },
+        Spec { name: "23-settings", wait: 1.00, setup: |a, _| session(a, Page::Settings, |s| s.settings.node_test = Some(Ok(dd::status()))) },
+        Spec { name: "24-modal-password", wait: 0.67, setup: |a, _| session(a, Page::Overview, |s| { let mut p = PwPrompt::new(Action::RevealPq); p.error = Some("wrong password or modified file".into()); p.failures = 1; s.modal = Some(Modal::Password(p)) }) },
+        Spec { name: "25-modal-send", wait: 0.67, setup: |a, _| session(a, Page::Send, |s| s.modal = Some(Modal::Password(PwPrompt::new(Action::Send { to: dd::entry("x", 9).address, amount: 12 * COIN + 50_000_000, fee: 1_000_000, pq: false })))) },
+        Spec { name: "26-modal-phrase", wait: 1.00, setup: |a, _| session(a, Page::Settings, |s| s.modal = Some(Modal::Phrase(dd::mnemonic(7).words().map(str::to_string).collect()))) },
+        Spec { name: "27-modal-sent", wait: 0.67, setup: |a, _| session(a, Page::Send, |s| s.modal = Some(Modal::Sent { txid: "e5".repeat(32), from: dd::entry("main", 7).address, to: dd::entry("x", 9).address, amount: 12 * COIN + 50_000_000, fee: 1_000_000 })) },
+        Spec { name: "28-offline", wait: 0.67, setup: |a, _| session(a, Page::Overview, |s| {
+            s.status = Some(Err("no node answers (seed.vearl.org:9000: connection refused)".into()));
+            s.account = None;
+            s.activity = Some(Err("vearl.org answered 502".into()));
+            s.toast = Some((Tone::Warn, "Demo of the offline state.".into(), Instant::now()));
+        }) },
+        Spec { name: "29-loading", wait: 0.50, setup: |a, _| session(a, Page::Overview, |s| { s.status = None; s.account = None; s.activity = None; s.pq_address = None; }) },
+        Spec { name: "30-locked", wait: 0.67, setup: |a, n| { a.wallets = dd::entries(); a.screen = Screen::Start(StartState::new(n - 5.0, Some((Tone::Info, "Locked after 10 minutes without activity.".into())))); } },
+    ]
+}
 
 pub fn init(app: &mut App) {
     if let Some(dir) = std::env::var_os("VEARL_GUI_SHOTS") {
@@ -30,176 +88,72 @@ pub fn init(app: &mut App) {
         if let Some((w, h)) = std::env::var("VEARL_GUI_SIZE").ok().and_then(|v| v.split_once('x').and_then(|(w, h)| Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?)))) {
             app.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
         }
-        app.shots = Some(Shots { dir, step: 0, frames: 0, asked: false });
+        app.shots = Some(Shots { dir, step: 0, frames: 0, t_setup: 0.0, asked: false, frame_times: vec![] });
     }
 }
 
-fn demo_entry(name: &str, seed: u8) -> WalletEntry {
-    let m = bip39::Mnemonic::from_entropy_in(bip39::Language::English, &[seed; 32]).unwrap();
-    WalletEntry { path: PathBuf::from(format!("C:\\Users\\you\\AppData\\Roaming\\Vearl\\wallets\\{name}.json")), name: name.into(), address: address_of(&pubkey(&derive_account(&m, 0))) }
+fn go_start(a: &mut App) {
+    let n = a.now();
+    a.screen = Screen::Start(StartState::new(n, None));
 }
 
-fn demo_rows(me: &str) -> Vec<TxRow> {
-    let other = demo_entry("x", 9).address;
-    let other2 = demo_entry("y", 3).address;
-    let _ = me;
-    vec![
-        TxRow { id: "a1".repeat(32), direction: "in".into(), label: "Transfer".into(), counterparty: Some(other.clone()), amount: Some(250 * COIN), fee: 0, pending: true, height: None, confirmations: None },
-        TxRow { id: "b2".repeat(32), direction: "out".into(), label: "Transfer".into(), counterparty: Some(other2), amount: Some(12 * COIN + 50_000_000), fee: 1_000_000, pending: false, height: Some(20812), confirmations: Some(5) },
-        TxRow { id: "c3".repeat(32), direction: "in".into(), label: "Transfer".into(), counterparty: Some(other), amount: Some(1000 * COIN), fee: 0, pending: false, height: Some(20790), confirmations: Some(27) },
-        TxRow { id: "d4".repeat(32), direction: "out".into(), label: "Submit job".into(), counterparty: None, amount: Some(5 * COIN), fee: 0, pending: false, height: Some(20400), confirmations: Some(417) },
-    ]
+fn create(a: &mut App, now: f64, step: u8, f: impl FnOnce(&mut Create, f64)) {
+    let mut c = Create::new(now);
+    c.name = "my-wallet".into();
+    c.password = "Correct-Horse-Battery-9".into();
+    c.confirm = c.password.clone();
+    let m = dd::creation_mnemonic();
+    let e = m.to_entropy();
+    c.check_idx = [(e[0] % 8) as usize, 8 + (e[1] % 8) as usize, 16 + (e[2] % 8) as usize];
+    if step >= 2 {
+        c.phrase = Some(m);
+    }
+    c.step = step;
+    c.t_step = now;
+    c.secure_t0 = now;
+    f(&mut c, now);
+    a.screen = Screen::Create(Box::new(c));
 }
 
-fn demo_session(app: &mut App, page: Page) {
-    let entry = demo_entry("main", 7);
-    app.open_session(entry.clone());
-    app.cmds.clear();
-    let m = bip39::Mnemonic::from_entropy_in(bip39::Language::English, &[7u8; 32]).unwrap();
-    let pq = pq_address_of(&derive_pq_account(&m, 0).pubkey());
-    let Some(s) = app.session_mut() else { return };
+/// A spiral of pointer positions around the middle of the stage, `n` of them.
+fn spiral(c: &mut Create, now: f64, n: u32) {
+    for i in 0..n {
+        let a = i as f32 * 0.37;
+        let r = 20.0 + i as f32 * 1.1;
+        c.entropy.add(pos2(705.0 + a.cos() * r, 340.0 + a.sin() * r), now - (n - i) as f64 * 0.012);
+    }
+}
+
+fn session(a: &mut App, page: Page, f: impl FnOnce(&mut Session)) {
+    let entry = dd::entry("main", 7);
+    a.open_session(entry);
+    a.cmds.clear();
+    let n = a.now();
+    let Some(s) = a.session_mut() else { return };
     s.page = page;
-    s.status = Some(Ok(NodeStatus { node: "seed.vearl.org:9000".into(), height: 20817, peers: 6, mempool: 1 }));
-    s.account = Some(Account { balance: 1_234 * COIN + 56_789_000, nonce: 3, next_nonce: 4 });
-    s.pq_address = Some(pq);
-    s.pq_account = Some(Account { balance: 42 * COIN + 500_000, nonce: 0, next_nonce: 0 });
-    s.activity = Some(Ok(demo_rows(&entry.address)));
-    s.registered = Some(Ok(false));
-    s.standing = Some(Ok(Some(Standing { rank: 12, blocks: 41, useful_blocks: 6, points: 58.75, active_days: 2, eligible: false, reasons: vec!["active on 2 of the 3 required days".into(), "not registered".into()] })));
-    s.last_refresh = Some(Instant::now());
+    s.shown_page = page;
+    s.page_t0 = n;
+    dd::fill_session(s);
+    f(s);
+    // the dialogs open with their own animation
+    s.modal_t0 = n;
+    s.modal_was_open = s.modal.is_some();
 }
 
-fn setup(app: &mut App, step: usize) {
-    let other = demo_entry("x", 9).address;
-    match step {
-        0 => {
-            app.wallets.clear();
-            app.screen = Screen::Start(StartState::default());
-        }
-        1 => {
-            app.wallets = vec![demo_entry("main", 7), demo_entry("mining-rig", 5)];
-            app.screen = Screen::Start(StartState::default());
-        }
-        2 | 3 | 4 | 5 | 6 => {
-            let mut c = Create::new();
-            c.name = "my-wallet".into();
-            c.password = "Correct-Horse-Battery-9".into();
-            c.confirm = c.password.clone();
-            let m = bip39::Mnemonic::from_entropy_in(bip39::Language::English, &[11u8; 32]).unwrap();
-            let e = m.to_entropy();
-            c.check_idx = [(e[0] % 8) as usize, 8 + (e[1] % 8) as usize, 16 + (e[2] % 8) as usize];
-            c.phrase = Some(m);
-            c.step = match step {
-                2 => 0,
-                3 | 4 => 1,
-                5 => 2,
-                _ => 3,
-            };
-            c.revealed = step >= 4;
-            c.written = step >= 4;
-            if step == 5 {
-                c.check_in[0] = "abandon".into();
-            }
-            if step == 6 {
-                c.done = Some(demo_entry("my-wallet", 11));
-            }
-            app.screen = Screen::Create(Box::new(c));
-        }
-        7 => {
-            let m = new_mnemonic();
-            app.screen = Screen::Restore(Box::new(Restore {
-                name: "restored-wallet".into(),
-                phrase: m.words().take(17).collect::<Vec<_>>().join(" "),
-                password: "a-long-enough-password".into(),
-                confirm: String::new(),
-                error: None,
-                busy: false,
-                done: None,
-            }));
-        }
-        8 => demo_session(app, Page::Overview),
-        9 => {
-            demo_session(app, Page::Send);
-            if let Some(s) = app.session_mut() {
-                s.send.to = other;
-                s.send.amount = "12.5".into();
-                s.send.fee = "0.01".into();
-            }
-        }
-        10 => demo_session(app, Page::Receive),
-        11 => demo_session(app, Page::Activity),
-        12 => {
-            demo_session(app, Page::Rewards);
-            if let Some(s) = app.session_mut() {
-                s.rewards.contact = "jane@example.org".into();
-                s.rewards.lines = Some(RegLines {
-                    address: s.entry.address.clone(),
-                    message: format!("Vearl testnet rewards registration. Address: {}. Contact: jane@example.org. I accept the terms in docs/19.", s.entry.address),
-                    signature: "9f".repeat(64),
-                });
-            }
-        }
-        13 => {
-            demo_session(app, Page::Tools);
-            if let Some(s) = app.session_mut() {
-                s.tools.message = "I own this address".into();
-                s.tools.signed = Some(RegLines { address: s.entry.address.clone(), message: "I own this address".into(), signature: "3c".repeat(64) });
-                s.tools.verdict = Some(Ok(true));
-            }
-        }
-        14 => {
-            demo_session(app, Page::Settings);
-            if let Some(s) = app.session_mut() {
-                s.settings.node_test = Some(Ok(NodeStatus { node: "seed.vearl.org:9000".into(), height: 20817, peers: 6, mempool: 1 }));
-            }
-        }
-        15 => {
-            demo_session(app, Page::Overview);
-            if let Some(s) = app.session_mut() {
-                s.modal = Some(Modal::Password(PwPrompt { action: Action::RevealPq, password: "••••••••••".into(), error: Some("wrong password or modified file".into()), busy: false }));
-            }
-        }
-        16 => {
-            demo_session(app, Page::Send);
-            if let Some(s) = app.session_mut() {
-                s.modal = Some(Modal::Password(PwPrompt { action: Action::Send { to: other, amount: 12 * COIN + 50_000_000, fee: 1_000_000, pq: false }, password: String::new(), error: None, busy: false }));
-            }
-        }
-        17 => {
-            demo_session(app, Page::Settings);
-            let m = bip39::Mnemonic::from_entropy_in(bip39::Language::English, &[7u8; 32]).unwrap();
-            if let Some(s) = app.session_mut() {
-                s.modal = Some(Modal::Phrase(m.words().map(str::to_string).collect()));
-            }
-        }
-        18 => {
-            demo_session(app, Page::Send);
-            let from = demo_entry("main", 7).address;
-            if let Some(s) = app.session_mut() {
-                s.modal = Some(Modal::Sent { txid: "e5".repeat(32), from, to: other, amount: 12 * COIN + 50_000_000, fee: 1_000_000 });
-            }
-        }
-        _ => {
-            demo_session(app, Page::Overview);
-            if let Some(s) = app.session_mut() {
-                s.status = Some(Err("no node answers (seed.vearl.org:9000: connection refused)".into()));
-                s.account = None;
-                s.activity = Some(Err("vearl.org answered 502".into()));
-                s.toast = Some((Tone::Warn, "Demo of the offline state.".into(), Instant::now()));
-            }
-        }
-    }
-}
-
-/// Called every frame: sets the screen up, waits a few frames for the layout to settle, asks for a screenshot, saves it, goes on.
+/// Called every frame: sets the screen up, waits for it to settle, asks for a screenshot, saves it, goes on.
 pub fn drive(app: &mut App, ctx: &egui::Context) {
     let Some(mut sh) = app.shots.take() else { return };
-    if sh.step >= NAMES.len() {
+    let list = specs();
+    sh.frame_times.push(ctx.input(|i| i.unstable_dt));
+    if sh.step >= list.len() {
+        let n = sh.frame_times.len().max(1) as f32;
+        let mean = sh.frame_times.iter().sum::<f32>() / n;
+        let worst = sh.frame_times.iter().cloned().fold(0.0, f32::max);
+        println!("frames: {} mean interval {:.1} ms (worst {:.0} ms)", sh.frame_times.len(), mean * 1000.0, worst * 1000.0);
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         app.shots = Some(sh);
         return;
     }
-    // a screenshot that came back?
     let shot = ctx.input(|i| {
         i.events.iter().find_map(|e| match e {
             egui::Event::Screenshot { image, .. } => Some(image.clone()),
@@ -212,7 +166,7 @@ pub fn drive(app: &mut App, ctx: &egui::Context) {
         for p in &img.pixels {
             raw.extend_from_slice(&[p.r(), p.g(), p.b(), 255]);
         }
-        let path = sh.dir.join(format!("{}.png", NAMES[sh.step]));
+        let path = sh.dir.join(format!("{}.png", list[sh.step].name));
         if let Ok(f) = std::fs::File::create(&path) {
             let mut enc = png::Encoder::new(std::io::BufWriter::new(f), w, h);
             enc.set_color(png::ColorType::Rgba);
@@ -229,10 +183,12 @@ pub fn drive(app: &mut App, ctx: &egui::Context) {
         return;
     }
     if sh.frames == 0 {
-        setup(app, sh.step);
+        let now = app.now();
+        sh.t_setup = now;
+        (list[sh.step].setup)(app, now);
     }
     sh.frames += 1;
-    if sh.frames > 12 && !sh.asked {
+    if sh.frames > 2 && app.now() - sh.t_setup >= list[sh.step].wait && !sh.asked {
         ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
         sh.asked = true;
     }
