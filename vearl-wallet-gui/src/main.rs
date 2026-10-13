@@ -71,6 +71,9 @@ impl eframe::App for Shell {
 /// Draws the current screen (everything below the platform handling of the window).
 pub fn draw(app: &mut App, ui: &mut egui::Ui) {
     if !matches!(app.screen, Screen::Wallet(_)) {
+        // the cards of these screens are staged by their own reveals: forget the stagger a wallet page left behind (its counter
+        // grows with every frame, so a card drawn afterwards would never finish appearing)
+        anim::scene_begin(ui.ctx(), -100.0);
         egui::Panel::bottom("footer").exact_size(46.0).resizable(false).frame(egui::Frame::new().fill(theme::BG)).show(ui, ui_start::footer);
     }
     let plain = egui::Frame::new().fill(theme::BG);

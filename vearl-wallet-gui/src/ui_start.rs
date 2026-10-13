@@ -72,17 +72,17 @@ pub fn start(ui: &mut Ui, a: &mut App) {
             let wide = total > 820.0;
             let (lw, rw) = if wide { ((total - gap) * 0.52, (total - gap) * 0.48) } else { (total, total) };
             let top = ui.cursor().min;
-            let left_rect = Rect::from_min_size(top, vec2(lw, 560.0));
-            let mut used_l = 0.0;
-            // the living mark of the site, behind the card
-            let right_rect = if wide { Rect::from_min_size(pos2(top.x + lw + gap, top.y + 140.0), vec2(rw, 560.0)) } else { Rect::from_min_size(pos2(top.x, top.y + 640.0), vec2(rw, 560.0)) };
+            let left_rect = Rect::from_min_size(top, vec2(lw, 600.0));
+            // the living mark of the site, free on the right (the wallets are part of the left column)
             if wide {
+                let mid = top.x + lw + gap + rw / 2.0;
                 let k = anim::ease_out(anim::progress(&ctx, t0, 0.1, 1.6));
-                fx::sphere(ui.painter(), pos2(right_rect.center().x + 6.0, top.y + 72.0), 218.0 * (0.86 + 0.14 * k), 11.5, 0.95 * k, fx_now, pointer);
+                fx::sphere(ui.painter(), pos2(mid + 6.0, top.y + 190.0), 250.0 * (0.86 + 0.14 * k), 12.5, 0.95 * k, fx_now, pointer);
                 if !anim::reduced() {
                     ctx.request_repaint();
                 }
             }
+            let mut used_l = 0.0;
             ui.scope_builder(UiBuilder::new().max_rect(left_rect), |ui| {
                 ui.set_width(lw);
                 if let Some((tone, msg)) = st.notice.clone() {
@@ -108,41 +108,33 @@ pub fn start(ui: &mut Ui, a: &mut App) {
                     });
                 });
                 ui.add_space(26.0);
-                for (i, (n, s)) in [("Post-quantum", "Accounts can also sign with SLH-DSA (NIST FIPS 205), which quantum computers cannot forge."), ("Verified", "The wallet is open source and uses the same code as the command-line wallet."), ("Yours alone", "Nothing is sent anywhere except the payments and the registration you confirm.")].into_iter().enumerate() {
-                    reveal(ui, t0, 0.55 + i as f32 * 0.1, |ui| {
-                        ui.horizontal_top(|ui| {
-                            t::dot(ui, t::MINT);
-                            ui.vertical(|ui| {
-                                ui.label(RichText::new(n).font(t::sans_semibold(14.5)).color(t::INK));
-                                ui.add(egui::Label::new(RichText::new(s).font(t::sans(13.5)).color(t::MUTE)).wrap());
-                            });
+                reveal(ui, t0, 0.54, |ui| {
+                    // the wallets of this computer: tiles in two columns, and a link to open a file that is somewhere else
+                    let head = ui.cursor().top();
+                    let label = if wallets.is_empty() { "NO WALLET ON THIS COMPUTER YET" } else { "OR OPEN ONE OF YOUR WALLETS" };
+                    t::tracked(ui, label, t::mono_medium(10.5), t::MUTE, 1.6);
+                    ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(pos2(top.x + lw - 190.0, head - 5.0), vec2(190.0, 22.0))), |ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                            if !st.show_open && t::link(ui, "Open a file...").clicked() {
+                                st.show_open = true;
+                            }
                         });
                     });
-                    ui.add_space(4.0);
-                }
-                used_l = ui.min_rect().height();
-            });
-            let mut used_r = 0.0;
-            ui.scope_builder(UiBuilder::new().max_rect(right_rect), |ui| {
-                ui.set_width(rw);
-                reveal(ui, t0, 0.5, |ui| {
-                    t::hero_card(ui, |ui| {
-                        t::eyebrow(ui, Some("01"), "Your wallets");
-                        ui.add_space(14.0);
-                        if wallets.is_empty() {
-                            ui.add_space(6.0);
-                            t::body(ui, "No wallet on this computer yet.");
-                            ui.add_space(2.0);
-                            t::muted(ui, "Create one in a minute, or restore one with its 24 words. If you already have a wallet file (from vearl-wallet or the miner), open it below.");
-                        }
-                        let mut forget: Option<String> = None;
-                        for w in wallets.iter() {
-                            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 68.0), Sense::click());
+                    ui.add_space(12.0);
+                    let tw = (lw - 12.0) / 2.0;
+                    let mut forget: Option<String> = None;
+                    for (row, pair) in wallets.chunks(2).enumerate() {
+                        let y = ui.cursor().top();
+                        for (i, w) in pair.iter().enumerate() {
+                            let rect = Rect::from_min_size(pos2(top.x + i as f32 * (tw + 12.0), y), vec2(tw, 58.0));
+                            let resp = ui.interact(rect, Id::new(("wallet-tile", row, i)), Sense::click());
                             let h = anim::fade(&ctx, resp.id.with("h"), resp.hovered(), 0.18);
-                            ui.painter().rect(rect, 0.0, t::alpha(t::MINT, (12.0 * h) as u8), Stroke::new(1.0, anim::mix(t::LINE2, t::MINT, h)), StrokeKind::Inside);
-                            ui.painter().text(rect.left_top() + vec2(18.0 + 3.0 * h, 16.0), Align2::LEFT_TOP, &w.name, t::sans_semibold(16.5), t::INK);
-                            ui.painter().text(rect.left_top() + vec2(18.0 + 3.0 * h, 41.0), Align2::LEFT_TOP, short_addr(&w.address), t::mono(12.5), t::MUTE);
-                            t::draw_arrow(ui.painter(), pos2(rect.right() - 24.0 + 5.0 * h, rect.center().y), anim::mix(t::MUTE, t::MINT, h));
+                            ui.painter().rect(rect, 0.0, t::alpha(t::MINT, (14.0 * h) as u8), Stroke::new(1.0, anim::mix(t::LINE2, t::MINT, h)), StrokeKind::Inside);
+                            ui.painter().circle_filled(pos2(rect.left() + 18.0, rect.center().y), 3.0, anim::mix(t::DIM, t::MINT, 0.5 + 0.5 * h));
+                            let name: String = if w.name.chars().count() > 20 { w.name.chars().take(19).collect::<String>() + "…" } else { w.name.clone() };
+                            ui.painter().text(rect.left_top() + vec2(32.0 + 3.0 * h, 11.0), Align2::LEFT_TOP, name, t::sans_semibold(15.0), t::INK);
+                            ui.painter().text(rect.left_top() + vec2(32.0 + 3.0 * h, 33.0), Align2::LEFT_TOP, short_addr(&w.address), t::mono(11.5), t::MUTE);
+                            t::draw_arrow(ui.painter(), pos2(rect.right() - 18.0 + 4.0 * h, rect.center().y), anim::mix(t::MUTE, t::MINT, h));
                             if resp.hovered() {
                                 ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
                             }
@@ -155,42 +147,50 @@ pub fn start(ui: &mut Ui, a: &mut App) {
                                     ui.close();
                                 }
                             });
-                            ui.add_space(2.0);
                         }
-                        if let Some(f) = forget {
-                            cmds.push(Cmd::Forget(f));
-                        }
-                        ui.add_space(10.0);
-                        if st.show_open {
-                            t::field(ui, "Path of a wallet file", &mut st.open_path, "C:\\Users\\you\\wallet.json", false, true);
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                if t::button_ex(ui, "Open this file", Kind::Ghost, !st.open_path.trim().is_empty(), false, 0.0).clicked() {
-                                    st.error = None;
-                                    cmds.push(Cmd::OpenPath(st.open_path.clone()));
-                                }
-                                if t::ghost(ui, "Cancel").clicked() {
-                                    st.show_open = false;
-                                    st.error = None;
-                                }
-                            });
-                        } else {
-                            if t::link(ui, "Open a wallet file...").clicked() {
-                                st.show_open = true;
+                        ui.allocate_space(vec2(lw, 58.0 + 10.0));
+                    }
+                    if let Some(f) = forget {
+                        cmds.push(Cmd::Forget(f));
+                    }
+                    if st.show_open {
+                        ui.add_space(4.0);
+                        t::field(ui, "Path of a wallet file", &mut st.open_path, "C:\\Users\\you\\wallet.json", false, true);
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if t::button_ex(ui, "Open this file", Kind::Ghost, !st.open_path.trim().is_empty(), false, 0.0).clicked() {
+                                st.error = None;
+                                cmds.push(Cmd::OpenPath(st.open_path.clone()));
                             }
-                            ui.add_space(2.0);
-                            ui.label(RichText::new("You can also drop a wallet file on this window.").font(t::sans(12.5)).color(t::DIM));
-                        }
-                        if let Some(e) = &st.error {
-                            ui.add_space(6.0);
-                            t::notice(ui, Tone::Bad, e);
+                            if t::ghost(ui, "Cancel").clicked() {
+                                st.show_open = false;
+                                st.error = None;
+                            }
+                        });
+                    } else if wallets.is_empty() {
+                        ui.label(RichText::new("You can also drop a wallet file on this window.").font(t::sans(12.5)).color(t::DIM));
+                    }
+                    if let Some(e) = &st.error {
+                        ui.add_space(6.0);
+                        t::notice(ui, Tone::Bad, e);
+                    }
+                });
+                ui.add_space(24.0);
+                reveal(ui, t0, 0.66, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        for (i, n) in ["Post-quantum", "Verified", "Yours alone"].into_iter().enumerate() {
+                            if i > 0 {
+                                ui.add_space(14.0);
+                            }
+                            t::dot(ui, t::MINT);
+                            ui.label(RichText::new(n).font(t::sans_semibold(14.0)).color(t::INK2));
                         }
                     });
                 });
-                used_r = ui.min_rect().height();
+                used_l = ui.min_rect().height();
             });
-            let used = if wide { used_l.max(used_r + 140.0) } else { used_l + 30.0 + used_r };
-            ui.allocate_space(vec2(total, used.max(100.0) + 60.0));
+            ui.allocate_space(vec2(total, used_l.max(100.0) + 40.0));
         });
     });
 }

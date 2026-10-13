@@ -394,7 +394,9 @@ pub fn link(ui: &mut Ui, text: &str) -> Response {
     let h = anim::fade(ui.ctx(), resp.id.with("hover"), resp.hovered(), 0.16);
     let c = anim::mix(MINT, MINT_HOVER, h);
     paint_tracked(ui.painter(), Pos2::new(rect.left(), rect.top() + 3.0), &label, &font, c, 1.4);
-    ui.painter().line_segment([Pos2::new(rect.left(), rect.bottom() - 1.0), Pos2::new(rect.left() + w * h, rect.bottom() - 1.0)], Stroke::new(1.0, c));
+    if h > 0.01 {
+        ui.painter().line_segment([Pos2::new(rect.left(), rect.bottom() - 1.0), Pos2::new(rect.left() + w * h, rect.bottom() - 1.0)], Stroke::new(1.0, c));
+    }
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }

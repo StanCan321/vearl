@@ -193,3 +193,36 @@ fn every_screen_draws_at_every_size_and_time() {
     std::env::remove_var("VEARL_WALLET_HOME");
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// Regression: after a wallet page had been open, the start screen came back without its "Your wallets" card: the stagger of the wallet
+/// pages (a start time and a counter that grows with every card drawn) was left behind, so a card drawn afterwards waited longer and
+/// longer and never finished appearing. The screens outside the wallet must not inherit it.
+#[test]
+fn start_screen_after_a_lock_has_no_stale_stagger() {
+    let _lock = crate::core::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = std::env::temp_dir().join(format!("vearl-gui-smoke-lock-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::env::set_var("VEARL_WALLET_HOME", &tmp);
+    crate::anim::set_reduce_motion(false);
+    let size = vec2(1120.0, 760.0);
+    let ctx = egui::Context::default();
+    crate::theme::install(&ctx);
+    let logo = ctx.load_texture("t", egui::ColorImage::example(), Default::default());
+    let mut app = App::new(ctx.clone(), logo, true);
+
+    session(&mut app, Page::Overview, None);
+    for k in 0..40 {
+        frame(&ctx, &mut app, size, 20.0 + k as f64 * 0.015, None);
+    }
+    let (t0, _) = crate::anim::scene_next(&ctx);
+    assert!(t0 >= 0.0, "a wallet page should have started a scene");
+    app.cmds.push(Cmd::GoStart);
+    app.run_cmds();
+    for k in 0..40 {
+        frame(&ctx, &mut app, size, 21.0 + k as f64 * 0.015, None);
+    }
+    let (t0, _) = crate::anim::scene_next(&ctx);
+    assert!(t0 < 0.0, "the start screen inherited the stagger of the wallet page (start {t0})");
+    std::env::remove_var("VEARL_WALLET_HOME");
+    let _ = std::fs::remove_dir_all(&tmp);
+}

@@ -143,7 +143,8 @@ fn session(a: &mut App, page: Page, f: impl FnOnce(&mut Session)) {
 /// Called every frame: sets the screen up, waits for it to settle, asks for a screenshot, saves it, goes on.
 pub fn drive(app: &mut App, ctx: &egui::Context) {
     let Some(mut sh) = app.shots.take() else { return };
-    let list = specs();
+    let only = std::env::var("VEARL_GUI_ONLY").ok();
+    let list: Vec<Spec> = specs().into_iter().filter(|s| only.as_deref().map_or(true, |o| s.name.starts_with(o))).collect();
     sh.frame_times.push(ctx.input(|i| i.unstable_dt));
     if sh.step >= list.len() {
         let n = sh.frame_times.len().max(1) as f32;
