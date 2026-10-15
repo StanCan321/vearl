@@ -1,0 +1,9 @@
+[Unit]
+Description=Copies the seed node's peer list for the job gateway (its data folder is private to the node)
+
+[Service]
+Type=oneshot
+RuntimeDirectory=vearl-gateway-peers
+RuntimeDirectoryPreserve=yes
+RuntimeDirectoryMode=0755
+ExecStart=/bin/sh -c 'install -m 644 /var/lib/vearl/peers.txt /run/vearl-gateway-peers/peers.txt'

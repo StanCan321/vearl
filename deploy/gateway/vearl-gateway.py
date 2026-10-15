@@ -16,6 +16,12 @@ same transactions a person would send by hand. Python 3 standard library only. L
 
 --key is `seed:N` (PUBLIC devnet key, demo chain only) or `wallet:FILE` (a funded wallet; the password is read by vearl-cli from
 VEARL_WALLET_PASSWORD_FILE). Repeat --key for several service accounts: jobs are spread over them.
+
+PUBLIC network (--public): any miner may take a job, and the audit needs the outputs of the miner that did. The gateway therefore asks
+`vearl-cli l2-who` which of the nodes it can reach (every --worker, and the addresses listed in --peers-file) really serves the job's chunks,
+opened against the published root, and audits that one. A miner that cannot be reached (behind a home router) cannot be audited: the job
+then ends as "failed" with a plain explanation (the miner is still paid by the chain, the visitor just has no picture to see). The exact
+kinds of the demo chain (digits, matmul: written for n = 128) are not offered.
 """
 import argparse
 import array
@@ -121,6 +127,7 @@ CATALOG = [
      "measure": "Outputs bit-identical to an independent reference engine", "available": False},
 ]
 CATALOG_NOTE = "Needs model files that are not installed on this demo network."
+CATALOG_NOTE_PUBLIC = "Not offered on this page yet: the job service starts with the studio renders and Monte Carlo jobs."
 
 
 def tiles(w, h):
@@ -208,7 +215,7 @@ class Gateway:
         self.lane_load = collections.Counter()
         os.makedirs(os.path.join(a.data, "out"), exist_ok=True)
         self._ml = (0.0, {})
-        self.digits = self.load_digits()
+        self.digits = None if a.public else self.load_digits()
         self.state_path = os.path.join(a.data, "jobs.json")
         self.load()
 
@@ -226,6 +233,43 @@ class Gateway:
             return {"path": path, "samples": samples}
         except (OSError, ValueError, KeyError):
             return None
+
+    def candidates(self):
+        """Addresses the audit may ask for a job's chunks: the --worker nodes first, then the reachable peers of --peers-file."""
+        seen, out = set(), []
+        for w in list(self.a.workers) + self.peers_from_file():
+            if w not in seen:
+                seen.add(w)
+                out.append(w)
+        return out
+
+    def peers_from_file(self):
+        """The seed node's peers.txt (one HOST:PORT per line). Loopback and wildcard addresses are the node's own bookkeeping, not miners."""
+        if not self.a.peers_file:
+            return []
+        try:
+            lines = [l.strip() for l in open(self.a.peers_file)]
+        except OSError:
+            return []
+        good = []
+        for l in lines:
+            m = re.fullmatch(r"([A-Za-z0-9.\-]+):(\d{2,5})", l)
+            if m and not m.group(1).startswith(("127.", "0.0.0.0", "localhost")):
+                good.append(l)
+        return good[:64]
+
+    def find_worker(self, node, chain_id):
+        """The node that serves this posted job's chunks (public mode: asked among the candidates; demo chain: the one --worker)."""
+        cands = self.candidates()
+        if not self.a.public and len(cands) == 1:
+            return cands[0]
+        for attempt in range(3):
+            rc, out = self.cli(["l2-who", node, chain_id] + cands, 150)
+            m = re.search(r"worker = (\S+)", out)
+            if m and m.group(1) != "none":
+                return m.group(1)
+            time.sleep(6)
+        return None
 
     # -- persistence
     def load(self):
@@ -441,9 +485,21 @@ class Gateway:
             # audit by sampling, accept, assemble
             self.set(j, "verifying")
             ppm = os.path.join(a.data, "out", j["ref"] + ".ppm")
+            worker = self.find_worker(node, j["chain_id"])
+            if not worker and j.get("attempts", 0) < a.retries:
+                # an unreachable miner took the job: the chain has paid it, the visitor has nothing to see. Submit the same job again
+                # (the escrow is the service account's, test tokens): another miner, perhaps a reachable one, will take it
+                with self.lock:
+                    j["attempts"] = j.get("attempts", 0) + 1
+                    j.setdefault("progress", []).append("A miner took the job but cannot be reached to check it: the job was sent again.")
+                self.set(j, "queued", chain_id=None)
+                return self.run(j, resume=False)
+            if not worker:
+                return self.finish(j, "failed", "A miner took this job and posted its result, but it cannot be reached to check it (most likely it runs behind a home "
+                                   "router). The miner is still paid by the chain; you lose nothing. Try again: another miner may take the next job.")
             with self.lane_locks[key]:
                 fin = a.wait_finish + (j.get("chunks") or 0) // 30  # a big image is thousands of chunks to fetch
-                rc, out = self.cli(["l2-finish", node, a.worker, key, j["chain_id"], str(a.audit), ppm], fin + 60, {"VEARL_WAIT_SECS": str(fin)})
+                rc, out = self.cli(["l2-finish", node, worker, key, j["chain_id"], str(a.audit), ppm], fin + 60, {"VEARL_WAIT_SECS": str(fin)})
             audit = None
             m = re.search(r"(\d+) chunk\(s\) out of (\d+) recomputed", out)
             if m:
@@ -536,6 +592,8 @@ class Gateway:
             self.finish(j, "failed", "Internal error while following the job.")
 
     def create(self, body, visitor):
+        if self.a.public and body.get("kind") in ("digits", "matmul"):
+            raise ValueError("This kind of job is not offered on the public network yet.")
         remote = body.get("kind") in self.ml_kinds()
         params, cli, chunks = ({"kind": body["kind"]}, [], 1) if remote else validate(body)
         now = time.time()
@@ -573,13 +631,13 @@ class Gateway:
         with self.lock:
             active = sum(self.active_by.values())
             done = sum(1 for j in self.jobs.values() if j["status"] == "done")
-        kinds = {k: v for k, v in KINDS.items() if k != "digits" or self.digits}
+        kinds = {k: v for k, v in KINDS.items() if k not in ("digits", "matmul") or (not self.a.public and (k != "digits" or self.digits))}
         mlk = self.ml_kinds()
         kinds.update(mlk)
         catalog = []
         for c in CATALOG:
-            ok = (c["available"] and (c["id"] != "digits" or bool(self.digits))) or c["id"] in mlk
-            d = dict(c, available=ok, reason=None if ok else CATALOG_NOTE)
+            ok = (c["available"] and (c["id"] != "digits" or bool(self.digits)) and not (self.a.public and c["id"] in ("digits", "matmul"))) or c["id"] in mlk
+            d = dict(c, available=ok, reason=None if ok else (CATALOG_NOTE_PUBLIC if self.a.public else CATALOG_NOTE))
             if c["id"] in mlk:
                 d["note"] = "Here: runs on the project's GPU worker, one job at a time."
             catalog.append(d)
@@ -664,7 +722,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--cli", required=True)
     ap.add_argument("--node", required=True, help="a node HOST:PORT (peer port) the service account talks to")
-    ap.add_argument("--worker", required=True, help="the worker node HOST:PORT that serves chunks for the audit")
+    ap.add_argument("--worker", action="append", required=True, help="a worker node HOST:PORT that serves chunks for the audit (repeat for several; with one and no --public it is THE worker)")
+    ap.add_argument("--public", action="store_true", help="the PUBLIC network: any miner may take a job; the worker is looked for among --worker and --peers-file; the exact kinds (n = 128) are off")
+    ap.add_argument("--retries", type=int, default=None, help="how many times a job is sent again when the miner that took it cannot be reached for the audit (default 2 with --public, else 0)")
+    ap.add_argument("--peers-file", dest="peers_file", default=None, help="the seed node's peers.txt: its reachable addresses are asked too when looking for the worker of a job")
     ap.add_argument("--key", action="append", required=True)
     ap.add_argument("--data", required=True)
     ap.add_argument("--listen", default="127.0.0.1:18600")
@@ -680,6 +741,8 @@ def main():
     ap.add_argument("--wait-ml", dest="wait_ml", type=int, default=1500, help="seconds allowed to one ML job")
     ap.add_argument("--models", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "models"), help="folder with digits-cnn.json")
     a = ap.parse_args()
+    a.retries = (2 if a.public else 0) if a.retries is None else a.retries
+    a.workers, a.worker = a.worker, a.worker[0]       # every --worker, and the first one (the exact kinds of the demo chain use that one)
     os.makedirs(a.data, exist_ok=True)
     sp = os.path.join(a.data, "salt")
     if not os.path.exists(sp):
@@ -690,7 +753,7 @@ def main():
     host, port = a.listen.rsplit(":", 1)
     gw = Gateway(a)
     srv = ThreadingHTTPServer((host, int(port)), make_handler(gw))
-    print(f"vearl-gateway on {a.listen} (node {a.node}, worker {a.worker}, {len(a.key)} account(s))", flush=True)
+    print(f"vearl-gateway on {a.listen} (node {a.node}, worker(s) {', '.join(a.workers)}{', PUBLIC network' if a.public else ''}, {len(a.key)} account(s))", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

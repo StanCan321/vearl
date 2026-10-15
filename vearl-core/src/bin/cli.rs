@@ -23,6 +23,7 @@
 //! vearl-cli l2-submit NODE KEY ESCROW_NXS render WIDTH HEIGHT SPP SEED   (level 2: 3D rendering in 16x16 tiles)
 //! vearl-cli l2-submit NODE KEY ESCROW_NXS render3 SCENE WIDTH HEIGHT SPP PASSES SEED   (level 2: path tracer; SCENE = watch | mini | cocktail | orb | gallery)
 //! vearl-cli l2-status NODE JOBID_HEX
+//! vearl-cli l2-who NODE JOBID_HEX WORKER [WORKER...]   (which of these nodes serves the job's chunks, opened against the root: `worker = ADDR` or `worker = none`)
 //! vearl-cli l2-finish NODE WORKER KEY JOBID_HEX M [IMAGE.ppm]   (audits M randomly drawn chunks: local recomputation + Merkle opening; Accept or Fraud)
 //! vearl-cli mlp-submit NODE WORKER seed:CLIENT ESCROW_PER_LAYER LAYERS DATA_SEED   (quantised multi-layer inference)
 //! vearl-cli mlp-status NODE JOBID_HEX
@@ -902,6 +903,27 @@ fn run_cmd() {
             Msg::L2Info { status, chunks, escrow_net, root, .. } => println!("L2 {status}: {chunks} chunks, net escrow {}, root {:?}", escrow_net as f64 / COIN as f64, root.map(|r| hex(&r[..4]))),
             m => println!("{m:?}"),
         },
+        "l2-who" => {
+            // Which of these nodes holds the outputs of a Posted job? Each candidate is asked for chunk 0 and must open it against the
+            // published root (a node that merely answers is not enough). The first one that does is printed as `worker = ADDR`, else
+            // `worker = none`. Nothing is sent to the chain: unlike l2-finish, a wrong candidate costs nothing.
+            let id = parse_pk(&a[2]);
+            let Msg::L2Info { status, chunks, root, .. } = request(node, &Msg::GetL2(id)).expect("node") else { panic!("unknown job") };
+            let (true, Some(root)) = (status.starts_with("Posted"), root) else {
+                println!("worker = none (status {status})");
+                return;
+            };
+            let depth = depth_for(chunks as usize);
+            for w in &a[3..] {
+                if let Ok(Msg::L2ChunkData { out, path }) = request(w, &Msg::GetL2Chunk { job: id, chunk: 0 }) {
+                    if verify_proof(&root, chunk_leaf(0, &out), 0, &path, depth) {
+                        println!("worker = {w}");
+                        return;
+                    }
+                }
+            }
+            println!("worker = none (asked {} node(s))", a.len() - 3);
+        }
         "l2-finish" => {
             let (worker, sk, id) = (&a[2], key(&a[3]), parse_pk(&a[4]));
             let m: usize = a[5].parse().unwrap();

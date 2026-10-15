@@ -1,0 +1,28 @@
+[Unit]
+Description=Vearl job gateway (PUBLIC testnet: the free "create a job" page, /compute/)
+After=vearl-node.service
+Requires=vearl-node.service
+
+[Service]
+User=vearlgw
+Group=vearlgw
+# The service wallet's password is read by vearl-cli from this file (systemd credential, root-only on disk): never in an argument.
+LoadCredential=service-password:/etc/vearl-gateway/service-password
+Environment=VEARL_WALLET_PASSWORD_FILE=/run/credentials/vearl-gateway.service/service-password
+# --worker 127.0.0.1:19110 = the project's GPU worker, reached through the reverse ssh tunnel of deploy/pc-worker/public-worker-tunnel.bat;
+# the other candidates for the audit are the reachable peers the seed knows (copied to /run/vearl-gateway-peers by vearl-gateway-peers.timer).
+ExecStart=/usr/bin/python3 /opt/vearl-gateway-public/vearl-gateway.py --cli /opt/vearl-gateway-public/vearl-cli --node 127.0.0.1:9000 \
+  --worker 127.0.0.1:19110 --public --key wallet:/etc/vearl-gateway/service-wallet.json --data /var/lib/vearl-gateway-public \
+  --listen 127.0.0.1:18610 --peers-file /run/vearl-gateway-peers/peers.txt --escrow 2 --audit 4 --per-hour 6 --per-visitor-active 2 --max-active 12
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/vearl-gateway-public
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryMax=1200M
+
+[Install]
+WantedBy=multi-user.target
