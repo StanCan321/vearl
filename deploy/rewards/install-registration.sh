@@ -10,7 +10,7 @@
 # Test afterwards:  python3 deploy/rewards/test-registration.py
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-KEY="-i ${VEARL_SSH_KEY:-$HOME/.ssh/id_ed25519_vps4} -o IdentitiesOnly=yes"   # override with VEARL_SSH_KEY
+KEY="-i ${VEARL_SSH_KEY:-$HOME/.ssh/id_ed25519} -o IdentitiesOnly=yes"   # override with VEARL_SSH_KEY
 HOST=${VEARL_SSH_HOST:-root@vearl.org}                                        # the web/mail server (override with VEARL_SSH_HOST)
 PW=$(grep -o 'SMTP_PASSWORD: &str = "[^"]*"' vearl-core/src/regmail.rs | sed 's/.*= "//; s/"$//')
 [ -n "$PW" ] || { echo "cannot read SMTP_PASSWORD from vearl-core/src/regmail.rs"; exit 1; }
