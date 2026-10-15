@@ -129,7 +129,7 @@ Initial state: balances = genesis allocation, nonces = 0. `prev` of block 0 = 32
 
 ### 10.4 Reward and monetary supply
 
-`base_reward(h) = max(R0 >> min(h / HALVING, 63), TAIL)`, credited to the miner **after** the block's transactions, and counted in the emission (`minted`). For useful-work classes (Job, Op, …) a *rebate* bounded by the amount burned at job creation is added (§8). Tested invariant: `Σ balances + escrows + bonds + burned = genesis + minted`.
+`base_reward(h) = max(R0 >> min(h / HALVING, 63), TAIL)`, credited to the miner **after** the block's transactions, and counted in the emission (`minted`). (Testnet schedule. The mainnet plan removes the tail, `TAIL = 0`, which caps the issuance at 42,048,000 VRL: docs/04 section 4.) For useful-work classes (Job, Op, …) a *rebate* bounded by the amount burned at job creation is added (§8). Tested invariant: `Σ balances + escrows + bonds + burned = genesis + minted`.
 
 ### 10.5 Difficulty (target), cumulative work, chain selection
 

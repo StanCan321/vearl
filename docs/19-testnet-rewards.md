@@ -1,9 +1,10 @@
 # 19 - Testnet contributors program
 
-> **Status: a plan of the team, not a promise.** This document describes how the team intends to thank the people who help secure the
-> public testnet, by allocating some tokens of the mainnet to them when it launches. Testnet tokens themselves have no value, are not for
-> sale and cannot be converted. Nothing here is an offer, a contract, a guarantee of any amount, or investment advice, and the team may
-> change or stop the program. **This draft has not been reviewed by a lawyer yet: it must be before it is announced as final.**
+> **Status: a commitment of the team.** The team commits to thank the people who help secure the public testnets by allocating tokens of the
+> mainnet to them, under the rules of this document: **7 % of the maximum mainnet supply** for the contributors of five public testnets,
+> **0.7 %** for the first one. What is **not** promised: a mainnet date, or any price or value of the tokens. Testnet tokens themselves have no
+> value, are not for sale and cannot be converted. Nothing here is investment advice. The rules can change only before they apply, and never
+> reduce points already earned (section 8).
 
 ## 1. What is rewarded
 
@@ -12,9 +13,12 @@ Mining Quantus with the optional add-on does not count; running the miner withou
 
 ## 2. The reward pool
 
-The team sets aside a fixed share of the mainnet supply for the testnet contributors. Planned size: **5 % of the mainnet supply**, announced as a
-percentage before the testnet ends. The mainnet is expected soon after the start of the testnet, so the durations in this document (early period, active days) are counted in days; if the schedule changes, the team announces the new values before they apply. The pool is shared between the eligible addresses in proportion to their
-points (section 3). The size of the pool does not depend on how many people take part.
+The team sets aside a fixed share of the mainnet supply for the testnet contributors. Planned size: **7 % of the maximum mainnet supply**, shared
+by **five public testnets**, with a larger part for the later ones (0.7 %, 1.05 %, 1.4 %, 1.75 % and 2.1 %). The public testnet that opens on
+23 October 2026 is the first: its pool is **0.7 % of the maximum supply**, shared between its eligible addresses in proportion to their
+points (section 3). The team commits to these shares. With the maximum supply planned for the mainnet, 56,064,000 VRL (docs/04 section 4), this pool is
+392,448 VRL. The durations in this document (early period, active days) are counted in days because a testnet is short; if the schedule changes, the team announces the new values before they
+apply. The mainnet comes after the last of the public testnets. The size of a pool does not depend on how many people take part.
 
 ## 3. How points are counted
 
@@ -53,7 +57,7 @@ All of the following:
 5. **One participant per person.** You may use several machines, but not several identities to receive more than your share. Addresses that
    look like one person's are reviewed by hand.
 6. **Legal conditions:** you are of legal age in your country, you are not in a country or on a list that the team has to exclude by law
-   (the list is published before the registration opens), and you accept these terms.
+   (the list is published before the final snapshot; registering earlier does not guarantee eligibility), and you accept these terms.
 
 The team may exclude an address that breaks these rules, and publishes the address and the reason.
 
@@ -92,7 +96,7 @@ the mail. A registration sent twice counts once; a contact that registers severa
 - A **final snapshot** is taken when the testnet ends: the team publishes the blocks, the script, the full leaderboard and the list of excluded
   addresses with reasons. There are **14 days** to contest a result before it becomes final.
 - The top of the ranking is reviewed by hand before anything is paid.
-- **Distribution at the mainnet launch**, as a plan: a first part (planned 25 %) at the launch, the rest (planned 75 %) spread over 6 to 12
+- **Distribution at the mainnet launch**: the allocation is committed; its release is planned as a first part (25 %) at the launch, the rest (planned 75 %) spread over 6 to 12
   months, which rewards people who stay and avoids an immediate sell-off. The mainnet does not yet have an on-chain vesting mechanism: until it
   does, the later parts are released by the team in tranches, and the team will say which mechanism is used before the first payment.
 - The leaderboard data is kept outside the chain, because the testnet can be reset; the published snapshot is what counts.

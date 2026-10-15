@@ -572,7 +572,22 @@ wins    if  first 8 bytes of jackpot, read big-endian,  &lt;  target</code></div
       <tr><td>7 onwards</td><td class="num">0.5 (tail)</td><td class="num">525,600 each year</td><td class="num">no cap</td></tr>
     </tbody>
   </table></div>
-  <p class="tbl-cap">Units, before any genesis allocation. The supply is not capped: the tail keeps a small permanent issuance to pay for security.</p>
+  <p class="tbl-cap">Units, before any genesis allocation. This is the schedule of the public testnet, as built: it has a tail, so it is not capped. Testnet tokens have no value.</p>
+
+  <div class="callout">
+    <span class="title">Mainnet plan: the supply is capped</span>
+    <p>The tail exists only on the testnet. For the mainnet the team plans to remove it: the reward keeps halving every year until it reaches zero (in year 31), and the number of VRL can never exceed <strong>56,064,000</strong>. This is a plan, not yet implemented: the lock described below needs new code, and the figures may change.</p>
+  </div>
+  <div class="tbl-wrap"><table class="tbl keep">
+    <thead><tr><th>Share</th><th class="num">Of the maximum</th><th class="num">VRL</th><th>How it is created</th></tr></thead>
+    <tbody>
+      <tr><td>Mining</td><td class="num">75 %</td><td class="num">42,048,000</td><td>Block by block, 100 % of every block to the miner</td></tr>
+      <tr><td>Team and foundation</td><td class="num">10 %</td><td class="num">5,606,400</td><td>At genesis, public; 12-month cliff, then linear over 36 months</td></tr>
+      <tr><td>Ecosystem and grants</td><td class="num">8 %</td><td class="num">4,485,120</td><td>At genesis, public; released in tranches announced in advance</td></tr>
+      <tr><td>Testnet contributors</td><td class="num">7 %</td><td class="num">3,924,480</td><td>At genesis; shared by five public testnets (0.7, 1.05, 1.4, 1.75 and 2.1 %)</td></tr>
+    </tbody>
+  </table></div>
+  <p class="tbl-cap">Half of the mined supply is issued in the first year, so early miners hold a large share. 10 % of every job escrow is burned, so the real supply is lower than the maximum. After year 5 a block pays 1.25 units or less: miners then live increasingly on job fees, and security depends on real demand.</p>
 
   <h3><span class="n">10.2</span>Who pays whom</h3>
   <ul>
@@ -674,7 +689,7 @@ wins    if  first 8 bytes of jackpot, read big-endian,  &lt;  target</code></div
       <div class="role"><div class="who">Research</div><div class="do"><strong>Considerably better models, and better economics.</strong> The current models are a first generation; larger and more accurate ones are planned through per-channel quantisation, longer text and a key-value cache, several sequences per job, an on-chain model registry, an adaptive escrow floor, a fee schedule per byte, confidentiality, and a faster kernel.</div></div>
     </div>
   </div>
-  <p>A mainnet should exist only if the security properties above have been demonstrated and reviewed. There is no date for it, and the testnet chain can be reset at any time. Miners who help secure the public testnet are planned to receive Vearl tokens on mainnet as a thank-you; this is an intention, not a guarantee or an offer, and the rules and amounts will be announced.</p>
+  <p>A mainnet should exist only if the security properties above have been demonstrated and reviewed. There is no date for it, and the testnet chain can be reset at any time. Miners who help secure the public testnet receive Vearl tokens on mainnet as a thank-you: the team commits 7 % of the maximum mainnet supply to the contributors of five public testnets (docs/19). No mainnet date, price or value is promised.</p>
   <div class="paper-end">
     <p><strong>Feedback.</strong> This is a living document (draft 0.1). Where it differs from the behaviour of the software, the software on the testnet is the reference, and we want to hear about it. Corrections to numbers and claims are welcome, especially from reviewers with a security or distributed-systems background.</p>
     <p>Nothing in this paper is an offer to sell anything or investment advice. Testnet tokens have no value.</p>
@@ -695,7 +710,7 @@ wins    if  first 8 bytes of jackpot, read big-endian,  &lt;  target</code></div
       <tr><td>Difficulty rule (<em>genesis</em>)</td><td class="m">ASERT, halflife 900 s</td><td>LWMA-1, EMA and fixed also exist</td></tr>
       <tr><td>Future timestamp tolerance</td><td class="m">60 s</td><td>Local rule</td></tr>
       <tr><td>Block limits</td><td class="m">256 transactions, 4 MiB</td><td>Consensus</td></tr>
-      <tr><td>Initial reward, halving, tail</td><td class="m">20 · 1,051,200 blocks · 0.5</td><td>Units</td></tr>
+      <tr><td>Initial reward, halving, tail</td><td class="m">20 · 1,051,200 blocks · 0.5</td><td>Units; testnet. Mainnet plan: tail 0, capped</td></tr>
       <tr><td>Unit</td><td class="m">10<sup>8</sup> base units</td><td></td></tr>
       <tr><td>Job burn, worker bond</td><td class="m">10 %, 10 %</td><td>Provisional</td></tr>
       <tr><td>Minimum escrow</td><td class="m">1 unit</td><td>Provisional; to be made adaptive</td></tr>

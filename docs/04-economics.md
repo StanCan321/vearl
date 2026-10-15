@@ -39,9 +39,26 @@ Cost for an attacker to rent as much power as the honest miners (≈ 50 %) for `
 
 **Consequence**: at launch, the security budget (emission × price) is **very low**: $10,000 would only be safe after more than 13 h of confirmations at $0.10. This is the classic problem of young PoW chains, not specific to VEARL. A testnet has no value to protect; **a mainnet should only accept amounts below the attack cost over the confirmation time**, and no parameter choice here creates security without an economic value behind the token.
 
-## 4. Emission and inflation `[SIM]` (provisional parameters)
+## 4. Emission and supply `[SIM]` (testnet schedule in force; mainnet plan decided 2026-10-15)
 
-`R0 = 20` VRL/block, annual halving, floor 0.5 VRL/block: 21.0 M issued in the 1st year (1,051,200 blocks × 20), 10.5 M in the 2nd, supply ≈ 41.4 M after 6 years (figures recomputed from the constants, 30 s blocks); inflation (year's emission / supply at the start of the year) 50 % (year 2) → 3.3 % (year 5) → ≈ 1.3 %/year with the floor (year 7, uncapped supply). A choice to revisit: a gentler curve reduces the concentration of supply among the first miners; no data here allows a decision.
+**Testnet (what the code does today).** `R0 = 20` VRL/block, annual halving (1,051,200 blocks of 30 s), floor 0.5 VRL/block: 21.0 M issued in the 1st year, 10.5 M in the 2nd, 41.4 M after 6 years, then 0.525 M a year with no end (uncapped). Testnet tokens have no value; this schedule is only there to exercise the mechanisms. It is not changed for the public testnet.
+
+**Mainnet plan (a decision of the team, not yet in the code; subject to the legal review of docs/19).** The supply is **capped**:
+
+| | |
+|---|---|
+| maximum supply | **56,064,000 VRL**, never more; burned VRL (10 % of every job escrow, half of every slashed bond) make the real supply lower |
+| mining | `R0 = 20`, halving every 1,051,200 blocks, **no tail**: 42,048,000 VRL in total (the integer halving ends after 31 years; the code would issue 42,047,999.86 VRL), **100 % of every block to the miner** = 75 % of the maximum supply |
+| genesis (25 %, created once in the mainnet genesis block, public, locked) | team & foundation 10 % = 5,606,400, **12-month cliff, then linear over 36 months**; ecosystem & grants 8 % = 4,485,120 (partnerships, grants, job credits, audits, bounties), released in public tranches announced in advance; testnet contributors 7 % = 3,924,480 |
+| testnet contributors | shared by **5 public testnets**: 0.7 / 1.05 / 1.4 / 1.75 / 2.1 % of the maximum supply = 392,448 / 588,672 / 784,896 / 981,120 / 1,177,344 VRL; the public testnet of 23 October 2026 is the first |
+
+Mined supply by the end of each year (units: VRL): 21.0 M (50 %), 31.5 M (75 %), 36.8 M (87.5 %), 39.4 M, 40.7 M, 41.4 M, 41.7 M, 41.9 M, 42.0 M after year 9 (99.8 %). Reproducible with `docs/tokenomics/make_tokenomics.py` (figures, JSON and the infographic).
+
+Consequences to keep in mind (they are the price of a cap):
+1. **Concentration.** Half of the mined supply is issued in the first year and three quarters in two years, so the early miners hold a large share. A gentler curve (a longer halving period) was considered and set aside.
+2. **Security budget.** After year 5 a block pays 1.25 VRL or less, after year 10 less than 0.04: miners will live on job fees, so security then depends on real demand (§3, §6). With a tail (the old schedule) they would always be paid; with a cap they are not. This is a conscious trade-off, not a free lunch.
+3. **No on-chain support yet** for the genesis lock (cliff and linear release) and for the mainnet genesis with several allocations: both have to be built and tested before any mainnet. The block reward needs only one change: the tail constant becomes 0.
+4. The 7 % for testnet contributors replaces the earlier plan of 5 % for one testnet (docs/19).
 
 ## 5. Difficulty: the flaw found and the fix `[SIM] [IMPL]`
 
@@ -72,7 +89,7 @@ A drop of 80 % in the price over 10 days, with GPUs leaving at 20 %/day of the g
 | burn at job creation | 10 % | keep as long as it serves to **bound the rebate**; do not present it as revenue |
 | worker bond | 10 % of net escrow | keep; capital cost negligible (locked ≥ 5 min) |
 | escrow floor `MIN_ESCROW` (fixed 1 VRL) | fixed in VRL | **badly specified**: a fixed token price makes no sense against a GEMM at 10⁻⁷ $; it only serves to discourage job spam. To be replaced by an **adaptive** floor (fee market, EIP-1559 style, or a multiple of the median of recent escrows) `[PLAN]` |
-| emission | 20 VRL, annual halving, floor 0.5 | acceptable for a testnet; **to be decided with market data** |
+| emission | testnet: 20 VRL, annual halving, floor 0.5 · **mainnet plan: capped at 56,064,000 VRL, same halving, no floor** (§4) | testnet unchanged; mainnet decided 2026-10-15, to be revalidated with market data and the legal review |
 | challenge window / answer delay | 300 s / 120 s | consistent with the 60 s clock drift; never below |
 
 ## 8. What is not modelled
