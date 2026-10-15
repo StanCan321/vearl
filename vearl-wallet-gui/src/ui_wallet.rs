@@ -81,7 +81,7 @@ fn sidebar(ui: &mut Ui, logo: &egui::TextureHandle, s: &mut Session, cmds: &mut 
     ui.horizontal(|ui| {
         ui.add_space(24.0);
         t::chip(ui, "Testnet", t::LAV);
-        if demo {
+        if show_demo_chip(demo) {
             t::chip(ui, "Demo data", t::ROSE);
         }
     });
@@ -553,7 +553,7 @@ fn rewards(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>) {
             });
         });
         ui.add_space(10.0);
-        t::body(ui, "Miners who help secure the public testnet are planned to receive Vearl tokens on mainnet as a thank-you. This is a plan, not a guarantee, and testnet tokens have no value. The rules are in docs/19 of the repository.");
+        t::body(ui, "Miners who help secure the public testnet receive Vearl tokens on mainnet as a thank-you: the team commits 7 % of the maximum supply to the contributors of five public testnets. Testnet tokens have no value, and no price or value is promised. The rules are in docs/19 of the repository.");
         ui.add_space(8.0);
         if t::link(ui, "Read the rules").clicked() {
             cmds.push(Cmd::Link("https://github.com/vearl-verified-compute/vearl/blob/main/docs/19-testnet-rewards.md".into()));

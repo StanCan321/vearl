@@ -60,7 +60,7 @@ pub fn start(ui: &mut Ui, a: &mut App) {
             reveal(ui, t0, 0.0, |ui| {
                 ui.horizontal(|ui| {
                     brand(ui, logo, 36.0);
-                    if demo {
+                    if show_demo_chip(demo) {
                         ui.add_space(8.0);
                         t::chip(ui, "Demo data", t::ROSE);
                     }
@@ -208,7 +208,7 @@ fn rail(ui: &mut Ui, rect: Rect, logo: &egui::TextureHandle, steps: &[&str], cur
     ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(rect.min + vec2(30.0, 30.0), vec2(rect.width() - 50.0, 40.0))), |ui| {
         ui.horizontal(|ui| {
             brand(ui, logo, 30.0);
-            if demo {
+            if show_demo_chip(demo) {
                 t::chip(ui, "Demo", t::ROSE);
             }
         });

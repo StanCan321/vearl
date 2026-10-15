@@ -21,6 +21,19 @@ pub const WORDS_VISIBLE_SECS: f64 = 90.0;
 /// A new password must have at least this many characters (the wallet file format accepts 8).
 pub const MIN_PASSWORD: usize = 10;
 
+/// Whether the "Demo data" tag is drawn: always in demo mode, except while the clip recorder of the design tool runs (the video
+/// says it in words).
+pub fn show_demo_chip(demo: bool) -> bool {
+    #[cfg(feature = "devshots")]
+    {
+        demo && !crate::record::RECORDING.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    #[cfg(not(feature = "devshots"))]
+    {
+        demo
+    }
+}
+
 // ------------------------------------------------------------------------------------------------ screens
 
 pub enum Screen {

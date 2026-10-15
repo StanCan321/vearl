@@ -11,6 +11,8 @@ mod core;
 mod demodata;
 #[cfg(feature = "devshots")]
 mod demo;
+#[cfg(feature = "devshots")]
+mod record;
 #[cfg(test)]
 mod e2e;
 #[cfg(test)]
@@ -32,9 +34,18 @@ struct Shell {
     /// When the last frame ended: frames are never closer than about 15 ms (a graphics driver that ignores the display refresh would
     /// otherwise make the window redraw as fast as it can while something moves).
     last_frame: std::time::Instant,
+    #[cfg(feature = "devshots")]
+    rec: Option<record::Recorder>,
 }
 
 impl eframe::App for Shell {
+    #[cfg(feature = "devshots")]
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if let Some(r) = &mut self.rec {
+            r.hook(raw);
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         if !self.styled {
             platform::style_window(frame);
@@ -54,6 +65,10 @@ impl eframe::App for Shell {
         }
         #[cfg(feature = "devshots")]
         demo::drive(&mut self.app, ui.ctx());
+        #[cfg(feature = "devshots")]
+        if let Some(r) = &mut self.rec {
+            r.drive(&mut self.app, ui.ctx());
+        }
         draw(&mut self.app, ui);
         let min = std::time::Duration::from_millis(std::env::var("VEARL_GUI_FRAME_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(15));
         let el = self.last_frame.elapsed();
@@ -132,7 +147,14 @@ fn main() -> eframe::Result {
             }
             #[cfg(feature = "devshots")]
             demo::init(&mut app);
-            Ok(Box::new(Shell { app, styled: false, capture_hidden: false, last_frame: std::time::Instant::now() }))
+            Ok(Box::new(Shell {
+                app,
+                styled: false,
+                capture_hidden: false,
+                last_frame: std::time::Instant::now(),
+                #[cfg(feature = "devshots")]
+                rec: record::Recorder::from_env(),
+            }))
         }),
     )
 }
