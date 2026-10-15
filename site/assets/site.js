@@ -358,6 +358,32 @@
     }
   }
 
+  /* ---------------------------------------------------------------- the launch film: opens over the page when asked, with its sound; never by itself.
+     Without dialog support (or without this script) the button is a plain link to the film. */
+  const filmBtn = $('#film-open'), film = $('#film'), fv = $('#film-video');
+  if (filmBtn && film && fv && typeof film.showModal === 'function') {
+    // the film stops with its window, whatever closes it (the button, a click outside, Escape); not left to the 'close' event alone,
+    // which some embedded browsers do not send
+    const stop = () => { fv.pause(); filmBtn.focus(); };
+    const close = () => { stop(); if (film.open) film.close(); };
+    film.addEventListener('cancel', stop);
+    new MutationObserver(() => { if (!film.open && !fv.paused) stop(); }).observe(film, { attributes: true, attributeFilter: ['open'] });
+    filmBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (!fv.getAttribute('src')) {
+        // 1080p on large screens, 720p on phones and when the visitor asked to save data
+        const px = Math.max(screen.width, screen.height) * (window.devicePixelRatio || 1);
+        const save = navigator.connection && navigator.connection.saveData;
+        fv.src = px > 1500 && !save ? fv.dataset.hd : fv.dataset.sd;
+      }
+      film.showModal();
+      const p = fv.play(); if (p && p.catch) p.catch(() => {});
+    });
+    $('#film-close').addEventListener('click', close);
+    film.addEventListener('click', (e) => { if (e.target === film) close(); });   // a click outside the film
+    film.addEventListener('close', () => { if (!fv.paused) stop(); });
+  }
+
   /* ---------------------------------------------------------------- hero feed: replay of a recorded testnet run */
   // Every item below comes from runs verified on the testnet: the 32 CIFAR-10 test images classified by ResNet-20
   // (30 correct; the thumbnails are rebuilt from the model's own input tensors), the 8 sentences embedded by MiniLM-L6

@@ -26,3 +26,6 @@ brand/render/
 *.pdb
 *.pw
 deploy/**/*.password
+
+# the launch film of the home page: 25-50 MB each, published on the site only (deploy/deploy-site.sh), not in the repository
+site/assets/film/*.mp4

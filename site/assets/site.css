@@ -155,6 +155,50 @@ em.serif, .serif { font-family: var(--serif); font-style: italic; font-weight: 4
 }
 @media (max-width: 420px) { .hero .btn { width: 100%; } }
 
+/* ------------------------------------------------------------------ the launch film: a button in the hero, the film over the page (never by itself) */
+.film-cta { margin-top: 18px; }
+.film-btn {
+  display: inline-flex; align-items: center; gap: 14px; padding: 6px 20px 6px 6px; border: 1px solid var(--line-2); text-align: left;
+  background: rgba(16, 19, 26, .72); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); transition: border-color .2s, background .2s;
+}
+.film-btn:hover { border-color: var(--accent); background: rgba(16, 19, 26, .9); }
+.film-thumb { position: relative; flex: none; width: 96px; height: 54px; overflow: hidden; border: 1px solid var(--line); }
+.film-thumb img { width: 100%; height: 100%; object-fit: cover; transition: transform .5s; }
+.film-btn:hover .film-thumb img { transform: scale(1.07); }
+.film-play { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(7, 8, 11, .22); }
+.film-play::before { content: ""; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 18px rgba(159, 240, 226, .45); transition: transform .2s; }
+.film-play::after { content: ""; position: absolute; left: 50%; top: 50%; margin: -5.5px 0 0 -3px; border-left: 10px solid var(--accent-ink); border-top: 5.5px solid transparent; border-bottom: 5.5px solid transparent; }
+.film-btn:hover .film-play::before { transform: scale(1.1); }
+.film-txt { display: flex; flex-direction: column; gap: 4px; }
+.film-t { font: 600 17px/1.1 var(--sans); letter-spacing: -.01em; color: var(--ink); }
+.film-d { font: 500 11px/1.2 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--mute); }
+@media (max-width: 960px) {
+  /* on a phone the button comes right under the headline, so that it is on the first screen */
+  .hero-copy { display: flex; flex-direction: column; }
+  .hero .lede, .hero .ctas, .hero-note, .hero .meta { order: 2; }
+  .film-cta { order: 1; margin: 0 0 26px; }
+}
+dialog.film {
+  margin: auto; padding: 0; border: 0; background: transparent; color: var(--ink); overflow: visible;
+  width: min(1200px, 92vw, calc((100vh - 170px) * 16 / 9)); max-width: none; max-height: none;
+}
+dialog.film::backdrop { background: rgba(4, 5, 7, .9); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.film-box { position: relative; }
+.film-box video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: #000; border: 1px solid var(--line-2); }
+.film-close {
+  position: absolute; right: 0; top: -56px; width: 44px; height: 44px; border: 1px solid var(--line-2); background: rgba(7, 8, 11, .6);
+  font: 400 24px/1 var(--sans); cursor: pointer; transition: border-color .2s, color .2s;
+}
+.film-close:hover { border-color: var(--accent); color: var(--accent); }
+.film-credit { margin-top: 14px; font: 500 11px/1.5 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+html:has(dialog.film[open]) { overflow: hidden; }
+@media (max-width: 600px) {
+  dialog.film { width: 100vw; }
+  .film-box video { border-left: 0; border-right: 0; }
+  .film-close { right: 12px; }
+  .film-credit { padding: 0 16px; }
+}
+
 /* ------------------------------------------------------------------ ticker */
 .ticker { position: absolute; z-index: 3; left: 0; right: 0; bottom: 0; height: 48px; border-top: 1px solid var(--line); background: rgba(7, 8, 11, .86); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); overflow: hidden; }
 .ticker-track { display: flex; width: max-content; height: 100%; animation: tick 60s linear infinite; }
