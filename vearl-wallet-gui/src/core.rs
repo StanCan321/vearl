@@ -11,7 +11,7 @@ use vearl_core::wallet::*;
 
 pub const SYMBOL: &str = "VRL";
 /// Used when no `network.json` sits next to the program: the seed nodes of the public testnet.
-pub const DEFAULT_NODES: [&str; 3] = ["seed.vearl.org:9000", "vearl.org:9000", "103.90.160.22:9000"];
+pub const DEFAULT_NODES: [&str; 3] = ["seed.vearl.org:9000", "vearl.org:9000", "103.89.12.219:9000"];
 pub const DEFAULT_EXPLORER: &str = "https://vearl.org";
 pub const FEE_DEFAULT: &str = "0.01";
 

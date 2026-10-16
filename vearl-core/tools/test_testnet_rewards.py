@@ -162,5 +162,30 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(len(res["rejected"]), 2)
 
 
+class FeeComplianceTests(unittest.TestCase):
+    """An address that uses the Quantus add-on without paying the development fee is not eligible (docs/17, docs/19)."""
+
+    def test_non_compliant_statuses_make_an_address_ineligible_and_say_why(self):
+        blocks = week_of_blocks("a", 0, 5) + week_of_blocks("b", 0, 5) + week_of_blocks("c", 0, 5) + week_of_blocks("d", 0, 5)
+        status = {"a": "ok", "b": "no_fee", "c": "wrong_fee_dest", "d": "warming_up"}
+        r = tr.score(blocks, START, P, fee_status=status)
+        rows = {m["address"]: m for m in r["miners"]}
+        self.assertTrue(rows["a"]["eligible"] and rows["d"]["eligible"], "paying, or too young to be judged: eligible")
+        for x in "bc":
+            self.assertFalse(rows[x]["eligible"])
+            self.assertTrue(any("development fee" in why for why in rows[x]["reasons"]), rows[x]["reasons"])
+        self.assertEqual(rows["b"]["points"], rows["a"]["points"], "the points are still counted and shown, only the eligibility changes")
+
+    def test_every_status_of_the_auditor_that_breaks_the_rule_is_known_here(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "deploy", "feeaudit"))
+        import feeaudit
+        self.assertEqual(set(tr.FEE_NONCOMPLIANT), set(feeaudit.NONCOMPLIANT))
+
+    def test_no_compliance_file_changes_nothing(self):
+        blocks = week_of_blocks("a", 0, 5)
+        self.assertTrue(tr.score(blocks, START, P)["miners"][0]["eligible"])
+        self.assertTrue(tr.score(blocks, START, P, fee_status={})["miners"][0]["eligible"])
+
+
 if __name__ == "__main__":
     unittest.main()

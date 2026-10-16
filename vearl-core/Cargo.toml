@@ -17,6 +17,7 @@ bech32 = "0.11"
 rpassword = "7"
 base64 = "0.22"
 blake3 = "1"
+sha2 = "0.10" # SHA-256 of the pool points documents (docs/16 section 13), also available to the Python tools
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 serde = { version = "1", features = ["derive"] }
 bincode = "1.3"
@@ -33,6 +34,9 @@ path = "src/bin/devnet.rs"
 
 [profile.release]
 opt-level = 3
+
+[build-dependencies]
+blake3 = "1"
 
 [features]
 default = ["mail"]
@@ -126,6 +130,10 @@ path = "src/bin/pool.rs"
 [[bin]]
 name = "vearl-poolminer"
 path = "src/bin/poolminer.rs"
+
+[[bin]]
+name = "vearl-pool-audit"
+path = "src/bin/poolaudit.rs"
 
 [[test]]
 name = "pool"

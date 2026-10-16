@@ -8,11 +8,14 @@ about `fee_pct` percent of the Quantus work of the operator's worker `vrl-<id>` 
     feeaudit.py --beacons http://127.0.0.1:8545/api/fee/beacons --out report.json --public compliance.json --state state.json
 
 Statuses: ok, warming_up (the fee miner only starts after ~80 s of Quantus time and the pool averages over hours), low, no_fee (violation),
-wrong_fee_pct (the beacon itself declares another fee), unofficial_build (hashes not in --known), not_mining_quantus, offline, unverifiable.
-The public file lists only Vearl addresses and statuses (never Quantus addresses). What to DO with the result (listing, refusing project
-services such as the faucet or the free compute gateway) is a policy decision of the project: this tool only measures.
+wrong_fee_pct (the beacon itself declares another fee), wrong_fee_dest (the beacon says the fee miner mines to another address),
+low_declared_split (the scheduler itself declares that it gave the fee miner far less than the announced share), unofficial_build (hashes not in
+--known), not_mining_quantus, offline, unverifiable. NONCOMPLIANT lists the statuses that break the rule of the add-on.
+The public file lists only Vearl addresses and statuses (never Quantus addresses). The statuses are consumed by testnet_rewards.py
+(--fee-compliance): an address that uses the add-on without the fee is not eligible for the rewards (docs/17 and docs/19).
 """
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -21,10 +24,16 @@ import urllib.request
 DEV_ADDRESS = "qzm7tR2aEJEdMFajwDspjiWefz2F4iDzsys32gE1DK8Dxc59P"
 POOL_API = "https://quanpool.com/api/miner/mainnet"
 EXPECTED_FEE_PCT = 10
+DEV_DIGEST = hashlib.sha256(DEV_ADDRESS.encode()).hexdigest()   # what a beacon says about the address of its fee miner
 GRACE_S = 3 * 3600          # a new beacon is not judged before 3 hours
 ACTIVE_S = 2 * 3600         # a beacon older than this means the miner is offline
-OK_RATIO = 0.5              # fee share >= 50 % of the announced fee (5 % of the Quantus work for a 10 % fee) passes
-LOW_RATIO = 0.2
+# An honest miner pays about 8 to 10 % of its Quantus work (measured on a real GPU: the slices lose a few seconds in reconnecting to the pool).
+OK_RATIO = 0.65             # fee share >= 65 % of the announced fee (6.5 % of the Quantus work for a 10 % fee) passes
+LOW_RATIO = 0.3
+DECLARED_RATIO = 0.6        # the scheduler's own accounting must show at least 60 % of the announced fee once it has run for 20 minutes
+DECLARED_MIN_MS = 20 * 60 * 1000
+# statuses that break the rule of the add-on (the others are unknown, young or not about the fee)
+NONCOMPLIANT = {"no_fee", "low", "wrong_fee_pct", "wrong_fee_dest", "low_declared_split", "unofficial_build"}
 
 
 def get_json(url, timeout=25):
@@ -42,13 +51,21 @@ def worker_rate(w):
     return 0.0
 
 
-def classify(b, user_workers, fee_workers, first_seen, now, known=None, expected_fee=EXPECTED_FEE_PCT):
+def classify(b, user_workers, fee_workers, first_seen, now, known=None, expected_fee=EXPECTED_FEE_PCT, dev_digest=DEV_DIGEST):
     """One beacon -> (status, detail). `user_workers`/`fee_workers` are lists of pool workers, or None when the pool could not be read."""
     wid = b["worker_id"]
     if b.get("age_s", 0) > ACTIVE_S:
         return "offline", "no beacon for more than 2 hours"
     if b.get("fee_pct") != expected_fee:
         return "wrong_fee_pct", f"the miner declares a fee of {b.get('fee_pct')} % instead of {expected_fee} %"
+    if b.get("share_pct", 0) > 0 and "fee_dest" in b and b["fee_dest"] != dev_digest:
+        # beacons of builds before this field do not have it; a beacon that has it and does not name the development address is a violation
+        return "wrong_fee_dest", "the fee miner of this run is not configured with the development address" if b["fee_dest"] else "this run has no fee miner"
+    declared = None
+    if "fee_ms" in b and "quantus_ms" in b and b["fee_ms"] + b["quantus_ms"] >= DECLARED_MIN_MS:
+        declared = b["fee_ms"] / (b["fee_ms"] + b["quantus_ms"])
+        if declared < DECLARED_RATIO * expected_fee / 100.0:
+            return "low_declared_split", f"the scheduler gave the fee miner {declared * 100:.1f} % of the Quantus time (announced {expected_fee} %)"
     if known is not None and (b.get("node_hash") not in known.get("node", []) or (b.get("quantus_hash") not in known.get("quantus", []))):
         return "unofficial_build", "the hash of the node or of the Quantus miner is not an official release hash"
     if b.get("share_pct", 0) == 0:
@@ -65,6 +82,8 @@ def classify(b, user_workers, fee_workers, first_seen, now, known=None, expected
     ratio = fr / (fr + ur)
     expected = expected_fee / 100.0
     detail = f"fee share of the Quantus work {ratio * 100:.1f} % (announced {expected_fee} %)"
+    if declared is not None:
+        detail += f", declared by the scheduler {declared * 100:.1f} %"
     if fr <= 0:
         return ("warming_up", detail) if young else ("no_fee", detail + ": no fee worker on the development address")
     if ratio >= OK_RATIO * expected:
@@ -83,6 +102,7 @@ def main():
     ap.add_argument("--state", default="feeaudit-state.json", help="first-seen times (kept between runs)")
     ap.add_argument("--out", default="fee-report.json")
     ap.add_argument("--public", default="compliance.json")
+    ap.add_argument("--stats", default="fee-stats.json", help="public counts of compliant / not compliant miners (no address)")
     ap.add_argument("--delay", type=float, default=0.4, help="seconds between pool API requests")
     a = ap.parse_args()
     now = int(time.time())
@@ -119,8 +139,12 @@ def main():
     json.dump(state, open(a.state, "w"))
     json.dump({"generated": now, "counts": counts, "miners": rows}, open(a.out, "w"), indent=1)
     json.dump({"generated": now, "counts": counts, "miners": {r["vearl_address"]: r["status"] for r in rows}}, open(a.public, "w"), indent=1)
+    judged = [r for r in rows if r["status"] in NONCOMPLIANT or r["status"] == "ok"]
+    stats = {"generated": now, "miners_with_the_addon": len(rows), "judged": len(judged), "compliant": sum(1 for r in judged if r["status"] == "ok"),
+             "not_compliant": sum(1 for r in judged if r["status"] in NONCOMPLIANT), "by_status": counts}
+    json.dump(stats, open(a.stats, "w"), indent=1)   # public: only counts
     print(json.dumps({"generated": now, "beacons": len(rows), "counts": counts}))
-    return 1 if counts.get("no_fee") or counts.get("wrong_fee_pct") or counts.get("unofficial_build") else 0
+    return 1 if any(r["status"] in NONCOMPLIANT for r in rows) else 0
 
 
 if __name__ == "__main__":

@@ -1,0 +1,97 @@
+{
+  "blocks": [
+    {
+      "hash": "d36e164339914849048d46ba6cc5f845b3d02851b58ddeac41ffd4791a95d126",
+      "height": 63,
+      "timestamp": 1792178703
+    },
+    {
+      "hash": "62c1cfa7aef9f628bbd92db966b6341a61d83cd2055c59cbf82aad31575ee899",
+      "height": 64,
+      "timestamp": 1792178704
+    },
+    {
+      "hash": "99b3537c3b16589a34ffc6963564296574f79e97475b06d91afb3a95324b0da0",
+      "height": 65,
+      "timestamp": 1792178705
+    },
+    {
+      "hash": "629df7fc17505c260c655d18409709e2619e34ed0e2d6d763194516adeba24c1",
+      "height": 66,
+      "timestamp": 1792178706
+    }
+  ],
+  "end": 1792178652,
+  "epoch": 448044662,
+  "epoch_secs": 4,
+  "fee_bps": 200,
+  "genesis": "2cc0b03c50ea8d75de7aa1c70c99a2cfafab78ceaa4538037486290e60914e35",
+  "jobs": [
+    {
+      "height": 62,
+      "native_epoch": 0,
+      "prev": "765924ef5152d6bc3bef57c97c81432651f34cc4ee8b638ea18fd3a138083b5d",
+      "target": "000fffffffffffff",
+      "timestamp": 1792178702,
+      "tx_root": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "height": 63,
+      "native_epoch": 0,
+      "prev": "98f7f8302d1dcf32b477f1dbeaf77f2dd8e0553f1acd46e38cdd14c937fea757",
+      "target": "000fffffffffffff",
+      "timestamp": 1792178703,
+      "tx_root": "051493ffb90e8efbb549659cbf014cb6345d94baa00c4f7423fc0688594432bc"
+    },
+    {
+      "height": 64,
+      "native_epoch": 0,
+      "prev": "d36e164339914849048d46ba6cc5f845b3d02851b58ddeac41ffd4791a95d126",
+      "target": "000fffffffffffff",
+      "timestamp": 1792178704,
+      "tx_root": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "height": 65,
+      "native_epoch": 0,
+      "prev": "62c1cfa7aef9f628bbd92db966b6341a61d83cd2055c59cbf82aad31575ee899",
+      "target": "000fffffffffffff",
+      "timestamp": 1792178705,
+      "tx_root": "41bf3e53eae56f292e80701cbf599d6d9b241b877f4232d8e118636953429853"
+    },
+    {
+      "height": 66,
+      "native_epoch": 0,
+      "prev": "99b3537c3b16589a34ffc6963564296574f79e97475b06d91afb3a95324b0da0",
+      "target": "000fffffffffffff",
+      "timestamp": 1792178706,
+      "tx_root": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "miners": [
+    {
+      "address": "vrl1pdgn4kd5jfqptjsfqtks0yzy6wk9m0kzxphsd9yvzrdgadhrnuksqx0ytu",
+      "shares": 115,
+      "v2_shares": 115,
+      "v2_weight": "505775348776960",
+      "weight": "505775348776960"
+    },
+    {
+      "address": "vrl1v6l8uvev0fznxv4an5987lds2h6utmc6q6k6vmvckw0mdqgvguaq3hyjll",
+      "shares": 111,
+      "v2_shares": 111,
+      "v2_weight": "488183162732544",
+      "weight": "488183162732544"
+    }
+  ],
+  "pool": "vrl1jllu3q7gp0h8ydl0jhvmndcr6jkk8es2y8nqtpnks2m4hzelgvps4z6ltu",
+  "pool_key": "97ffc883c80bee7237ef95d9b9b703d4ad63e60a21e605867682b75b8b3f4303",
+  "prev": "17f473f7f8ac6cfc2227f451eb5667014024bdafb7b8f7f235b6b4237730f6e6",
+  "proto": "vpool-points/1",
+  "shares_count": 226,
+  "shares_root": "e11bf08bd59b85259c3fe3be05871185806afcb43dc35f2eb46dc9c8968400fc",
+  "sig": "d227e6a062707d589ead1f02393ee5ed0eeefc004019daeead086f40f41ab3340728ba877eb16d6865c0b600561e72d6538e8ab467f88e003287ded72c86bb04",
+  "start": 1792178648,
+  "total_shares": 226,
+  "total_weight": "993958511509504"
+}

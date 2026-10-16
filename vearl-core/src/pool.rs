@@ -1,4 +1,5 @@
-//! VEARL mining pool, `vpool/1` protocol (specification: docs/16-pool-protocol.md).
+//! VEARL mining pool, `vpool/1` and `vpool/2` protocols (specification: docs/16-pool-protocol.md). `vpool/2` adds the signed receipts and the
+//! hourly signed points ledger (section 13 of the specification, `poolpoints.rs`).
 //!
 //! The pool is the block "miner" (`header.miner` = pool key): it builds JOBS (parent, transactions, timestamp),
 //! hands each worker a disjoint `extra_nonce` range and a SHARE target (vardiff), verifies each share by
@@ -12,6 +13,7 @@ use crate::chain::*;
 use crate::crypto::*;
 use crate::httpmini::{self, Request, Response};
 use crate::net::{now_secs, select_txs, submit_block, submit_tx, Shared};
+use crate::poolpoints::*;
 use crate::state::*;
 use crate::types::*;
 use crate::wallet::{address_of, parse_address};
@@ -19,7 +21,7 @@ use crate::work::*;
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{IpAddr, Shutdown, TcpListener, TcpStream};
 use std::path::PathBuf;
@@ -28,14 +30,21 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// Original protocol: shares are credited for the PPLNS payouts, no receipts, no points.
 pub const PROTO: &str = "vpool/1";
+/// Adds the signed receipts and the hourly signed ledger that the testnet points are computed from (docs/16 section 13).
+pub const PROTO2: &str = "vpool/2";
 /// Maximum size of a JSON line received from a worker.
 pub const MAX_LINE: usize = 4096;
 /// The low 40 bits of the extra_nonce are the worker's counter; the high 24 bits are its SLOT.
 pub const NONCE_BITS: u32 = 40;
 pub const MAX_SLOTS: u32 = 1 << 24;
 const KEEP_JOBS: usize = 8;
-const STATE_VERSION: u32 = 1;
+/// Most shares in one answer of /api/points/shares/N (about 60 KiB of JSON per 500).
+const SHARES_PAGE: usize = 20_000;
+const STATE_VERSION: u32 = 2;
+/// 2026-10-23T16:00:00Z, the start of the first public testnet.
+pub const TESTNET_START: u64 = 1_792_771_200;
 
 // protocol error codes
 pub const E_STALE: i32 = 20;
@@ -156,6 +165,31 @@ pub struct Ledger {
     pub in_flight: Vec<InFlight>,
     pub pool_earned: u64,
     pub shares_accepted: u64,
+    /// Epochs (hours) whose points document is not published yet: every accepted share, the jobs, the blocks found.
+    pub epochs: BTreeMap<u64, EpochRec>,
+    /// (epoch, hash) of the last points document published: the next one commits to it.
+    pub last_doc: Option<(u64, Hash)>,
+}
+
+/// What the pool keeps about an epoch until it publishes its document (docs/16 section 13).
+#[derive(Default, Clone, Serialize, Deserialize)]
+pub struct EpochRec {
+    pub jobs: Vec<JobRec>,
+    pub records: Vec<ShareRec>,
+    /// (height, hash, header timestamp) of the blocks found with a job of this epoch
+    pub blocks: Vec<(u64, Hash, u64)>,
+    /// cumulative vpool/2 weight and shares of every address (the figures of the receipts)
+    pub cum: BTreeMap<u32, (u128, u64)>,
+}
+
+impl EpochRec {
+    fn job_index(&mut self, j: &JobRec) -> u32 {
+        if let Some(i) = self.jobs.iter().rposition(|x| x == j) {
+            return i as u32;
+        }
+        self.jobs.push(j.clone());
+        (self.jobs.len() - 1) as u32
+    }
 }
 
 impl Ledger {
@@ -221,6 +255,20 @@ impl Ledger {
         }
         out.retain(|(_, v)| *v > 0);
         out
+    }
+
+    /// Records an accepted share in the points ledger of epoch `ep`.
+    pub fn record_share(&mut self, ep: u64, a: u32, job: &JobRec, extra_nonce: u64, ti: u16, tj: u16, target: u64, v2: bool) {
+        let addr = self.addrs[a as usize];
+        let e = self.epochs.entry(ep).or_default();
+        let ji = e.job_index(job);
+        let rec = ShareRec { addr, job: ji, extra_nonce, ti, tj, target, v2 };
+        if v2 {
+            let c = e.cum.entry(a).or_default();
+            c.0 += rec.weight();
+            c.1 += 1;
+        }
+        e.records.push(rec);
     }
 
     pub fn credit_block(&mut self, i: usize) {
@@ -310,6 +358,21 @@ pub struct PoolConfig {
     pub stale_grace_secs: u64,
     pub data_dir: Option<PathBuf>,
     pub log: bool,
+    /// length of a points epoch in seconds (3600 on the public testnet: the rewards tools expect hours)
+    pub points_epoch_secs: u64,
+    /// seconds after the end of an epoch before its document is signed and published (late shares, last blocks)
+    pub points_grace_secs: u64,
+    /// seconds between two receipts sent to a vpool/2 miner
+    pub receipt_secs: u64,
+    /// start of the testnet (Unix time) and the scoring rule of the rewards program (docs/19): used to show a miner the points it earned
+    pub testnet_start: u64,
+    pub early_days: u64,
+    pub early_mult: f64,
+    pub useful_mult: f64,
+    /// the published leaderboard (`leaderboard.json` of `tools/testnet_rewards.py`), to show the official figure next to the provisional one
+    pub leaderboard_file: Option<PathBuf>,
+    /// most shares recorded in the points ledger of one epoch: beyond it the pool refuses shares (error 26) instead of growing without bound
+    pub max_epoch_shares: usize,
 }
 
 impl Default for PoolConfig {
@@ -332,6 +395,15 @@ impl Default for PoolConfig {
             stale_grace_secs: 4,
             data_dir: None,
             log: true,
+            points_epoch_secs: EPOCH_SECS,
+            points_grace_secs: 300,
+            receipt_secs: 60,
+            testnet_start: TESTNET_START,
+            early_days: 3,
+            early_mult: 1.25,
+            useful_mult: 1.5,
+            leaderboard_file: None,
+            max_epoch_shares: 3_000_000,
         }
     }
 }
@@ -376,6 +448,18 @@ struct Login {
     idx: u32,
     worker: String,
     agent: String,
+    /// speaks vpool/2: receives receipts, its shares count for the points
+    v2: bool,
+}
+
+/// What the pool remembers about a published epoch document (the index of /api/points/index).
+#[derive(Clone, Debug)]
+struct ClosedMeta {
+    doc_hash: String,
+    shares_root: String,
+    shares: u64,
+    blocks: u64,
+    miners: u64,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -409,6 +493,14 @@ struct Inner {
     last_save: Instant,
     last_payout: Instant,
     last_maint: Instant,
+    last_receipt: Instant,
+    /// published epochs (index); the documents and share lists are on disk, or in `mem_closed` when there is no data dir
+    closed: BTreeMap<u64, ClosedMeta>,
+    mem_closed: BTreeMap<u64, (Value, Vec<ShareRec>)>,
+    /// vpool/2 work of every address in each published epoch (to show a miner its points without reading the documents again)
+    ep_agg: BTreeMap<u64, HashMap<String, u128>>,
+    /// points of the pool's blocks per scoring day, valid for this chain tip
+    pot_cache: Option<(Hash, BTreeMap<u64, f64>)>,
 }
 
 pub struct Pool {
@@ -422,6 +514,10 @@ pub struct Pool {
     started: Instant,
     pub addr: Mutex<String>,
     pub http_addr: Mutex<Option<String>>,
+    /// last share list served over HTTP, with its Merkle tree (sampling requests come in bursts for the same epoch)
+    tree_cache: Mutex<Vec<(u64, Arc<Vec<ShareRec>>, Arc<MerkleTree>)>>,
+    /// the leaderboard file, read again when it changes
+    lb_cache: Mutex<Option<(std::time::SystemTime, Value)>>,
 }
 
 fn send_line(w: &Arc<Mutex<TcpStream>>, v: &Value) -> bool {
@@ -476,13 +572,21 @@ impl Pool {
                 last_save: now,
                 last_payout: now,
                 last_maint: now,
+                last_receipt: now,
+                closed: BTreeMap::new(),
+                mem_closed: BTreeMap::new(),
+                ep_agg: BTreeMap::new(),
+                pot_cache: None,
             }),
             stop: AtomicBool::new(false),
             next_conn: std::sync::atomic::AtomicU64::new(1),
             started: now,
             addr: Mutex::new(addr),
             http_addr: Mutex::new(None),
+            tree_cache: Mutex::new(Vec::new()),
+            lb_cache: Mutex::new(None),
         });
+        pool.load_closed_index();
         {
             let p = pool.clone();
             thread::spawn(move || {
@@ -708,6 +812,7 @@ impl Pool {
             (now.duration_since(g.last_payout) >= Duration::from_secs(self.cfg.payout_interval), now.duration_since(g.last_save) >= Duration::from_secs(30))
         };
         self.reconcile_payouts();
+        self.points_tick();
         if pay_due {
             self.inner.lock().unwrap().last_payout = Instant::now();
             self.run_payouts();
@@ -1031,9 +1136,11 @@ impl Pool {
     }
 
     fn m_login(&self, cid: u64, p: &Value) -> Result<Value, (i32, String)> {
-        if p.get("proto").and_then(|x| x.as_str()) != Some(PROTO) {
-            return Err(err(E_BAD_REQUEST, &format!("unsupported protocol (this pool speaks {PROTO})")));
-        }
+        let v2 = match p.get("proto").and_then(|x| x.as_str()) {
+            Some(PROTO) => false,
+            Some(PROTO2) => true,
+            _ => return Err(err(E_BAD_REQUEST, &format!("unsupported protocol (this pool speaks {PROTO2} and {PROTO})"))),
+        };
         let addr_s = p.get("address").and_then(|x| x.as_str()).ok_or_else(|| err(E_BAD_REQUEST, "address required"))?;
         let addr = parse_address(addr_s).map_err(|e| err(E_BAD_REQUEST, &e))?;
         if addr == self.pk {
@@ -1074,15 +1181,15 @@ impl Pool {
         s.target = target;
         s.prev_target = target;
         s.win_start = Instant::now();
-        s.login = Some(Login { idx, worker: worker.clone(), agent });
+        s.login = Some(Login { idx, worker: worker.clone(), agent, v2 });
         if self.cfg.log {
             eprintln!("[pool] connection {worker}@{} (slot {slot}, share target {})", &addr_s[..addr_s.len().min(12)], u64hex(target));
         }
         Ok(json!({
-            "proto": PROTO, "slot": slot, "share_target": u64hex(target), "pool_address": address_of(&self.pk),
+            "proto": if v2 { PROTO2 } else { PROTO }, "slot": slot, "share_target": u64hex(target), "pool_address": address_of(&self.pk),
             "fee_bps": self.cfg.fee_bps, "min_payout": self.cfg.min_payout, "payout_interval": self.cfg.payout_interval,
             "confirmations": self.cfg.confirmations, "pplns_n": self.cfg.pplns_n, "nonce_bits": NONCE_BITS,
-            "share_secs": self.cfg.share_secs,
+            "share_secs": self.cfg.share_secs, "points_epoch_secs": self.cfg.points_epoch_secs, "receipt_secs": self.cfg.receipt_secs,
         }))
     }
 
@@ -1115,12 +1222,16 @@ impl Pool {
     }
 
     fn m_stats(&self, cid: u64) -> Result<Value, (i32, String)> {
-        let g = self.inner.lock().unwrap();
-        let s = g.sess.get(&cid).ok_or_else(|| err(E_BAD_REQUEST, "gone"))?;
-        let l = s.login.as_ref().ok_or_else(|| err(E_UNAUTHORIZED, "login first"))?;
-        let bal = g.ledger.balances.get(&l.idx).copied().unwrap_or(0);
-        let paid = g.ledger.paid_total.get(&l.idx).copied().unwrap_or(0);
-        Ok(json!({"accepted": s.accepted, "rejected": s.rejected, "share_target": u64hex(s.target), "balance": bal, "paid": paid}))
+        let (mut v, addr) = {
+            let g = self.inner.lock().unwrap();
+            let s = g.sess.get(&cid).ok_or_else(|| err(E_BAD_REQUEST, "gone"))?;
+            let l = s.login.as_ref().ok_or_else(|| err(E_UNAUTHORIZED, "login first"))?;
+            let bal = g.ledger.balances.get(&l.idx).copied().unwrap_or(0);
+            let paid = g.ledger.paid_total.get(&l.idx).copied().unwrap_or(0);
+            (json!({"accepted": s.accepted, "rejected": s.rejected, "share_target": u64hex(s.target), "balance": bal, "paid": paid}), g.ledger.addrs[l.idx as usize])
+        };
+        v["points"] = self.points_json(&addr)["provisional"].clone();
+        Ok(v)
     }
 
     fn m_submit(&self, cid: u64, p: &Value) -> Result<Value, (i32, String)> {
@@ -1217,7 +1328,14 @@ impl Pool {
         let need = (share_weight(job.tpl.target) as f64 * self.cfg.pplns_n) as u128;
         {
             let mut g = self.inner.lock().unwrap();
+            let ep = now_secs() / self.cfg.points_epoch_secs.max(1);
+            if g.ledger.epochs.get(&ep).map_or(0, |e| e.records.len()) >= self.cfg.max_epoch_shares {
+                // the ledger of this hour is full: memory and the document stay bounded whatever a hostile client does
+                return Err(err(E_RATE, "the pool cannot take more shares this hour"));
+            }
             g.ledger.add_share(login.idx, w, need.saturating_mul(4).max(w));
+            let jrec = JobRec { prev: job.tpl.prev, height: job.tpl.height, timestamp: job.ts, tx_root: job.tx_root, target: job.tpl.target, native_epoch: job.tpl.height / EPOCH_LEN };
+            g.ledger.record_share(ep, login.idx, &jrec, en, ti as u16, tj as u16, credited, login.v2);
             g.dirty = true;
             if let Some(s) = g.sess.get_mut(&cid) {
                 s.accepted += 1;
@@ -1275,6 +1393,10 @@ impl Pool {
                         g.ledger.blocks.remove(i);
                     }
                 }
+                // documented in the epoch in which it was found (always still open), not in that of its header timestamp, which is the age of the
+                // job it was found with (a job can be a few minutes old)
+                let bep = now_secs() / self.cfg.points_epoch_secs.max(1);
+                g.ledger.epochs.entry(bep).or_default().blocks.push((job.tpl.height, hash, job.ts));
                 g.c.blocks_found += 1;
                 g.dirty = true;
                 drop(g);
@@ -1392,12 +1514,322 @@ impl Pool {
             "/api/stats" => Response::json(200, &self.stats_json()),
             "/api/blocks" => Response::json(200, &self.blocks_json()),
             "/api/payments" => Response::json(200, &self.payments_json()),
+            p if p.starts_with("/api/points/") => self.points_http(&p["/api/points/".len()..], &req.query),
             p if p.starts_with("/api/miner/") => match parse_address(&p["/api/miner/".len()..]) {
-                Ok(a) => Response::json(200, &self.miner_json(&a)),
+                Ok(a) => {
+                    let mut v = self.miner_json(&a);
+                    v["points"] = self.points_json(&a);
+                    Response::json(200, &v)
+                }
                 Err(e) => Response::error(400, &e),
             },
             _ => Response::error(404, "not found"),
         }
+    }
+}
+
+// ---------------------------------------------------------------- points ledger (vpool/2, docs/16 section 13)
+
+impl Pool {
+    fn points_dir(&self) -> Option<PathBuf> {
+        self.cfg.data_dir.as_ref().map(|d| d.join("points"))
+    }
+
+    /// Called every maintenance tick: receipts to the vpool/2 miners, and publication of the epochs that are over.
+    fn points_tick(&self) {
+        let secs = self.cfg.points_epoch_secs.max(1);
+        let now = now_secs();
+        let receipts_due = {
+            let mut g = self.inner.lock().unwrap();
+            if g.last_receipt.elapsed() >= Duration::from_secs(self.cfg.receipt_secs.max(1)) {
+                g.last_receipt = Instant::now();
+                true
+            } else {
+                false
+            }
+        };
+        if receipts_due {
+            self.send_receipts(now / secs);
+        }
+        let over: Vec<u64> = {
+            let g = self.inner.lock().unwrap();
+            g.ledger.epochs.keys().copied().filter(|e| (e + 1) * secs + self.cfg.points_grace_secs <= now).collect()
+        };
+        for e in over {
+            self.close_epoch(e);
+        }
+    }
+
+    /// Sends every connected vpool/2 miner its receipt: the pool's signed promise of its cumulative weight in epoch `ep`.
+    fn send_receipts(&self, ep: u64) {
+        let mut out: Vec<(Arc<Mutex<TcpStream>>, Value)> = vec![];
+        {
+            let g = self.inner.lock().unwrap();
+            let Some(er) = g.ledger.epochs.get(&ep) else { return };
+            let now = now_secs();
+            for s in g.sess.values() {
+                let Some(l) = s.login.as_ref().filter(|l| l.v2) else { continue };
+                let Some((w, n)) = er.cum.get(&l.idx) else { continue };
+                let addr = address_of(&g.ledger.addrs[l.idx as usize]);
+                out.push((s.writer.clone(), make_receipt(&self.sk, &self.sh.genesis_hash, &addr, ep, *w, *n, now)));
+            }
+        }
+        for (w, r) in out {
+            send_line(&w, &json!({"method": "receipt", "params": r}));
+        }
+    }
+
+    /// Signs and stores the document of a finished epoch, then forgets its details (they are in the document and the share list).
+    fn close_epoch(&self, e: u64) {
+        let (rec, prev) = {
+            let g = self.inner.lock().unwrap();
+            (g.ledger.epochs.get(&e).cloned(), g.ledger.last_doc)
+        };
+        let Some(rec) = rec else { return };
+        self.send_receipts(e); // final figures, before the epoch disappears
+        let prev_hash = prev.map(|(_, h)| h).unwrap_or(ZERO_HASH);
+        let data = EpochData { epoch: e, epoch_secs: self.cfg.points_epoch_secs.max(1), fee_bps: self.cfg.fee_bps, blocks: &rec.blocks, jobs: &rec.jobs, records: &rec.records };
+        let doc = build_doc(&self.sk, &self.sh.genesis_hash, &prev_hash, &data);
+        if let Err(m) = self.store_closed(e, &doc, &rec.records) {
+            self.log(&format!("cannot store the points document of epoch {e}: {m} (will retry)"));
+            return;
+        }
+        let dh = unhex32(&doc_hash(&doc)).unwrap_or(ZERO_HASH);
+        let meta = ClosedMeta {
+            doc_hash: doc_hash(&doc),
+            shares_root: doc["shares_root"].as_str().unwrap_or("").to_string(),
+            shares: rec.records.len() as u64,
+            blocks: rec.blocks.len() as u64,
+            miners: doc["miners"].as_array().map_or(0, |a| a.len() as u64),
+        };
+        let mut g = self.inner.lock().unwrap();
+        g.ledger.epochs.remove(&e);
+        g.ledger.last_doc = Some((e, dh));
+        g.ep_agg.insert(e, agg_of(&doc));
+        g.closed.insert(e, meta);
+        g.dirty = true;
+        drop(g);
+        self.log(&format!("points document of epoch {e} published ({} shares, {} block(s))", rec.records.len(), rec.blocks.len()));
+    }
+
+    fn store_closed(&self, e: u64, doc: &Value, recs: &[ShareRec]) -> Result<(), String> {
+        let Some(dir) = self.points_dir() else {
+            self.inner.lock().unwrap().mem_closed.insert(e, (doc.clone(), recs.to_vec()));
+            return Ok(());
+        };
+        std::fs::create_dir_all(&dir).map_err(|x| format!("{}: {x}", dir.display()))?;
+        let write = |name: String, bytes: Vec<u8>| -> Result<(), String> {
+            let path = dir.join(&name);
+            let tmp = dir.join(format!("{name}.tmp"));
+            std::fs::write(&tmp, bytes).map_err(|x| format!("{}: {x}", tmp.display()))?;
+            std::fs::rename(&tmp, &path).map_err(|x| format!("{}: {x}", path.display()))
+        };
+        write(format!("shares-{e}.bin"), bincode::serialize(recs).map_err(|x| x.to_string())?)?;
+        write(format!("epoch-{e}.json"), doc.to_string().into_bytes())?; // last: its presence means "published"
+        Ok(())
+    }
+
+    fn load_doc(&self, e: u64) -> Option<Value> {
+        match self.points_dir() {
+            Some(d) => serde_json::from_slice(&std::fs::read(d.join(format!("epoch-{e}.json"))).ok()?).ok(),
+            None => self.inner.lock().unwrap().mem_closed.get(&e).map(|(d, _)| d.clone()),
+        }
+    }
+
+    fn load_records(&self, e: u64) -> Option<Vec<ShareRec>> {
+        match self.points_dir() {
+            Some(d) => bincode::deserialize(&std::fs::read(d.join(format!("shares-{e}.bin"))).ok()?).ok(),
+            None => self.inner.lock().unwrap().mem_closed.get(&e).map(|(_, r)| r.clone()),
+        }
+    }
+
+    fn meta_of(doc: &Value) -> ClosedMeta {
+        ClosedMeta {
+            doc_hash: doc_hash(doc),
+            shares_root: doc["shares_root"].as_str().unwrap_or("").to_string(),
+            shares: doc["shares_count"].as_u64().unwrap_or(0),
+            blocks: doc["blocks"].as_array().map_or(0, |a| a.len() as u64),
+            miners: doc["miners"].as_array().map_or(0, |a| a.len() as u64),
+        }
+    }
+
+    /// At start: the documents already published are listed again from the disk.
+    fn load_closed_index(&self) {
+        let Some(dir) = self.points_dir() else { return };
+        let Ok(rd) = std::fs::read_dir(&dir) else { return };
+        let mut g = self.inner.lock().unwrap();
+        for f in rd.flatten() {
+            let name = f.file_name().to_string_lossy().to_string();
+            let Some(e) = name.strip_prefix("epoch-").and_then(|x| x.strip_suffix(".json")).and_then(|x| x.parse::<u64>().ok()) else { continue };
+            if let Some(doc) = std::fs::read(f.path()).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
+                g.ep_agg.insert(e, agg_of(&doc));
+                g.closed.insert(e, Self::meta_of(&doc));
+            }
+        }
+    }
+
+    fn points_http(&self, rest: &str, query: &str) -> Response {
+        let secs = self.cfg.points_epoch_secs.max(1);
+        let parts: Vec<&str> = rest.split('/').collect();
+        match parts.as_slice() {
+            ["index"] => {
+                let g = self.inner.lock().unwrap();
+                let epochs: Vec<Value> = g
+                    .closed
+                    .iter()
+                    .map(|(e, m)| json!({"epoch": e, "start": e * secs, "end": (e + 1) * secs, "doc_hash": m.doc_hash, "shares_root": m.shares_root, "shares": m.shares, "blocks": m.blocks, "miners": m.miners}))
+                    .collect();
+                Response::json(200, &json!({"proto": POINTS_PROTO, "pool": address_of(&self.pk), "pool_key": hex(&self.pk), "genesis": hex(&self.sh.genesis_hash),
+                    "epoch_secs": secs, "current_epoch": now_secs() / secs, "epochs": epochs}))
+            }
+            ["miner", a] => match parse_address(a) {
+                Ok(a) => Response::json(200, &self.points_json(&a)),
+                Err(e) => Response::error(400, &e),
+            },
+            ["epoch", e] => match e.parse::<u64>().ok().and_then(|e| self.load_doc(e)) {
+                Some(d) => Response::json(200, &d),
+                None => Response::error(404, "no such published epoch"),
+            },
+            // the complete list, in pages (`?from=N&limit=M`, at most SHARES_PAGE per answer): one answer is never larger than a few megabytes
+            ["shares", e] => match e.parse::<u64>().ok().and_then(|e| self.load_records(e)) {
+                Some(r) => {
+                    let q = |k: &str| query.split('&').find_map(|kv| kv.strip_prefix(&format!("{k}=")).and_then(|v| v.parse::<usize>().ok()));
+                    let from = q("from").unwrap_or(0).min(r.len());
+                    let limit = q("limit").unwrap_or(SHARES_PAGE).min(SHARES_PAGE);
+                    let page: Vec<String> = r[from..].iter().take(limit).map(|x| hex(&x.bytes())).collect();
+                    Response::json(200, &json!({"count": r.len(), "from": from, "records": page}))
+                }
+                None => Response::error(404, "no such published epoch"),
+            },
+            ["share", e, i] => {
+                let (Some(e), Some(i)) = (e.parse::<u64>().ok(), i.parse::<usize>().ok()) else { return Response::error(400, "epoch and index expected") };
+                let cached = self.tree_cache.lock().unwrap().iter().find(|(ce, _, _)| *ce == e).map(|(_, r, t)| (r.clone(), t.clone()));
+                let (recs, tree) = match cached {
+                    Some(x) => x,
+                    None => {
+                        let Some(r) = self.load_records(e) else { return Response::error(404, "no such published epoch") };
+                        let t = Arc::new(shares_tree(&r));
+                        let r = Arc::new(r);
+                        let mut c = self.tree_cache.lock().unwrap();
+                        c.push((e, r.clone(), t.clone()));
+                        if c.len() > 3 {
+                            c.remove(0); // a client alternating between epochs cannot make the pool rebuild a tree on every request
+                        }
+                        (r, t)
+                    }
+                };
+                match recs.get(i) {
+                    Some(rec) => Response::json(200, &json!({"epoch": e, "index": i, "count": recs.len(), "record": hex(&rec.bytes()), "path": tree.proof(i).iter().map(|h| hex(h)).collect::<Vec<_>>()})),
+                    None => Response::error(404, "no such share"),
+                }
+            }
+            _ => Response::error(404, "not found"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------- points of a miner (what a miner sees on the pool)
+
+/// v2 work of every address in a published document.
+fn agg_of(doc: &Value) -> HashMap<String, u128> {
+    let mut m = HashMap::new();
+    for x in doc["miners"].as_array().into_iter().flatten() {
+        let w: u128 = x["v2_weight"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0);
+        if w > 0 {
+            *m.entry(x["address"].as_str().unwrap_or("").to_string()).or_default() += w;
+        }
+    }
+    m
+}
+
+fn round4(x: f64) -> f64 {
+    (x * 1e4).round() / 1e4
+}
+
+impl Pool {
+    /// Points the pool's own blocks earned in each scoring day, by the rule of the rewards program (docs/19 section 3): 1 per block,
+    /// more for a block with paid work, more in the first days. Cached until the chain tip changes.
+    fn pool_pot(&self) -> BTreeMap<u64, f64> {
+        let tip = self.sh.node.lock().unwrap().chain.tip_hash();
+        if let Some((t, p)) = &self.inner.lock().unwrap().pot_cache {
+            if *t == tip {
+                return p.clone();
+            }
+        }
+        let start = self.cfg.testnet_start;
+        let mut pot: BTreeMap<u64, f64> = BTreeMap::new();
+        {
+            let n = self.sh.node.lock().unwrap();
+            for b in n.chain.blocks.iter().filter(|b| b.header.miner == self.pk && b.header.timestamp >= start) {
+                let ts = b.header.timestamp;
+                let useful = !matches!(b.header.class, WorkClass::Native);
+                let pts = if useful { self.cfg.useful_mult } else { 1.0 } * if ts - start < self.cfg.early_days * 86400 { self.cfg.early_mult } else { 1.0 };
+                *pot.entry((ts - start) / 86400).or_default() += pts;
+            }
+        }
+        self.inner.lock().unwrap().pot_cache = Some((tip, pot.clone()));
+        pot
+    }
+
+    /// Row of an address in the published leaderboard (the official figure), if the pool was given the leaderboard file.
+    fn leaderboard_row(&self, addr: &str) -> Value {
+        let Some(path) = &self.cfg.leaderboard_file else { return Value::Null };
+        let Ok(modified) = std::fs::metadata(path).and_then(|m| m.modified()) else { return Value::Null };
+        let mut cache = self.lb_cache.lock().unwrap();
+        if cache.as_ref().map_or(true, |(t, _)| *t != modified) {
+            let lb = std::fs::metadata(path).ok().filter(|m| m.len() < (64 << 20)).and_then(|_| std::fs::read(path).ok()).and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+            *cache = lb.map(|v| (modified, v));
+        }
+        let Some((_, lb)) = cache.as_ref() else { return Value::Null };
+        match lb["miners"].as_array().and_then(|a| a.iter().find(|m| m["address"].as_str() == Some(addr))) {
+            Some(m) => json!({"rank": m["rank"], "points": m["points"], "pool_points": m["pool_points"], "eligible": m["eligible"], "reasons": m["reasons"],
+                              "active_days": m["active_days"], "generated_at": lb["generated_at"]}),
+            None => json!({"points": 0, "listed": false, "generated_at": lb["generated_at"]}),
+        }
+    }
+
+    /// The points of an address earned through this pool: `provisional` is computed here from the pool's own signed ledger with the rule of
+    /// `tools/pool_points.py` (the share of the work of the day times the points of the pool's blocks that day); `official` is the row of the
+    /// published leaderboard, which also applies the audit, the registration and the eligibility rules, and is the figure that counts.
+    pub fn points_json(&self, addr: &PubKey) -> Value {
+        let pot = self.pool_pot();
+        let a = address_of(addr);
+        let (secs, start) = (self.cfg.points_epoch_secs.max(1), self.cfg.testnet_start);
+        let (mut tot, mut mine): (BTreeMap<u64, u128>, BTreeMap<u64, u128>) = (BTreeMap::new(), BTreeMap::new());
+        {
+            let g = self.inner.lock().unwrap();
+            for (e, agg) in g.ep_agg.iter().filter(|(e, _)| !g.ledger.epochs.contains_key(e)) {
+                if e * secs < start {
+                    continue;
+                }
+                let day = (e * secs - start) / 86400;
+                *tot.entry(day).or_default() += agg.values().sum::<u128>();
+                *mine.entry(day).or_default() += agg.get(&a).copied().unwrap_or(0);
+            }
+            let idx = g.ledger.find(addr);
+            for (e, rec) in &g.ledger.epochs {
+                if e * secs < start {
+                    continue;
+                }
+                let day = (e * secs - start) / 86400;
+                *tot.entry(day).or_default() += rec.cum.values().map(|c| c.0).sum::<u128>();
+                *mine.entry(day).or_default() += idx.and_then(|i| rec.cum.get(&i)).map_or(0, |c| c.0);
+            }
+        }
+        let (mut total, mut per_day) = (0.0f64, serde_json::Map::new());
+        for (day, p) in &pot {
+            let (t, m) = (tot.get(day).copied().unwrap_or(0), mine.get(day).copied().unwrap_or(0));
+            if t > 0 && m > 0 {
+                let pts = p * (m as f64 / t as f64);
+                total += pts;
+                per_day.insert(day.to_string(), json!(round4(pts)));
+            }
+        }
+        json!({
+            "address": a, "provisional": round4(total), "per_day": per_day, "counted_work": mine.values().sum::<u128>().to_string(),
+            "pool_points_total": round4(pot.values().sum::<f64>()), "testnet_start": start, "official": self.leaderboard_row(&a),
+            "note": "provisional = your share of this pool's blocks, from the pool's own signed ledger; official = the published leaderboard (audit, registration and eligibility rules apply)",
+        })
     }
 }
 
@@ -1429,6 +1861,9 @@ pub fn read_line_limited<R: BufRead>(r: &mut R, buf: &mut Vec<u8>) -> io::Result
     }
 }
 
+/// The statistics page, exposed so that a test can check it escapes what it shows.
+pub const POOL_PAGE_FOR_TESTS: &str = POOL_PAGE;
+
 const POOL_PAGE: &str = r#"<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Vearl pool</title>
 <style>body{font:15px/1.5 system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;color:#e8ecf4;background:#0b0e17}
@@ -1442,10 +1877,11 @@ code{background:#182033;padding:.1rem .3rem;border-radius:4px}input{width:100%;p
 <script>
 const f=(v)=>(v/1e8).toFixed(4)+" VRL";
 async function j(u){const r=await fetch(u);return r.json()}
+const X=(v)=>String(v).replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
 async function s(){try{const d=await j("/api/stats");
-document.getElementById("s").innerHTML="<table><tr><td>Pool address</td><td><code>"+d.pool_address+"</code></td></tr><tr><td>Height</td><td>"+d.network.height+"</td></tr><tr><td>Workers / miners</td><td>"+d.workers+" / "+d.miners+"</td></tr><tr><td>Hashrate</td><td>"+d.hashrate_sigma_per_s.toFixed(2)+" sigma/s</td></tr><tr><td>Fee</td><td>"+d.fee_bps/100+" % (PPLNS x"+d.pplns_n+", "+d.confirmations+" confirmations)</td></tr><tr><td>Blocks found</td><td>"+d.blocks.found+" ("+d.blocks.confirmed+" confirmed, "+d.blocks.pending+" pending, "+d.blocks.orphaned+" orphaned)</td></tr><tr><td>Minimum payout</td><td>"+f(d.min_payout)+"</td></tr></table>";
+document.getElementById("s").innerHTML="<table><tr><td>Pool address</td><td><code>"+X(d.pool_address)+"</code></td></tr><tr><td>Height</td><td>"+d.network.height+"</td></tr><tr><td>Workers / miners</td><td>"+d.workers+" / "+d.miners+"</td></tr><tr><td>Hashrate</td><td>"+d.hashrate_sigma_per_s.toFixed(2)+" sigma/s</td></tr><tr><td>Fee</td><td>"+d.fee_bps/100+" % (PPLNS x"+d.pplns_n+", "+d.confirmations+" confirmations)</td></tr><tr><td>Blocks found</td><td>"+d.blocks.found+" ("+d.blocks.confirmed+" confirmed, "+d.blocks.pending+" pending, "+d.blocks.orphaned+" orphaned)</td></tr><tr><td>Minimum payout</td><td>"+f(d.min_payout)+"</td></tr></table>";
 const b=await j("/api/blocks");document.getElementById("b").innerHTML="<table><tr><th>Height</th><th>Reward</th><th>Status</th></tr>"+b.blocks.slice(0,15).map(x=>"<tr><td>"+x.height+"</td><td>"+f(x.reward)+"</td><td>"+x.status+"</td></tr>").join("")+"</table>";
-const a=document.getElementById("a").value.trim();if(a){const m=await j("/api/miner/"+a);document.getElementById("m").innerHTML=m.known?"<table><tr><td>Balance</td><td>"+f(m.balance)+"</td></tr><tr><td>Pending confirmation</td><td>"+f(m.pending_confirmation)+"</td></tr><tr><td>Paid</td><td>"+f(m.paid_total)+"</td></tr><tr><td>Share of the PPLNS window</td><td>"+(m.window_share*100).toFixed(2)+" %</td></tr><tr><td>Workers</td><td>"+m.workers.map(w=>w.worker+" ("+w.hashrate_sigma_per_s.toFixed(2)+" sigma/s)").join(", ")+"</td></tr></table>":"unknown address (no share yet)"}}catch(e){document.getElementById("s").textContent="pool unreachable"}}
+const a=document.getElementById("a").value.trim();if(a){const m=await j("/api/miner/"+a);document.getElementById("m").innerHTML=m.known?"<table><tr><td>Balance</td><td>"+f(m.balance)+"</td></tr><tr><td>Pending confirmation</td><td>"+f(m.pending_confirmation)+"</td></tr><tr><td>Paid</td><td>"+f(m.paid_total)+"</td></tr><tr><td>Share of the PPLNS window</td><td>"+(m.window_share*100).toFixed(2)+" %</td></tr><tr><td>Testnet points (provisional)</td><td>"+m.points.provisional.toFixed(2)+"</td></tr><tr><td>Testnet points (official leaderboard)</td><td>"+(m.points.official&&m.points.official.rank?m.points.official.points+" (rank "+m.points.official.rank+", "+(m.points.official.eligible?"eligible":"not eligible yet: "+X(m.points.official.reasons.join("; ")))+")":"not published yet")+"</td></tr><tr><td>Workers</td><td>"+m.workers.map(w=>X(w.worker)+" ("+Number(w.hashrate_sigma_per_s).toFixed(2)+" sigma/s)").join(", ")+"</td></tr></table>":"unknown address (no share yet)"}}catch(e){document.getElementById("s").textContent="pool unreachable"}}
 s();setInterval(s,10000);document.getElementById("a").onchange=s;
 </script>"#;
 

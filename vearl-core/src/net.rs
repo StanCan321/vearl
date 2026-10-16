@@ -124,6 +124,47 @@ pub enum Msg {
     OpsBox(Vec<BoxedOp>),
     /// Signed beacon of the combined miner for the fee audit (feeguard.rs): accepted only by seeds started with --collect-fee-beacons.
     FeeBeacon(crate::feeguard::FeeBeacon),
+    /// RELAY (docs/21): a worker behind a home router keeps one outgoing connection to a relay node (a seed started with `--relay`)
+    /// and announces which account it works for. `sig` = signature of `relay_msg(genesis, our Noise key)` by the account key: it ties the
+    /// account to THIS connection, so nobody can claim another worker's account or replay the announcement.
+    RelayAnnounce { account: PubKey, sig: Vec<u8> },
+    /// Client -> relay node: forward `req` (an encoded read-only request) to the worker `to` and bring back its reply.
+    RelayRequest { to: RelayTo, req: Vec<u8> },
+    /// Relay node -> worker, over the worker's own outgoing connection.
+    RelayForward { id: u64, req: Vec<u8> },
+    /// Worker -> relay node: encoded reply to the forwarded request `id`.
+    RelayReply { id: u64, resp: Vec<u8> },
+    /// Relay node -> client: encoded reply of the worker.
+    RelayResponse { resp: Vec<u8> },
+}
+
+/// Who a relayed request is for: a worker account, or the worker that holds a level 2 job.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RelayTo {
+    Account(PubKey),
+    L2Job(JobId),
+}
+
+/// Relay limits (a relay node must not become an amplifier): size of a forwarded request, routes, requests in flight overall and per worker.
+pub const RELAY_MAX_REQ: usize = 64 << 10;
+const RELAY_MAX_ROUTES: usize = 1024;
+const RELAY_MAX_PENDING: usize = 128;
+const RELAY_PER_ROUTE: usize = 64;
+/// Largest reply a relay node hands over (memory held for a client that does not read is bounded by pending requests x this).
+const RELAY_MAX_RESP: usize = 2 << 20;
+const RELAY_TTL: Duration = Duration::from_secs(60);
+/// Requests a worker answers at the same time on behalf of relay nodes.
+const RELAY_SERVE_MAX: usize = 64;
+
+/// Only SMALL READ requests travel through a relay: the ones the audit of a level 2 job needs, whose replies are a few kilobytes. Nothing that
+/// writes (`Put*`, `NewTx`), nothing that relays again, nothing whose reply is a matrix (those need a direct connection).
+pub fn relay_allowed(m: &Msg) -> bool {
+    matches!(m, Msg::GetL2(_) | Msg::GetL2Chunk { .. } | Msg::GetJob(_) | Msg::GetMlp(_) | Msg::GetProg(_) | Msg::GetTiled(_) | Msg::GetServed(_) | Msg::GetRep(_) | Msg::GetStatus)
+}
+
+/// What a worker signs to announce itself to a relay node.
+pub fn relay_msg(genesis: &Hash, noise_key: &[u8; 32]) -> Hash {
+    h("vearl/relay/v1", &[genesis, noise_key])
 }
 
 /// Output and Z of an operation as a bounding box (see `Msg::GetOpsBox`).
@@ -222,20 +263,51 @@ pub struct Conn {
     r: SecureReader,
     w: SecureWriter,
     pub remote: [u8; 32],
+    /// `relay://` address: every request goes through a relay node to a worker that cannot be reached directly.
+    relay: Option<RelayTo>,
+}
+
+/// `relay://HOST:PORT/acct:<64 hex>` or `relay://HOST:PORT/l2:<64 hex>`: the relay node, and the worker behind it
+/// (an account, or the worker of a level 2 job). Any other string is an ordinary `HOST:PORT`.
+pub fn parse_relay_addr(addr: &str) -> Option<(String, RelayTo)> {
+    let rest = addr.strip_prefix("relay://")?;
+    let (host, target) = rest.split_once('/')?;
+    let (kind, hex) = target.split_once(':')?;
+    let id = parse_hex32(hex)?;
+    match kind {
+        "acct" => Some((host.to_string(), RelayTo::Account(id))),
+        "l2" => Some((host.to_string(), RelayTo::L2Job(id))),
+        _ => None,
+    }
 }
 
 impl Conn {
     pub fn connect(addr: &str) -> io::Result<Conn> {
-        let sa = std::net::ToSocketAddrs::to_socket_addrs(addr)?.next().ok_or_else(|| ioerr("bad addr"))?;
+        let (direct, relay) = match addr.strip_prefix("relay://") {
+            Some(_) => {
+                let (host, to) = parse_relay_addr(addr).ok_or_else(|| ioerr("bad relay address"))?;
+                (host, Some(to))
+            }
+            None => (addr.to_string(), None),
+        };
+        let sa = std::net::ToSocketAddrs::to_socket_addrs(&direct)?.next().ok_or_else(|| ioerr("bad addr"))?;
         let s = TcpStream::connect_timeout(&sa, Duration::from_secs(3))?;
         let (r, w, remote) = handshake(s, &Keys::generate(), true, Duration::from_secs(10))?;
-        Ok(Conn { r, w, remote })
+        Ok(Conn { r, w, remote, relay })
     }
     pub fn send(&mut self, m: &Msg) -> io::Result<()> {
-        self.w.write_msg_bytes(&encode(m)?)
+        match self.relay {
+            Some(to) => self.w.write_msg_bytes(&encode(&Msg::RelayRequest { to, req: encode(m)? })?),
+            None => self.w.write_msg_bytes(&encode(m)?),
+        }
     }
     pub fn recv(&mut self) -> io::Result<Msg> {
-        decode_msg(&self.r.read_msg_bytes()?)
+        let m = decode_msg(&self.r.read_msg_bytes()?)?;
+        match (self.relay, m) {
+            // the relay node answers with the worker's own reply, still encoded: the caller sees exactly what a direct connection gives
+            (Some(_), Msg::RelayResponse { resp }) => decode_msg(&resp),
+            (_, m) => Ok(m),
+        }
     }
     /// Sends arbitrary application bytes over the encrypted channel (fuzz: malformed messages).
     pub fn send_raw(&mut self, b: &[u8]) -> io::Result<()> {
@@ -301,6 +373,8 @@ struct Peer {
     work: u128,
     height: u64,
     sync: SyncMode,
+    /// Handle to close the socket when the node is stopped.
+    kill: Option<TcpStream>,
 }
 
 pub struct Node {
@@ -352,6 +426,21 @@ pub struct Node {
     /// Maximum size (serialised bytes) of a `Blocks` / `Headers` sync reply: a batch must never exceed the
     /// size of one message (16 MiB) even with heavy blocks. Adjustable for tests.
     pub sync_budget: u64,
+    /// RELAY node (seed started with `--relay`, docs/21): accepts `RelayAnnounce` from workers and forwards read requests to them.
+    pub relay: bool,
+    /// Worker key of this node, used to announce it to the (pinned) relay nodes it dials.
+    relay_sk: Option<SigningKey>,
+    /// Worker account -> peer id of its connection (relay node side).
+    relay_routes: HashMap<PubKey, u64>,
+    /// Forwarded requests waiting for the worker's reply (relay node side).
+    relay_pending: HashMap<u64, RelayPending>,
+    relay_next: u64,
+}
+
+struct RelayPending {
+    client: SyncSender<Msg>,
+    peer: u64,
+    at: Instant,
 }
 
 /// Maximum number of weight blocks in a worker's registry (n = 1024: 1 MiB each).
@@ -535,6 +624,8 @@ pub struct Shared {
     pub stop: AtomicBool,
     pub keys: Keys,
     handshakes: AtomicUsize,
+    /// Requests this worker is answering on behalf of relay nodes right now.
+    relay_busy: AtomicUsize,
 }
 
 pub struct NodeConfig {
@@ -572,6 +663,14 @@ impl NodeHandle {
     pub fn id_hex(&self) -> String {
         self.shared.keys.public_hex()
     }
+    /// Turns this node into a relay node (`node --relay`): workers behind a router that dial it can be reached through it.
+    pub fn set_relay(&self, on: bool) {
+        self.shared.node.lock().unwrap().relay = on;
+    }
+    /// Number of workers currently announced to this relay node.
+    pub fn relay_routes(&self) -> usize {
+        self.shared.node.lock().unwrap().relay_routes.len()
+    }
     pub fn connect(&self, addr: &str) {
         let sh = self.shared.clone();
         let a = addr.to_string();
@@ -582,6 +681,12 @@ impl NodeHandle {
     pub fn stop(&self) {
         self.shared.stop.store(true, Ordering::SeqCst);
         self.shared.cancel.store(true, Ordering::SeqCst);
+        // a stopped node closes its connections: its peers (and the relay nodes that route to it) notice at once
+        for p in self.shared.node.lock().unwrap().peers.values() {
+            if let Some(k) = &p.kill {
+                let _ = k.shutdown(Shutdown::Both);
+            }
+        }
         // unblocks accept()
         if let Some(a) = self.shared.listen.lock().unwrap().clone() {
             let _ = TcpStream::connect(a);
@@ -684,6 +789,11 @@ pub fn spawn_node(cfg: NodeConfig) -> io::Result<NodeHandle> {
             l2_computing: HashSet::new(),
             mess: std::env::var("VEARL_MESS").is_ok(),
             sync_budget: 8 << 20,
+            relay: false,
+            relay_sk: if cfg.worker.is_some() { cfg.mine_key.clone() } else { None },
+            relay_routes: HashMap::new(),
+            relay_pending: HashMap::new(),
+            relay_next: 1,
         }),
         cancel: AtomicBool::new(false),
         paused: AtomicBool::new(false),
@@ -696,6 +806,7 @@ pub fn spawn_node(cfg: NodeConfig) -> io::Result<NodeHandle> {
         stop: AtomicBool::new(false),
         keys,
         handshakes: AtomicUsize::new(0),
+        relay_busy: AtomicUsize::new(0),
     });
 
     load_puts(&shared);
@@ -853,17 +964,28 @@ fn peer_loop(sh: Arc<Shared>, stream: TcpStream, dialed: Option<String>) {
     let _ = reader.set_read_timeout(Some(Duration::from_secs(10))); // quick Hello after the handshake
     let mut peer_id: Option<u64> = None;
     let (mut tokens, mut last) = (200f64, Instant::now());
+    let (mut relay_tokens, mut relay_last) = (2000f64, Instant::now());
     loop {
         let m = match reader.read_msg_bytes().and_then(|b| decode_msg(&b)) {
             Ok(m) => m,
             Err(_) => break,
         };
-        // per-peer rate limiting (token bucket: 100 msg/s, burst 200)
-        tokens = (tokens + last.elapsed().as_secs_f64() * 100.0).min(200.0);
-        last = Instant::now();
-        tokens -= 1.0;
-        if tokens < 0.0 {
-            break;
+        // per-peer rate limiting (token bucket: 100 msg/s, burst 200). Relayed requests and replies (docs/21) have a bucket of their
+        // own, ten times larger: an audit fetches thousands of chunks, one message each way, and must not cut the worker's connection
+        if matches!(m, Msg::RelayForward { .. } | Msg::RelayReply { .. }) {
+            relay_tokens = (relay_tokens + relay_last.elapsed().as_secs_f64() * 1000.0).min(2000.0);
+            relay_last = Instant::now();
+            relay_tokens -= 1.0;
+            if relay_tokens < 0.0 {
+                break;
+            }
+        } else {
+            tokens = (tokens + last.elapsed().as_secs_f64() * 100.0).min(200.0);
+            last = Instant::now();
+            tokens -= 1.0;
+            if tokens < 0.0 {
+                break;
+            }
         }
         match &m {
             Msg::Hello { genesis, height, work, listen, .. } => {
@@ -888,15 +1010,27 @@ fn peer_loop(sh: Arc<Shared>, stream: TcpStream, dialed: Option<String>) {
                         save_known(&n);
                     }
                 }
-                n.peers.insert(id, Peer { tx: tx.clone(), addr: addr.clone(), listen: dial_addr, key: remote, outbound, ip, score: 0, work: *work, height: *height, sync: SyncMode::Idle });
+                n.peers.insert(id, Peer { tx: tx.clone(), addr: addr.clone(), listen: dial_addr, key: remote, outbound, ip, score: 0, work: *work, height: *height, sync: SyncMode::Idle, kill: kill.as_ref().and_then(|k| k.try_clone().ok()) });
                 peer_id = Some(id);
                 let _ = reader.set_read_timeout(None);
                 let _ = tx.try_send(Msg::GetPeers);
+                // a worker tells the relay nodes it dialed (PINNED seeds only: an older node would not understand the message) which
+                // account it works for, so that clients that cannot reach it can still audit it through them
+                if let (Some(a), Some(sk)) = (&dialed, &n.relay_sk) {
+                    if n.pins.contains_key(a) {
+                        let sig = sign(sk, &relay_msg(&sh.genesis_hash, &sh.keys.public));
+                        let _ = tx.try_send(Msg::RelayAnnounce { account: pubkey(sk), sig });
+                    }
+                }
                 maybe_sync(&mut n, id);
             }
             other => {
                 let Some(id) = peer_id else {
                     // clients (CLI): simple requests without Hello
+                    if let Msg::RelayRequest { to, req } = other {
+                        relay_request(&sh, to, req, &tx); // the reply comes later, from the worker's connection
+                        continue;
+                    }
                     if let Some(reply) = client_reply(&sh, other) {
                         if matches!(reply, Msg::Ack { ok: true, .. }) && matches!(other, Msg::PutJob { .. } | Msg::PutMlp { .. } | Msg::PutTiled { .. } | Msg::PutProg { .. } | Msg::PutProgMore { .. } | Msg::PutModel { .. } | Msg::PutProgRef { .. } | Msg::PutTiledStage { .. } | Msg::PutTiledDone { .. }) {
                             persist_put(&sh, other);
@@ -906,6 +1040,22 @@ fn peer_loop(sh: Arc<Shared>, stream: TcpStream, dialed: Option<String>) {
                     }
                     break;
                 };
+                if let Msg::RelayForward { id: rid, req } = other {
+                    // a relay node forwards a client's read request: answered like a direct client request, in its own thread
+                    // (never under the node lock, never in the reading loop), a bounded number at a time
+                    let (sh2, tx2, rid, req) = (sh.clone(), tx.clone(), *rid, req.clone());
+                    if sh.relay_busy.fetch_add(1, Ordering::SeqCst) >= RELAY_SERVE_MAX {
+                        sh.relay_busy.fetch_sub(1, Ordering::SeqCst);
+                        let _ = tx.try_send(Msg::RelayReply { id: rid, resp: encode(&Msg::Ack { ok: false, info: "worker busy".into() }).unwrap_or_default() });
+                    } else {
+                        thread::spawn(move || {
+                            let resp = relay_serve(&sh2, &req);
+                            sh2.relay_busy.fetch_sub(1, Ordering::SeqCst);
+                            let _ = tx2.send(Msg::RelayReply { id: rid, resp });
+                        });
+                    }
+                    continue;
+                }
                 let r = {
                     let mut n = sh.node.lock().unwrap();
                     on_msg(&sh, &mut n, id, other.clone())
@@ -921,7 +1071,16 @@ fn peer_loop(sh: Arc<Shared>, stream: TcpStream, dialed: Option<String>) {
         }
     }
     if let Some(id) = peer_id {
-        sh.node.lock().unwrap().peers.remove(&id);
+        let mut n = sh.node.lock().unwrap();
+        n.peers.remove(&id);
+        // relay node: the routes of this connection disappear, and the clients waiting on it are told at once
+        n.relay_routes.retain(|_, p| *p != id);
+        let dead: Vec<u64> = n.relay_pending.iter().filter(|(_, p)| p.peer == id).map(|(k, _)| *k).collect();
+        for k in dead {
+            if let Some(p) = n.relay_pending.remove(&k) {
+                let _ = p.client.try_send(Msg::Ack { ok: false, info: "worker disconnected".into() });
+            }
+        }
     }
     reader.shutdown();
     if let Some(k) = kill {
@@ -1002,6 +1161,53 @@ fn ops_box_reply(tensors: &[Vec<i8>], zs: &[Option<Vec<i32>>], ops: &[u8], pn: u
         items.push(BoxedOp { x_dims, x, z_dims, z });
     }
     Msg::OpsBox(items)
+}
+
+/// RELAY NODE: a client asks for a worker that it cannot reach. The request is checked (read-only, small), the worker is found
+/// (announced account, or the worker of the level 2 job), and the request goes down the worker's own connection; the reply
+/// comes back through `on_msg` (`RelayReply`) and is handed to the client's channel. Nothing is stored but the pending entry.
+fn relay_request(sh: &Arc<Shared>, to: &RelayTo, req: &[u8], client: &SyncSender<Msg>) {
+    let nack = |info: &str| {
+        let _ = client.try_send(Msg::Ack { ok: false, info: info.to_string() });
+    };
+    let mut n = sh.node.lock().unwrap();
+    if !n.relay {
+        return nack("this node is not a relay");
+    }
+    if req.len() > RELAY_MAX_REQ || !decode_msg(req).map_or(false, |m| relay_allowed(&m)) {
+        return nack("request not relayable");
+    }
+    let account = match to {
+        RelayTo::Account(a) => *a,
+        RelayTo::L2Job(id) => match n.chain.state.l2.get(id).map(|j| &j.status) {
+            Some(crate::l2::L2Status::Claimed { worker, .. }) | Some(crate::l2::L2Status::Posted { worker, .. }) => *worker,
+            _ => return nack("no worker for this job"),
+        },
+    };
+    let Some(&pid) = n.relay_routes.get(&account) else { return nack("no relay route to this worker") };
+    n.relay_pending.retain(|_, p| p.at.elapsed() < RELAY_TTL);
+    if n.relay_pending.len() >= RELAY_MAX_PENDING || n.relay_pending.values().filter(|p| p.peer == pid).count() >= RELAY_PER_ROUTE {
+        return nack("relay busy");
+    }
+    let Some(ptx) = n.peers.get(&pid).map(|p| p.tx.clone()) else {
+        n.relay_routes.remove(&account);
+        return nack("no relay route to this worker");
+    };
+    let id = n.relay_next;
+    n.relay_next += 1;
+    if ptx.try_send(Msg::RelayForward { id, req: req.to_vec() }).is_err() {
+        return nack("worker busy");
+    }
+    n.relay_pending.insert(id, RelayPending { client: client.clone(), peer: pid, at: Instant::now() });
+}
+
+/// WORKER: answers a forwarded request exactly as it would answer the same client directly.
+fn relay_serve(sh: &Arc<Shared>, req: &[u8]) -> Vec<u8> {
+    let reply = match decode_msg(req) {
+        Ok(m) if relay_allowed(&m) => client_reply(sh, &m).unwrap_or(Msg::Ack { ok: false, info: "unsupported".into() }),
+        _ => Msg::Ack { ok: false, info: "request not relayable".into() },
+    };
+    encode(&reply).or_else(|_| encode(&Msg::Ack { ok: false, info: "reply too large".into() })).unwrap_or_default()
 }
 
 /// Replies to requests from clients that did not send a Hello (CLI).
@@ -1580,6 +1786,30 @@ fn on_msg(sh: &Arc<Shared>, n: &mut Node, id: u64, m: Msg) -> Result<(), String>
                 }
             }
         }
+        Msg::RelayAnnounce { account, sig } => {
+            if n.relay {
+                let Some(key) = n.peers.get(&id).map(|p| p.key) else { return Ok(()) };
+                if !verify_sig(&account, &relay_msg(&sh.genesis_hash, &key), &sig) {
+                    if penalize(n, id, 20) >= BAN_SCORE {
+                        return Err("bad relay announcement".into());
+                    }
+                } else if n.relay_routes.len() < RELAY_MAX_ROUTES || n.relay_routes.contains_key(&account) {
+                    n.relay_routes.retain(|_, p| *p != id); // one account per connection
+                    n.relay_routes.insert(account, id);
+                    eprintln!("[relay] worker {} reachable through peer {id} ({} route(s))", crate::feeguard::hex(&account[..4]), n.relay_routes.len());
+                }
+            }
+        }
+        Msg::RelayReply { id: rid, resp } => {
+            // only the connection the request was sent down may answer it
+            if n.relay_pending.get(&rid).map_or(false, |p| p.peer == id) {
+                if let Some(p) = n.relay_pending.remove(&rid) {
+                    let msg = if resp.len() > RELAY_MAX_RESP { Msg::Ack { ok: false, info: "reply too large for a relay".into() } } else { Msg::RelayResponse { resp } };
+                    let _ = p.client.try_send(msg);
+                }
+            }
+        }
+        Msg::RelayRequest { .. } | Msg::RelayForward { .. } | Msg::RelayResponse { .. } => {}
         Msg::Headers(_) | Msg::AccountProof { .. } | Msg::GetOpsBox { .. } | Msg::OpsBox(_) => {}
         Msg::Status { .. } | Msg::Account { .. } | Msg::Ack { .. } | Msg::JobInfo { .. } | Msg::JobResult { .. } => {}
         Msg::PutJob { .. } | Msg::GetJob(_) | Msg::GetResult(_) | Msg::PutMlp { .. } | Msg::GetMlp(_) | Msg::GetLayer { .. } => {}

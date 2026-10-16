@@ -263,6 +263,11 @@ class Gateway:
         cands = self.candidates()
         if not self.a.public and len(cands) == 1:
             return cands[0]
+        if self.a.public and re.fullmatch(r"[0-9a-f]{64}", chain_id or ""):
+            # a miner behind a home router keeps one connection to the seed (docs/21): the seed started with --relay hands the audit's
+            # requests to it. Tried FIRST: a node without --relay (or a worker that is not connected) answers at once with a refusal
+            # and l2-who goes on with the direct candidates.
+            cands = ["relay://%s/l2:%s" % (node, chain_id)] + cands
         for attempt in range(3):
             rc, out = self.cli(["l2-who", node, chain_id] + cands, 150)
             m = re.search(r"worker = (\S+)", out)

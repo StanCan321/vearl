@@ -132,7 +132,7 @@ PAGE = """<!doctype html>
       </div>
       <div>
         <h3>Vearl</h3>
-        <ul><li><a href="/">Website</a></li><li><a href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Discord</a></li><li><a href="https://x.com/vearl_org" target="_blank" rel="noopener">X</a></li></ul>
+        <ul><li><a href="/">Website</a></li><li><a href="https://discord.gg/vearl" target="_blank" rel="noopener">Discord</a></li><li><a href="https://x.com/vearl_org" target="_blank" rel="noopener">X</a></li></ul>
       </div>
     </div>
     <div class="footer-bottom">

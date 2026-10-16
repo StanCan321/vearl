@@ -111,7 +111,7 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
     (yoe + era * 400 + if m <= 2 { 1 } else { 0 }, m, d)
 }
 
-/// Parses `AAAA-MM-JJTHH:MM:SSZ` (UTC only) into Unix seconds.
+/// Parses `YYYY-MM-DDTHH:MM:SSZ` (UTC only) into Unix seconds.
 pub fn parse_utc(s: &str) -> Result<u64, String> {
     let bad = || format!("invalid date '{s}': expected format YYYY-MM-DDTHH:MM:SSZ (UTC), for example 2026-10-23T16:00:00Z");
     let b = s.as_bytes();

@@ -2916,6 +2916,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "sha2",
  "snow",
  "webpki-roots 0.26.11",
 ]

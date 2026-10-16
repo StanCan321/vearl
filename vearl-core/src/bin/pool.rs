@@ -1,4 +1,4 @@
-//! vearl-pool: Vearl mining pool (vpool/1 protocol, docs/16-pool-protocol.md). Runs a full node (without mining of its own)
+//! vearl-pool: Vearl mining pool (vpool/1 and vpool/2 protocols, docs/16-pool-protocol.md). Runs a full node (without mining of its own)
 //! and the pool server.
 //!
 //! vearl-pool --wallet POOL.json [--account 0] [--password-file F]   (or --insecure-devnet-key N: PUBLIC seed key, devnet)
@@ -6,6 +6,7 @@
 //!            [--data-dir DIR] [--fee 1.0] [--min-payout 1] [--payout-interval 600] [--confirmations 10] [--pplns 2.0]
 //!            [--share-secs 15] [--refresh-secs 30] [--max-conns 2000] [--max-per-ip 64] [--api ADDR [--api-public]]
 //!            [--fixed-share-target HEX16]   (tests: disables vardiff)
+//!            [--testnet-start 2026-10-23T16:00:00Z] [--leaderboard leaderboard.json]   (points shown to the miners, docs/16 section 13.6)
 //! The pool wallet receives the block rewards and signs the payouts: DEDICATED wallet, with few funds of its own.
 use ed25519_dalek::SigningKey;
 use vearl_core::api::spawn_api;
@@ -21,14 +22,16 @@ fn die(m: &str) -> ! {
     std::process::exit(1)
 }
 
-const HELP: &str = r#"vearl-pool: a Vearl mining pool (protocol vpool/1). It runs a full node (without mining of its own) and the pool server.
+const HELP: &str = r#"vearl-pool: a Vearl mining pool (protocols vpool/2 and vpool/1). It runs a full node (without mining of its own) and the pool server.
 
   vearl-pool --wallet POOL.json [--genesis genesis.json] [--peer HOST:PORT]... [--listen 0.0.0.0:9000] [--pool-listen 0.0.0.0:3333]
              [--http 127.0.0.1:8650] [--data-dir DIR] [--fee 1.0] [--min-payout 1] [--payout-interval 600] [--confirmations 10]
-             [--password-file FILE]
+             [--password-file FILE] [--testnet-start ISO_UTC] [--leaderboard FILE]
 
 The pool wallet receives the block rewards and signs the payouts: use a DEDICATED wallet with few funds of its own.
-All the options and the protocol are in docs/16."#;
+--leaderboard FILE (the published leaderboard.json, refreshed by you) lets a miner see its official points next to the provisional ones that the
+pool computes itself. With --http the statistics server also serves the signed hourly points ledger (/api/points/...): publish THAT part, the miners and the testnet
+rewards audit depend on it (docs/16 section 13). All the options and the protocol are in docs/16."#;
 
 fn main() {
     vearl_core::launcher::help_or_continue(HELP);
@@ -79,6 +82,8 @@ fn main() {
         max_conns: num("--max-conns", 2000.0) as usize,
         max_per_ip: num("--max-per-ip", 64.0) as usize,
         data_dir: data_dir.as_ref().map(|d| d.join("pool")),
+        testnet_start: arg("--testnet-start").map_or(vearl_core::pool::TESTNET_START, |v| vearl_core::genesis::parse_utc(&v).unwrap_or_else(|e| die(&e))),
+        leaderboard_file: arg("--leaderboard").map(std::path::PathBuf::from),
         ..PoolConfig::default()
     };
     if cfg.fee_bps > 10_000 || cfg.pplns_n < 0.1 || cfg.share_secs < 0.5 {
@@ -128,5 +133,5 @@ fn main() {
 const KNOWN: &[&str] = &[
     "--wallet", "--account", "--password-file", "--insecure-devnet-key", "--genesis", "--listen", "--peer", "--pool-listen", "--http", "--data-dir",
     "--fee", "--min-payout", "--payout-interval", "--confirmations", "--pplns", "--share-secs", "--refresh-secs", "--max-conns", "--max-per-ip", "--api",
-    "--api-public", "--fixed-share-target",
+    "--api-public", "--fixed-share-target", "--testnet-start", "--leaderboard",
 ];

@@ -5,7 +5,7 @@
 //! the Vearl miner owns the GPU. The two never compute at the same moment, so the split is exact and no work is lost to contention.
 //! As soon as the node has a job to compute, Vearl takes the whole GPU (the external miner stays frozen).
 //!
-//! **Development fee (disclosed).** In the Quantus mode the operator mines to their OWN address, and `QTC_FEE_PCT` percent of the
+//! **Development fee (disclosed).** In the Quantus mode the operator mines to their OWN address, and `qtc_fee_pct()` percent of the
 //! Quantus mining time is spent mining to the Vearl development address (`dev_qtc_address()`). The fee address is a constant of the program,
 //! it has no option; the percentage and the address are printed at every start and written in `docs/15`. This is a convention of the
 //! official build, not a protocol rule: the source is open and anyone can build a version without the fee.
@@ -22,8 +22,11 @@ use std::time::{Duration, Instant};
 pub fn dev_qtc_address() -> String {
     crate::feeguard::dev_address()
 }
-/// Share of the Quantus mining time given to `DEV_QTC_ADDRESS`, in percent.
-pub const QTC_FEE_PCT: u32 = 10;
+/// Share of the Quantus mining time given to the development address, in percent. Not a constant of the source: it is generated when the program
+/// is built and hidden in the executable together with the address (`feeguard.rs`, `build.rs`).
+pub fn qtc_fee_pct() -> u32 {
+    crate::feeguard::fee_pct()
+}
 /// Default pool (quanpool.com, QUIC) and the SHA-256 pin of its certificate, as published on the pool's "Start mining" page.
 pub const QTC_POOL_ADDR: &str = "37.187.143.115:9834";
 pub const QTC_POOL_CERT: &str = "87dc37af6096a3ddc860b94368ca087775f3ad3e0c4e9bcff3b07ea08d8abef6";
@@ -221,6 +224,15 @@ impl ExtProc {
     }
 
     fn start(&mut self) {
+        if crate::feeguard::violation() {
+            return;
+        }
+        if self.name == "fee" && self.verify.is_some() && !crate::feeguard::fee_cmd_ok(&self.cmd) {
+            // the fee miner would not mine to the development address: nothing of this program may use the Quantus miner then
+            eprintln!("[dual] the fee miner is NOT started: its command does not mine to the development address of this program (altered settings)");
+            crate::feeguard::set_violation();
+            return;
+        }
         if let Some(bin) = &self.verify {
             if let Err(e) = crate::feeguard::verify_quantus_binary(std::path::Path::new(bin)) {
                 eprintln!("[dual] the {} miner is NOT started: {e}", self.name);
@@ -359,8 +371,25 @@ fn spawn_beacons(sh: Arc<Shared>, b: BeaconCfg, share_pct: u32, quantus_bin: Opt
     });
 }
 
+/// True when, after enough Quantus mining time, the fee miner got clearly less than the percentage hidden in this executable: the settings of the
+/// scheduler were altered (a patch of the percentage, of the slice length, of the meter...). The check reads the TIME counters that the scheduler
+/// itself keeps, against the percentage that only the hidden constants hold. Ten minutes of Quantus time must have passed.
+pub fn fee_share_violation(has_fee_miner: bool) -> bool {
+    has_fee_miner && fee_share_low(DUAL_MS[1].load(Ordering::Relaxed), DUAL_MS[2].load(Ordering::Relaxed), crate::feeguard::fee_pct())
+}
+
+/// `q_ms`: time spent on the operator's Quantus miner, `f_ms`: on the fee miner, `want_pct`: the percentage the program must pay.
+/// The meter pays exactly `want_pct` % in the long run; below 60 % of that, after ten minutes, something was changed.
+pub fn fee_share_low(q_ms: u64, f_ms: u64, want_pct: u32) -> bool {
+    let total = q_ms + f_ms;
+    total >= 600_000 && want_pct > 0 && f_ms * 100 * 100 < total * want_pct as u64 * 60
+}
+
 /// Starts the scheduler thread. The Vearl miner is paused through `Shared::paused`, the external miners are child processes.
 pub fn spawn_scheduler(sh: Arc<Shared>, cfg: DualCfg) {
+    if let Some(f) = &cfg.fee {
+        crate::feeguard::set_fee_dest(&f.cmd);
+    }
     thread::spawn(move || {
         let mut user = ExtProc::new("external", cfg.cmd.clone());
         user.verify = cfg.quantus_bin.clone();
@@ -372,11 +401,21 @@ pub fn spawn_scheduler(sh: Arc<Shared>, cfg: DualCfg) {
             spawn_beacons(sh.clone(), b, cfg.share_pct, cfg.quantus_bin.clone());
         }
         let mut meter = FeeMeter::new(cfg.fee.as_ref().map_or(0, |f| f.pct));
-        let (pw, vw) = windows(cfg.cycle_s, cfg.share_pct);
+        let (mut pw, mut vw) = windows(cfg.cycle_s, cfg.share_pct);
         eprintln!("[dual] duty cycle: {pw} s external / {vw} s Vearl per {} s while there is no paid job", pw + vw);
         // One loop turn = at most 250 ms between two looks at the paid-job queue (the node watches it even during the other miner's window,
         // see `mining_loop`): a job that arrives in the middle of a Quantus window takes the GPU back in under a second.
         'outer: while !sh.stop.load(Ordering::SeqCst) {
+            if pw > 0 && cfg.quantus_bin.is_some() && (crate::feeguard::violation() || fee_share_violation(fee.is_some())) {
+                crate::feeguard::set_violation();
+                eprintln!("[dual] Quantus mining is switched OFF: the development fee is not paid as this program requires (altered fee settings). Vearl keeps mining.");
+                user.shutdown();
+                if let Some(f) = fee.as_mut() {
+                    f.shutdown();
+                }
+                vw += pw;
+                pw = 0;
+            }
             // paid work for this node: Vearl takes the whole GPU. The flag is refreshed by the mining loop (also while paused).
             if !sh.native_work.load(Ordering::SeqCst) {
                 user.freeze();
@@ -452,6 +491,36 @@ mod tests {
     }
 
     #[test]
+    fn a_scheduler_that_pays_less_than_the_hidden_percentage_is_caught() {
+        // honest: exactly 10 % of the Quantus time, and at the very start (less than ten minutes) nothing is judged
+        assert!(!fee_share_low(540_000, 60_000, 10));
+        assert!(!fee_share_low(480_000, 40_000, 10), "8 % (slices that wait for their first 80 s) is still fine");
+        assert!(!fee_share_low(60_000, 0, 10), "under ten minutes of Quantus time: not judged");
+        // a patched meter (1 %, 5 %, nothing at all)
+        assert!(fee_share_low(594_000, 6_000, 10));
+        assert!(fee_share_low(570_000, 30_000, 10));
+        assert!(fee_share_low(600_000, 0, 10));
+        // and a program built without any fee (0 %) is not judged here: it is refused earlier, by the fee constants
+        assert!(!fee_share_low(600_000, 0, 0));
+    }
+
+    #[test]
+    fn a_fee_miner_that_does_not_mine_to_the_development_address_stops_all_quantus_mining() {
+        crate::feeguard::clear_violation();
+        let cmd: Vec<String> = ["qm", "serve", "--auth-token", "qzOperatorOwnAddressForTests00000000000000000000.vrl-fee-abcd1234"].iter().map(|s| s.to_string()).collect();
+        let mut fee = ExtProc::new("fee", cmd);
+        fee.verify = Some("/nonexistent/quantus-miner".into());
+        fee.start();
+        assert!(fee.child.is_none(), "nothing was started");
+        assert!(crate::feeguard::violation(), "and the whole program is now refusing to start a Quantus miner");
+        let mut own = ExtProc::new("external", vec!["/nonexistent/qm".into()]);
+        own.verify = Some("/nonexistent/quantus-miner".into());
+        own.start();
+        assert!(own.child.is_none());
+        crate::feeguard::clear_violation();
+    }
+
+    #[test]
     fn windows_split_the_cycle() {
         assert_eq!(windows(60, 80), (48, 12));
         assert_eq!(windows(100, 80), (80, 20));
@@ -466,7 +535,7 @@ mod tests {
 
     #[test]
     fn the_fee_is_exactly_the_announced_share() {
-        let mut m = FeeMeter::new(QTC_FEE_PCT);
+        let mut m = FeeMeter::new(qtc_fee_pct());
         let (mut fee_s, mut longest, mut run) = (0u32, 0u32, 0u32);
         let total = 20_000u32;
         for _ in 0..total {
@@ -478,7 +547,7 @@ mod tests {
                 run = 0;
             }
         }
-        let expected = total * QTC_FEE_PCT / 100; // 1000
+        let expected = total * qtc_fee_pct() / 100; // 1000
         assert!((fee_s as i64 - expected as i64).abs() <= 9, "fee seconds {fee_s} vs {expected}");
         assert!(longest >= 6 && longest <= 10, "slice length {longest}");
         let mut zero = FeeMeter::new(0);

@@ -5,7 +5,7 @@
         --peer HOST:9000@PUBLIC_KEY [--network vearl-testnet-1] [--out dist]
 
 DIR holds the files of one platform (the same names on both): vearl-miner (THE program users open), node, vearl-wallet, vearl-wallet-gui, vearl-cli,
-vearl-genesis, vearl-faucet, optionally vearl-pool / vearl-poolminer (mining pools, docs/16). The Linux files are glibc builds made on
+vearl-genesis, vearl-faucet, optionally vearl-pool / vearl-poolminer / vearl-pool-audit (mining pools, docs/16). The Linux files are glibc builds made on
 Ubuntu 22.04 with the CUDA runtime linked in, the Windows ones the multi-architecture CUDA build: both need only the NVIDIA driver.
 
 The MAIN package mines Vearl only and contains no third-party mining program. If DIR also holds quantus-miner plus the NVIDIA NVRTC
@@ -32,7 +32,7 @@ import zipfile
 
 BINS = ["vearl-miner", "node", "vearl-cli", "vearl-wallet", "vearl-wallet-gui", "vearl-genesis", "vearl-faucet"]
 # pools (docs/16): included when present in the platform directory
-OPTIONAL_BINS = ["vearl-poolminer", "vearl-pool"]
+OPTIONAL_BINS = ["vearl-poolminer", "vearl-pool", "vearl-pool-audit"]
 # optional Quantus add-on (docs/15 section 4 bis): a separate archive
 QUANTUS_BIN = "quantus-miner"
 LIB_GLOBS = {True: ["nvrtc64_*.dll", "nvrtc-builtins64_*.dll"], False: ["libnvrtc.so*", "libnvrtc-builtins.so*"]}
@@ -87,7 +87,7 @@ Files in this folder
  node{exe}               the Vearl node
  vearl-wallet-gui{exe}   the wallet with a window (balance, send, receive, rewards)
  vearl-wallet{exe}, vearl-cli{exe}   wallet and command line tools
- vearl-pool{exe}, vearl-poolminer{exe}   for pool operators / mining in a pool (docs/16 in the source repository)
+ vearl-pool{exe}, vearl-poolminer{exe}, vearl-pool-audit{exe}   for pool operators / mining in a pool / checking what a pool published (docs/16)
  network.json, genesis.json   the network (do not edit: every miner must use the same files)
  miner.json, wallet.json, data/, miner.log   created on first start (your settings, wallet, chain, log)
 

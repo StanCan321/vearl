@@ -43,6 +43,32 @@ gets the same total points, so there is nothing to gain by creating many address
 Not counted in this first version: a bonus for completed jobs (a worker can create jobs for itself with free testnet tokens, so a bonus would need
 a safe way to ignore self-dealing). It may be added later; the rules in force are always the ones in this file.
 
+## 3 bis. Mining in a pool
+
+Blocks that a pool finds carry the pool's key, not your address, so the pool is not paid points itself: the points of a registered pool's blocks
+are **shared between its miners in proportion to their verified work** (share weight) in the scoring day, computed from the signed hourly ledger
+that the pool publishes (docs/16 section 13). Rules:
+
+- Only pools **registered with the team** count (write to contact@vearl.org with the pool address and the URL of its ledger). The address of a registered pool
+  is not a participant. A pool that is not registered earns nothing for its miners; an operator who runs one and registers its address as a
+  participant to keep the points breaks section 4 (honest behavior, one participant per person) and is excluded when found, which the manual review of
+  the top of the ranking (section 6) is there to do.
+- Only miners that speak `vpool/2` take part: they receive signed receipts of their work, which they can use to prove what the pool owes them
+  (`vearl-pool-audit`). Their address must be registered like any other (section 5) and meets the same conditions (section 4); an active day is a
+  day in which they had work in the pool.
+- The team audits every registered pool with `vearl-pool-audit` against the chain (`audit.json`, published). An hour found **fraudulent** counts for
+  nothing and the pool is excluded; an hour found **suspect** is held until a person has looked at it; an hour that has not been audited yet is held.
+- Jobs are not shared: a paid job is computed by a worker with its own key (`node --worker`), and its rewards are that worker's alone.
+- If you mine in a pool and also on your own, the points add up. The pool changes nothing to what you can earn per unit of work.
+- To see your points, type your payout address on the pool's page: it shows the points you have earned through that pool (provisional, computed by the pool
+  from its signed ledger) and, if the pool displays it, your row of the official leaderboard. The official figure is the one that counts.
+
+How the team runs it: `/etc/vearl/rewards-pools.json` lists the registered pools (`address`, `name`, `url` of the pool's statistics server, and where to keep
+its documents and report, for example `/var/www/vearl-rewards/pools/NAME` and `/var/www/vearl-rewards/pools/NAME-audit.json`). Every hour
+`vearl-rewards.sh` runs `tools/audit_pools.py` (download of the documents, random shares, `vearl-pool-audit` against the blocks of the previous run)
+and then the leaderboard with `--pools`. The documents and the reports are published next to the leaderboard under `/rewards/pools/`, so that anybody
+can re-run the computation: `python3 tools/testnet_rewards.py --blocks-file blocks.json --pools pools.json ...` gives the same result.
+
 ## 4. Who is eligible
 
 All of the following:
@@ -51,15 +77,19 @@ All of the following:
 2. **Minimum share:** at least **0.005 %** of all the points, to avoid dust.
 3. **Registered address:** you registered the address, with a signature that proves that you own it (section 5), before the deadline
    announced by the team.
-4. **Honest behavior:** no fraud (a worker proven to have published a wrong result, a manipulated block, a forged registration), and no attack on
+4. **The development fee is paid.** Mining Quantus with the optional add-on is allowed and does not count for the rewards, but it comes with a
+   development fee of 10 % of the Quantus mining time (docs/15 and docs/17). An address whose miner uses the add-on with the fee removed, reduced or
+   redirected (a modified or unofficial build, detected by the audit of docs/17) is not eligible. The counts of compliant and non-compliant miners
+   are published at <https://vearl.org/rewards/fee-stats.json>. A miner that does not use the add-on has no fee and is not concerned.
+5. **Honest behavior:** no fraud (a worker proven to have published a wrong result, a manipulated block, a forged registration), and no attack on
    the network or on other participants outside the rules of `SECURITY.md`. Responsible reports of weaknesses are welcome and are rewarded
    separately.
-5. **One participant per person.** You may use several machines, but not several identities to receive more than your share. Addresses that
+6. **One participant per person.** You may use several machines, but not several identities to receive more than your share. Addresses that
    look like one person's are reviewed by hand.
-6. **Legal conditions:** you are of legal age in your country, you are not in a country or on a list that the team has to exclude by law
+7. **Legal conditions:** you are of legal age in your country, you are not in a country or on a list that the team has to exclude by law
    (the list is published before the final snapshot; registering earlier does not guarantee eligibility), and you accept these terms.
 
-The team may exclude an address that breaks these rules, and publishes the address and the reason.
+The team may exclude an address or a pool that breaks these rules, and publishes the address and the reason.
 
 ## 5. How to register
 

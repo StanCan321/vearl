@@ -1,0 +1,33 @@
+{
+  "epochs": {
+    "448044660": "ok",
+    "448044661": "ok",
+    "448044662": "ok",
+    "497827": "ok"
+  },
+  "findings": [
+    {
+      "code": "block_pending",
+      "detail": "block 67: not in a published ledger yet (still within the deadline)",
+      "epoch": 497827,
+      "severity": "ok"
+    },
+    {
+      "code": "block_pending",
+      "detail": "block 68: not in a published ledger yet (still within the deadline)",
+      "epoch": 497827,
+      "severity": "ok"
+    }
+  ],
+  "pool": "vrl1jllu3q7gp0h8ydl0jhvmndcr6jkk8es2y8nqtpnks2m4hzelgvps4z6ltu",
+  "proto": "vpool-audit/1",
+  "stats": {
+    "documents": 3,
+    "documents_usable": 3,
+    "pool_blocks_on_chain": 69,
+    "receipts_checked": 8,
+    "shares_recomputed": 531,
+    "work_vs_blocks_worst_p": 4.4549085509565525e-32
+  },
+  "verdict": "ok"
+}

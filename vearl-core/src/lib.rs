@@ -32,4 +32,5 @@ pub mod l2;
 pub mod render2;
 pub mod render3;
 pub mod pool;
+pub mod poolpoints;
 pub mod poolminer;

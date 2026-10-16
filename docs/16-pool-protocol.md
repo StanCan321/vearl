@@ -1,7 +1,8 @@
-# 16 - Mining pool protocol (`vpool/1`)
+# 16 - Mining pool protocol (`vpool/1` and `vpool/2`)
 
-Status: reference implementation (`vearl-core/src/pool.rs`, `src/poolminer.rs`, binaries `vearl-pool` and `vearl-poolminer`), tested on a CPU devnet
-(`tests/pool.rs`). **Unaudited prototype, testnet only, tokens have no value.** This document is the specification: a third party can write a
+Status: reference implementation (`vearl-core/src/pool.rs`, `src/poolminer.rs`, `src/poolpoints.rs`, binaries `vearl-pool`, `vearl-poolminer` and
+`vearl-pool-audit`), tested on a CPU devnet (`tests/pool.rs`, `tests/pool_points.rs`). `vpool/2` is `vpool/1` plus the signed receipts and the
+signed hourly ledger of section 13 (fraud protection of the testnet points); a pool speaks both. **Unaudited prototype, testnet only, tokens have no value.** This document is the specification: a third party can write a
 compatible miner or pool from it.
 
 ## 1. Why a pool, and what it changes
@@ -24,8 +25,9 @@ the job's worker to be the miner, which a pool cannot delegate. A pool operator 
 
 | Role | Program | Holds |
 |---|---|---|
-| Pool server | `vearl-pool` (a full node without its own mining loop + the pool server) | the pool key (hot wallet), the ledger |
-| Worker | `vearl-poolminer` (CPU or CUDA) | a payout address only |
+| Pool server | `vearl-pool` (a full node without its own mining loop + the pool server) | the pool key (hot wallet), the ledger, the signed points documents |
+| Worker | `vearl-poolminer` (CPU or CUDA) | a payout address only, and the receipts it is sent |
+| Auditor | `vearl-pool-audit` + `tools/fetch_pool_bundle.py` | nothing: anybody can run it |
 | Explorer / dashboards | any HTTP client | nothing |
 
 ## 3. Transport
@@ -36,7 +38,7 @@ put a TLS terminator in front (stunnel or nginx `stream`) and let workers connec
 counts are ordinary JSON numbers.
 
 Requests: `{"id":N,"method":"...","params":{...}}`. Responses: `{"id":N,"result":{...}}` or `{"id":N,"error":{"code":C,"message":"..."}}`.
-Notifications (server to worker, no `id`): `job`, `set_target`.
+Notifications (server to worker, no `id`): `job`, `set_target`, `receipt` (`vpool/2`, section 13.2).
 
 ### 3.1 `login` (first request, once)
 
@@ -44,7 +46,7 @@ Notifications (server to worker, no `id`): `job`, `set_target`.
 {"id":1,"method":"login","params":{"proto":"vpool/1","address":"vrl1...","worker":"rig1","agent":"vearl-poolminer/0.1","sigma_rate":150.0}}
 ```
 
-- `proto` must be `vpool/1`. `address` is the payout address (Bech32m `vrl1...`; the pool's own address is refused).
+- `proto` is `vpool/2` (receipts, points) or `vpool/1` (same shares and payouts, no receipts, no points). `address` is the payout address (Bech32m `vrl1...`; the pool's own address is refused).
 - `worker`: 1-32 characters among letters, digits, `.`, `_`, `-`. Several workers may share one address (their shares add up).
 - `sigma_rate` (optional): estimated `sigma` evaluations per second; only used to choose the first share target.
 
@@ -212,6 +214,9 @@ The worker reconnects by itself (1 s doubled up to 30 s). It prints its rate, ac
 - Two real CPU workers on a real node: blocks found by the pool are accepted by the chain; every block's brute reward is `emission + fees` of the real
   block; the split of each block sums exactly to its reward; funds are conserved (`confirmed rewards = owed + in flight + paid + pool fee`); the pool's
   on-chain balance equals mined rewards minus transfers included; both miners receive real on-chain payments; statistics agree.
+- Points ledger (`tests/pool_points.rs`): an honest pool with two miners passes the audit; each way of cheating is caught (edited document, document signed by
+  another key, fake miners, hidden and made-up blocks, a miner credited less than its receipt, a share counted twice, shares credited at a harder target,
+  a rewritten history, an unpublished epoch); the work-versus-blocks test; the Python downloader and the audit program end to end on a live pool.
 - Hostile client: submit before login, bad protocol, bad address, bad worker name, double login, duplicate share, foreign slot, unknown job, out-of-range tile,
   share above the target, oversized line, repeated garbage, per-IP cap; none of them credits anything.
 - Vardiff moves the target; state survives a restart (chain and pool), a foreign key or genesis is refused; PPLNS window arithmetic, bounded window,
@@ -219,3 +224,117 @@ The worker reconnects by itself (1 s doubled up to 30 s). It prints its rate, ac
 
 Not tested yet: a deep reorganisation that orphans a pending block on a live pool, a pool with thousands of workers, the CUDA worker against the pool for
 a long run, TLS in front.
+
+## 13. Points ledger and fraud protection (`vpool/2`)
+
+The testnet rewards (docs/19) are computed from the chain, and the chain only shows the pool's key as the `miner` of a block. To give the
+points of a pool's blocks to the miners that earned them, the pool publishes a **signed ledger of its work**, and everything it publishes can be
+checked by anybody. Nothing here changes the consensus, the payouts of section 7 or the protocol of the shares; a `vpool/1` miner keeps working
+exactly as before (and earns no points: it has no receipts to prove what it did).
+
+### 13.1 What the pool publishes
+
+The time is cut into **epochs** of one hour (`epoch = unix time / 3600`, configurable for tests). Five minutes after an epoch ends (the grace
+for its last shares and blocks, `points_grace_secs`) the pool signs and stores one document per epoch and serves it on the statistics HTTP
+server (`--http`, publish it through a reverse proxy):
+
+| URL | content |
+|---|---|
+| `/api/points/index` | list of the published epochs: hash of the document, Merkle root of the shares, counts |
+| `/api/points/epoch/N` | the signed document of epoch N (below) |
+| `/api/points/share/N/I` | share number I of epoch N with its Merkle path |
+| `/api/points/shares/N?from=F&limit=L` | the complete list of the shares of epoch N (hex records), 20,000 at most per answer |
+
+The document (`vpool-points/1`) holds: the pool address and key, the genesis hash, the window (`start`, `end`), `prev` (SHA-256 of the previous
+document, so history cannot be rewritten quietly), the blocks the pool found during the epoch (height, hash, header timestamp), the jobs the shares belong to
+(parent, height, timestamp, transaction root, network target), the miners (address, work, shares, and the same figures for `vpool/2` sessions
+only), the totals and the **Merkle root of the list of all shares** (one leaf per share: job, `extra_nonce`, tile, credited target, address,
+protocol version; `vearl/merkle` hashing). It is signed with the pool key: `Ed25519(pool key, "vearl/pool-points/v1\0" + canonical JSON)`,
+canonical JSON = keys sorted, no spaces, integers and strings only (so that Python, Rust and anybody else obtain the same bytes). Weights are
+the `share_weight` of section 5, as decimal strings.
+
+### 13.2 Receipts
+
+Every `receipt_secs` (60) the pool sends each `vpool/2` session a notification
+
+```json
+{"method":"receipt","params":{"address":"vrl1...","epoch":N,"genesis":"...","pool":"vrl1...","shares":123,"ts":1760000000,"weight":"...","sig":"..."}}
+```
+
+signed with the pool key: the pool's promise that, in epoch N, the address has **at least** this `vpool/2` work. A final receipt is sent when the
+epoch is closed. The reference miner checks the signature against the pool key of its jobs and appends every valid receipt to
+`pool-receipts.jsonl` (`--receipts FILE`). If the signed ledger later credits less than a receipt, the pool has contradicted its own signature, and
+the two signed documents are enough to prove it to anybody.
+
+### 13.3 The audit
+
+`vearl-pool-audit` (with `tools/fetch_pool_bundle.py`, which downloads the documents first and only then draws at random the shares to examine,
+so the pool has already committed to the list when it learns which shares will be asked for) checks, with no trust in the operator:
+
+| check | what it catches | result |
+|---|---|---|
+| signature, pool, genesis, arithmetic of each document | a document edited after signing, forged, or of another pool or network; totals that do not add up | unusable (suspect) / fraud |
+| the blocks listed are pool blocks of the chain (same height, hash and timestamp), listed once | a block that does not exist; a block listed twice or in an epoch it cannot belong to | fraud |
+| every block of the pool on the chain is listed in some ledger once the deadline (24 h) has passed | a block hidden from the ledger; an unpublished epoch | fraud |
+| Merkle path of the drawn shares to the signed root; with the complete list: the root, the weight of every miner, no share counted twice | a list changed after signing; weights that are not the sum of the shares | fraud |
+| recomputation of the drawn shares (the jackpot of the tile, `work::tile_jackpot`) against the target they are credited at | shares nobody computed (made-up miners); a share credited at a harder target than it reached | fraud |
+| receipts held by the miners against the signed ledger | a miner credited less than the pool signed; a receipt for an epoch that was never published | fraud |
+| `prev` chain of the documents | a document replaced after the next one committed to it; missing documents | suspect |
+| claimed work against the blocks found (Poisson test per day, `p < 1e-9`) | work invented without the blocks that would come with it; blocks without the work that explains them | suspect |
+| share parents against the chain hashes | many shares on parents that are not on the chain | suspect |
+
+The report (`audit.json`, exit status 0/1/2) gives a status for every epoch: `ok`, `suspect` or `fraud`. `tools/testnet_rewards.py --pools`
+(docs/19 section 3 bis) counts only the `ok` epochs, holds the `suspect` ones until a person has looked, and gives nothing for a `fraud` epoch.
+
+### 13.4 Operator duties
+
+- Serve `/api/points/*` publicly (the other statistics can stay private), keep `<data-dir>/pool/points/` (documents and share lists; about 60
+  bytes per share) and never delete an epoch that has been published.
+- Register the pool with the team (docs/19) before the testnet starts counting; an unregistered pool's blocks are not shared with its miners.
+- Do not edit or re-sign a document after publishing it: the next document commits to its hash.
+- Keep the pool key safe. Whoever holds it can sign documents and receipts.
+- Put a reverse proxy with a request rate limit in front of `--http` (`/api/points/share/N/I` builds a Merkle tree the first time an epoch is asked
+  for); the pool caps one hour at `max_epoch_shares` shares (3 million) and refuses more with error 26, so that its memory and the document stay bounded.
+
+### 13.5 What this does not prove (read before trusting a pool)
+
+- **Attribution is the pool's word, backed by receipts.** A share is a proof of work, not a proof of who computed it: the pool could give your
+  shares to another address. The defence is your receipt: a miner that keeps `pool-receipts.jsonl` and runs the audit will catch a pool that
+  credits it less than it signed. A pool whose miners never check their receipts is still trusted. (A signature per share by the miner would close
+  this; it costs a wallet unlock per mining session and is not done in this version.)
+- **An operator can mine under several addresses.** That is real work, like any miner with several machines; the audit cannot (and need not)
+  tell. Fake work without real computation is what the recomputation catches.
+- **The audit treats the pool as an adversary.** Everything it downloads is checked before it is used as a file name or a number (plain integers only),
+  answers are size-limited, redirects are not followed (a pool cannot make the auditing machine read its own private API), the number of epochs
+  read per run is bounded, a document that appears long after its epoch ended is held (`late_document`), the epoch length is fixed by the program
+  (3600 s, a pool cannot choose its own windows), jobs must lie inside their epoch and on the chain (`job_outside_epoch`, `job_from_the_future`),
+  the matrices rebuilt for the recomputation are bounded (`audit_budget`), a weight can only be a plain non-negative integer (so a signed document
+  can share the points of the pool's blocks but never create more), and if the audit program itself fails on a pool's data, that pool's hours are
+  held (`audit_failed`) instead of keeping an older, favourable report in force.
+- **Sampling is probabilistic.** With 16 shares drawn per epoch, a ledger in which 20 % of the shares are fake is caught with probability
+  `1 - 0.8^16` = 97 % per epoch, and over several epochs it is certain. `--full` downloads every share and verifies the weights exactly; the
+  recomputation itself can be run on all shares (`--verify-max`).
+- **Block withholding.** A miner that submits shares but never submits a block lowers the number of blocks: the work-versus-blocks test then
+  flags the pool as `suspect`, and a person decides. The same happens to an unlucky pool less than once in a billion days.
+- **Chains with very fast blocks** (a test network) find many block solutions per height, most of them stale, and the Poisson test does not apply.
+- **Hour boundaries.** A block is listed in the epoch in which the pool found it, like the shares; its header timestamp is that of the job it was found
+  with, so it can precede that epoch by a few minutes (the audit accepts 10 minutes either way). The points of a scoring day are shared by the work of
+  that day, so the difference does not matter.
+
+### 13.6 Points shown to the miner
+
+A miner types its wallet address on the pool and the pool tells it how many testnet points it has earned through the pool, with the rule of the rewards
+program (docs/19 section 3 bis): the points that the pool's blocks earned in a scoring day (1 per block, 1.5 with paid work, x1.25 in the first three
+days), times the share of the `vpool/2` work that the address did that day.
+
+- `GET /api/points/miner/<vrl1...>` returns `provisional` (computed by the pool from its own signed ledger, including the current hour), `per_day`,
+  `counted_work`, `pool_points_total` and `official`. `GET /api/miner/<address>` carries the same object under `points`, the pool page shows both
+  figures, and the `stats` request of the protocol returns the provisional figure, which `vearl-poolminer` prints every 10 s.
+- `provisional` is the pool's own computation. It is not the figure that counts: the official one is the row of the published leaderboard
+  (`leaderboard.json` of `tools/testnet_rewards.py`), which also applies the audit (a held or fraudulent hour counts for nothing), the registration and the
+  eligibility rules. Start the pool with `--leaderboard FILE` (the file you refresh from <https://vearl.org/rewards/leaderboard.json>, for example with a
+  cron job) and `official` shows rank, points, eligibility and the reasons if the address is not yet eligible. Without the file `official` is `null`.
+- The pool needs the start of the testnet to cut the days: `--testnet-start 2026-10-23T16:00:00Z` (the default of the public testnet). Blocks and hours
+  before it are not counted.
+- A miner that speaks `vpool/1`, or an address that never mined in this pool, has 0 points here: there are no receipts to back its work.
+- The two figures are written independently (Rust in the pool, Python in the rewards tool) and the tests check that they agree.

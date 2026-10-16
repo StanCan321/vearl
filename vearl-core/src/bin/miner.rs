@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use vearl_core::dual::{dev_qtc_address, valid_qtc_address, QTC_FEE_PCT, QTC_POOL_ADDR, QTC_POOL_CERT};
+use vearl_core::dual::{dev_qtc_address, qtc_fee_pct, valid_qtc_address, QTC_POOL_ADDR, QTC_POOL_CERT};
 use vearl_core::wallet::{load_signing_key, new_mnemonic, Keystore, KdfParams};
 
 const WINDOWS: bool = cfg!(windows);
@@ -200,7 +200,7 @@ fn wizard(env: &Env, gpu_ok: bool, quantus_present: bool) -> Value {
         println!("while Vearl has no paid job for you. It is OFF unless you say yes now.");
         println!("  - You mine to YOUR OWN address; the Quantus pool pays you directly, Vearl never holds your funds.");
         println!("  - Create an address with the official Quantus wallet (it starts with \"qz\").");
-        println!("  - Development fee: {QTC_FEE_PCT} % of your Quantus mining time goes to the Vearl development address");
+        println!("  - Development fee: {} % of your Quantus mining time goes to the Vearl development address", qtc_fee_pct());
         println!("    {}", dev_qtc_address());
         println!("    (it is printed at every start, see docs/15 section 4 bis and docs/17).");
         println!("  - Fee audit: every 5 minutes the miner sends the Vearl seed nodes a signed message with your Vearl account, your Quantus");
@@ -417,13 +417,6 @@ fn main() {
         println!("{}", vearl_core::feeguard::file_hash(Path::new(f)).unwrap_or_else(|e| die(&e)));
         return;
     }
-    if args.first().map(String::as_str) == Some("fee-obf") {
-        let a = args.get(1).unwrap_or_else(|| die("vearl-miner fee-obf ADDRESS"));
-        let (m, d) = vearl_core::feeguard::mask_address(a);
-        println!("const ADDR_DIGEST: &str = \"{d}\";");
-        println!("const ADDR_MASKED: [u8; {}] = {:?};", m.len(), m);
-        return;
-    }
     for a in &args {
         if a.starts_with("--") && !["--home", "--devnet", "--help"].contains(&a.as_str()) {
             die(&format!("unknown option {a}"));
@@ -589,7 +582,7 @@ fn main() {
     if use_quantus {
         println!("  Quantus address: {quantus_addr}");
         println!("  GPU time:        {} % Quantus / {} % Vearl, and the whole GPU goes to Vearl as soon as a paid job is yours", cfg["partner_share"].as_u64().unwrap_or(80), 100 - cfg["partner_share"].as_u64().unwrap_or(80).min(100));
-        println!("  Dev fee:         {QTC_FEE_PCT} % of the Quantus mining time -> {}", dev_qtc_address());
+        println!("  Dev fee:         {} % of the Quantus mining time -> {}", qtc_fee_pct(), dev_qtc_address());
     } else {
         println!("  Mining:          Vearl only");
     }

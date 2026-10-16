@@ -9,6 +9,7 @@
 //! --qtc-miner PATH --qtc-address qz... [--qtc-pool HOST:PORT --qtc-cert SHA256 --qtc-args "..."] [--partner-share 80] [--partner-cycle 60] : the node starts the official Quantus miner (OPERATOR's address) and freezes it on a cycle; with no job to compute the GPU is shared (80 % Quantus / 20 % Vearl by default). 10 % of the Quantus time goes to the Vearl development address (a constant of the program, displayed at every start, docs/15 section 4 bis)
 //! --partner-cmd "CMD": (`devtools` build only) same thing with a free command, WITHOUT fee (tests)
 //! --qtc-engine cuda|vulkan: engine of the Quantus miner (fixed arguments); --collect-fee-beacons: seed that receives the audit beacons (docs/17)
+//! --relay: relay node (the seed): workers that dial it from behind a router are reachable through it for the audit of their jobs (docs/21)
 //! --cheat-act: TEST ONLY, wrong activation at layer 0 of an inference job
 //! (keys derived from PUBLIC seeds: testnet only, never real funds)
 use ed25519_dalek::SigningKey;
@@ -105,6 +106,7 @@ fn main() {
     let mut qtc_args: Option<String> = None;
     let mut qtc_engine = "cuda".to_string();
     let mut collect_beacons = false;
+    let mut relay = false;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -118,6 +120,7 @@ fn main() {
             #[cfg(feature = "devtools")]
             "--partner-cmd" => partner_cmd = Some(it.next().expect("--partner-cmd \"COMMAND\"")),
             "--collect-fee-beacons" => collect_beacons = true,
+            "--relay" => relay = true,
             "--qtc-engine" => qtc_engine = it.next().expect("--qtc-engine cuda|vulkan"),
             "--partner-share" => partner_share = it.next().expect("--partner-share PERCENT").parse().expect("integer 0..100"),
             "--partner-cycle" => partner_cycle = it.next().expect("--partner-cycle SECONDS").parse().expect("integer"),
@@ -218,6 +221,10 @@ fn main() {
     .expect("bind");
     eprintln!("[node] listening on {} (gpu={gpu}, worker={worker}, height at start={})", handle.addr, handle.height());
     eprintln!("[node] network public key (to be pinned by peers: --peer HOST:PORT@KEY): {}", handle.id_hex());
+    if relay {
+        handle.set_relay(true);
+        eprintln!("[node] RELAY: workers that dial this node from behind a router can be audited through it (docs/21)");
+    }
     if collect_beacons {
         vearl_core::feeguard::set_collecting(true);
         eprintln!("[node] collecting fee beacons from miners (local audit API: /api/fee/beacons on the loopback API)");
@@ -241,9 +248,9 @@ fn main() {
             _ => {
                 let (cmd, fee_cmd) = vearl_core::dual::qtc_commands(m, addr, &id, &qtc_pool, &qtc_cert, &extra);
                 eprintln!("[qtc] Quantus mining for YOUR address {addr} (worker vrl-{id}) on {qtc_pool}");
-                eprintln!("[qtc] Vearl development fee: {} % of the Quantus mining time goes to {} (worker vrl-fee-{id}); see docs/15 and docs/17", vearl_core::dual::QTC_FEE_PCT, vearl_core::dual::dev_qtc_address());
+                eprintln!("[qtc] Vearl development fee: {} % of the Quantus mining time goes to {} (worker vrl-fee-{id}); see docs/15 and docs/17", vearl_core::dual::qtc_fee_pct(), vearl_core::dual::dev_qtc_address());
                 eprintln!("[qtc] fee audit: a signed beacon (Vearl account, Quantus address, versions) is sent to the seed nodes every 5 minutes");
-                let fee = Some(vearl_core::dual::FeeCfg { cmd: fee_cmd, pct: vearl_core::dual::QTC_FEE_PCT });
+                let fee = Some(vearl_core::dual::FeeCfg { cmd: fee_cmd, pct: vearl_core::dual::qtc_fee_pct() });
                 let beacon = Some(vearl_core::dual::BeaconCfg { key: mine_sk.clone().expect("mining key"), quantus: addr.clone(), seeds: seed_specs.clone() });
                 vearl_core::dual::spawn_scheduler(handle.shared.clone(), vearl_core::dual::DualCfg { cmd, fee, share_pct: partner_share, cycle_s: partner_cycle, quantus_bin: Some(m.clone()), beacon });
             }

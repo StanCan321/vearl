@@ -97,7 +97,7 @@ vearl-poolminer --pool POOL_HOST:3333 --address vrl1yourpayoutaddress --worker r
 vearl-poolminer --pool POOL_HOST:3333 --address vrl1yourpayoutaddress --threads 8             # CPU
 ```
 
-- It prints its rate (`sigma/s`), accepted/rejected shares and blocks every 10 s, and reconnects by itself. Rewards are credited after the pool's block is 10 blocks deep and paid on-chain by the pool when your balance reaches the pool's minimum (1 VRL by default); the pool's `/api/miner/<your address>` shows balance, pending and payments.
+- It prints its rate (`sigma/s`), accepted/rejected shares, blocks and receipts every 10 s, and reconnects by itself. The pool sends you signed receipts of your work (`vpool/2`); they are saved in `pool-receipts.jsonl` and are your proof if the pool credits you less than it signed (`vearl-pool-audit`, `docs/16` section 13). The testnet points of a registered pool are shared by verified work (`docs/19` section 3 bis): the pool's page shows the points of your address, and the miner prints them (`testnet points`) in its status line. Rewards are credited after the pool's block is 10 blocks deep and paid on-chain by the pool when your balance reaches the pool's minimum (1 VRL by default); the pool's `/api/miner/<your address>` shows balance, pending and payments.
 - A pool mines the **Native Work only**: it does not compute paid jobs. For the compute market run your own node as a worker (`node --worker`); both can run on the same machine at different times.
 - Trust: the pool holds the rewards until it pays them, and a dishonest pool can simply not pay. Choose pools you can check (their `/api/stats` exposes `money.solvent`), and check your on-chain balance. Protocol and operator guide: `docs/16-pool-protocol.md`.
 

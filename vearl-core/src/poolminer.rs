@@ -1,8 +1,9 @@
-//! VEARL pool client (`vpool/1`, docs/16-pool-protocol.md): connects, receives the jobs, looks for shares with the CPU or the GPU
+//! VEARL pool client (`vpool/2`, docs/16-pool-protocol.md): connects, receives the jobs, looks for shares with the CPU or the GPU
 //! and submits them. The client only knows the pool's PUBLIC key and its own payout address: no private key here.
 //! Automatic reconnection (1 s wait doubled up to 30 s).
 use crate::crypto::*;
-use crate::pool::{hex, parse_u64hex, read_line_limited, u64hex, unhex32, E_BANNED, PROTO};
+use crate::pool::{hex, parse_u64hex, read_line_limited, u64hex, unhex32, E_BANNED, PROTO2};
+use crate::poolpoints::verify_receipt_sig;
 use crate::types::*;
 use crate::work::*;
 use serde_json::{json, Value};
@@ -27,6 +28,8 @@ pub struct MinerConfig {
     /// estimated rate in sigma/s, to choose the initial share target (None: the pool assumes a small CPU)
     pub rate_hint: Option<f64>,
     pub log: bool,
+    /// file that receives every receipt the pool sends (JSON lines): the evidence the miner keeps, checked by `vearl-pool-audit`
+    pub receipts: Option<std::path::PathBuf>,
 }
 
 #[derive(Default)]
@@ -37,6 +40,11 @@ pub struct MinerStats {
     pub sigmas: AtomicU64,
     pub connected: AtomicBool,
     pub last_error: Mutex<String>,
+    /// receipts received (valid signature, our address) and the latest one
+    pub receipts: AtomicU64,
+    pub last_receipt: Mutex<Option<Value>>,
+    /// testnet points earned through this pool so far (provisional figure of the pool), refreshed every two minutes
+    pub points: Mutex<Option<f64>>,
 }
 
 /// Job described by the pool (message `job`).
@@ -108,6 +116,9 @@ impl Live {
         j.clone().map(|j| (self.gen.load(Ordering::SeqCst), j))
     }
 }
+
+/// Request id of the periodic `stats` call (the shares use small counters).
+const STATS_ID: u64 = 1 << 40;
 
 fn submit_line(live: &Live, job: &JobSpec, en: u64, ti: usize, tj: usize) -> String {
     let id = live.next_id.fetch_add(1, Ordering::SeqCst);
@@ -208,7 +219,7 @@ fn session(cfg: &MinerConfig, stats: &Arc<MinerStats>, stop: &Arc<AtomicBool>) -
     let mut writer = sock.try_clone().map_err(|e| e.to_string())?;
     let mut reader = BufReader::new(sock);
     let live = Arc::new(Live { job: Mutex::new(None), gen: AtomicU64::new(0), share_target: AtomicU64::new(0), alive: AtomicBool::new(true), next_id: AtomicU64::new(2) });
-    let mut login = json!({"proto": PROTO, "address": cfg.address, "worker": cfg.worker, "agent": concat!("vearl-poolminer/", env!("CARGO_PKG_VERSION"))});
+    let mut login = json!({"proto": PROTO2, "address": cfg.address, "worker": cfg.worker, "agent": concat!("vearl-poolminer/", env!("CARGO_PKG_VERSION"))});
     if let Some(r) = cfg.rate_hint {
         login["sigma_rate"] = json!(r);
     }
@@ -272,6 +283,7 @@ fn session(cfg: &MinerConfig, stats: &Arc<MinerStats>, stop: &Arc<AtomicBool>) -
     // rate measured over the first seconds: the pool immediately deduces an adapted share target from it
     let mut hint_at: Option<(Instant, u64)> = None;
     let mut hint_sent = cfg.rate_hint.is_some();
+    let mut stats_at: Option<Instant> = None;
     let result = loop {
         if stop.load(Ordering::SeqCst) || !live.alive.load(Ordering::SeqCst) {
             break Ok(());
@@ -285,6 +297,10 @@ fn session(cfg: &MinerConfig, stats: &Arc<MinerStats>, stop: &Arc<AtomicBool>) -
                     hint_sent = true;
                 }
             }
+        }
+        if stats.connected.load(Ordering::SeqCst) && stats_at.map_or(true, |t| t.elapsed() > Duration::from_secs(120)) {
+            let _ = tx.send(json!({"id": STATS_ID, "method": "stats"}).to_string());
+            stats_at = Some(Instant::now());
         }
         match read_line_limited(&mut reader, &mut line) {
             Ok(true) => {}
@@ -319,6 +335,23 @@ fn session(cfg: &MinerConfig, stats: &Arc<MinerStats>, stop: &Arc<AtomicBool>) -
                 }
                 Err(e) => break Err(format!("job refused: {e}")),
             },
+            Some("receipt") => {
+                // the pool's signed promise of our cumulative weight in the epoch: checked against the pool key that is in every job, kept
+                let r = &v["params"];
+                let pool_key = live.job.lock().unwrap().as_ref().map(|j| j.miner);
+                let ok = pool_key.map_or(false, |k| verify_receipt_sig(r, &k).is_ok()) && r["address"].as_str() == Some(cfg.address.as_str());
+                if ok {
+                    stats.receipts.fetch_add(1, Ordering::Relaxed);
+                    *stats.last_receipt.lock().unwrap() = Some(r.clone());
+                    if let Some(path) = &cfg.receipts {
+                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                            let _ = writeln!(f, "{r}");
+                        }
+                    }
+                } else if cfg.log {
+                    eprintln!("[poolminer] a receipt was ignored (bad signature or not for our address)");
+                }
+            }
             Some("set_target") => {
                 if let Some(t) = v["params"]["share_target"].as_str().and_then(parse_u64hex) {
                     live.share_target.store(t, Ordering::SeqCst);
@@ -340,7 +373,11 @@ fn session(cfg: &MinerConfig, stats: &Arc<MinerStats>, stop: &Arc<AtomicBool>) -
                         eprintln!("[poolminer] share refused ({code}): {msg}");
                     }
                 } else if let Some(r) = v.get("result") {
-                    if id == 1 {
+                    if id == STATS_ID {
+                        if let Some(p) = r["points"].as_f64() {
+                            *stats.points.lock().unwrap() = Some(p);
+                        }
+                    } else if id == 1 {
                         stats.connected.store(true, Ordering::SeqCst);
                         if let Some(t) = r["share_target"].as_str().and_then(parse_u64hex) {
                             live.share_target.store(t, Ordering::SeqCst);

@@ -26,7 +26,7 @@ ROLES = [
 ]
 
 SITE, PAPER, MAIL = "https://vearl.org", "https://vearl.org/whitepaper", "contact@vearl.org"
-DISCORD = "https://discord.gg/jya8meKnvM"
+DISCORD = "https://discord.gg/vearl"
 
 WELCOME = (
     "**Welcome to Vearl.**\n\n"

@@ -16,7 +16,19 @@ elif [ -s /etc/vearl/rewards-registered.json ]; then
   ARGS+=(--registered /etc/vearl/rewards-registered.json)
 fi
 [ -s /etc/vearl/rewards-excluded.txt ] && ARGS+=(--exclude /etc/vearl/rewards-excluded.txt)
+# addresses that use the Quantus add-on without paying the development fee are not eligible (deploy/feeaudit, docs/17); the counts are public
+[ -s /var/lib/vearl/feeaudit/compliance.json ] && ARGS+=(--fee-compliance /var/lib/vearl/feeaudit/compliance.json)
+# registered mining pools (docs/19 section 3 bis): /etc/vearl/rewards-pools.json lists them; their signed ledgers are audited first, with the blocks
+# of the previous run, and the audit reports are read by the leaderboard
+if [ -s /etc/vearl/rewards-pools.json ]; then
+  if [ -x /opt/vearl/bin/vearl-pool-audit ] && [ -s "$OUT/blocks.json" ]; then
+    python3 /opt/vearl/tools/audit_pools.py --spec /etc/vearl/rewards-pools.json --genesis /etc/vearl/genesis.json --blocks "$OUT/blocks.json" \
+      --audit-bin /opt/vearl/bin/vearl-pool-audit --last 72 || echo "pool audit failed (the previous reports stay in force)" >&2
+  fi
+  ARGS+=(--pools /etc/vearl/rewards-pools.json)
+fi
 python3 /opt/vearl/tools/testnet_rewards.py "${ARGS[@]}"
+[ -s /var/lib/vearl/feeaudit/fee-stats.json ] && install -m 0644 /var/lib/vearl/feeaudit/fee-stats.json "$OUT/fee-stats.json.new" && mv "$OUT/fee-stats.json.new" "$OUT/fee-stats.json"
 for f in leaderboard.json leaderboard.csv blocks.json; do
   install -m 0644 "$TMP/$f" "$OUT/$f.new"
   mv "$OUT/$f.new" "$OUT/$f"

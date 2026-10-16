@@ -1,9 +1,10 @@
 #!/bin/bash
 # Publish the website to the VPS: public files only (site/tools stays local), then optionally the nginx config.
 # CSS/JS/font-stylesheet URLs get a content fingerprint (?v=hash) so browsers can cache them for a year and still see every update.
-#   bash deploy/deploy-site.sh [--nginx] [--with-explorer] [--with-faucet] [--with-compute] [--with-leaderboard] [--with-participate]
+#   bash deploy/deploy-site.sh [--nginx] [--with-explorer] [--with-faucet] [--with-compute] [--with-leaderboard] [--with-participate] [--with-team]
 #   --with-faucet also publishes the faucet page (/faucet/). It needs the faucet service behind /drip (deploy/systemd/vearl-faucet.service) and --nginx once.
 #   --with-participate also publishes the page that explains how to take part in the testnet (/participate/).
+#   --with-team also publishes the team page (/team/): one card per member, the details open from the photo.
 #   --with-leaderboard also publishes the testnet contributors leaderboard (/leaderboard/, docs/19). Its data is written by deploy/rewards/ (install-rewards.sh) into
 #   /var/www/vearl-rewards, served at /rewards/ (needs --nginx once).
 #   --nginx installs the config; the explorer's /api/ reads the demo network until you pass --api-live (at the launch, once the real node answers on 127.0.0.1:8545)
@@ -23,13 +24,15 @@ if [[ "$ARGS" == *" --with-compute "* ]]; then cp -r site/compute "$OUT"/; mkdir
 if [[ "$ARGS" == *" --with-faucet "* ]]; then cp -r site/faucet "$OUT"/; fi
 if [[ "$ARGS" == *" --with-leaderboard "* ]]; then cp -r site/leaderboard "$OUT"/; fi
 if [[ "$ARGS" == *" --with-participate "* ]]; then cp -r site/participate "$OUT"/; fi
+if [[ "$ARGS" == *" --with-team "* ]]; then cp -r site/team "$OUT"/; fi
 PAGES="$OUT/index.html $OUT/404.html $OUT/credits.html $OUT/whitepaper.html"
 [ -f "$OUT/explorer/index.html" ] && PAGES="$PAGES $OUT/explorer/index.html"
 [ -f "$OUT/compute/index.html" ] && PAGES="$PAGES $OUT/compute/index.html"
 [ -f "$OUT/faucet/index.html" ] && PAGES="$PAGES $OUT/faucet/index.html"
 [ -f "$OUT/leaderboard/index.html" ] && PAGES="$PAGES $OUT/leaderboard/index.html"
 [ -f "$OUT/participate/index.html" ] && PAGES="$PAGES $OUT/participate/index.html"
-for f in assets/site.css assets/site.js assets/photos.js assets/whitepaper.css assets/whitepaper.js assets/explorer.css assets/explorer.js assets/compute.css assets/compute.js assets/faucet.js assets/leaderboard.js assets/nav.js assets/participate.css fonts/fonts.css; do
+[ -f "$OUT/team/index.html" ] && PAGES="$PAGES $OUT/team/index.html"
+for f in assets/site.css assets/site.js assets/photos.js assets/whitepaper.css assets/whitepaper.js assets/explorer.css assets/explorer.js assets/compute.css assets/compute.js assets/faucet.js assets/leaderboard.js assets/nav.js assets/participate.css assets/team.css assets/team.js fonts/fonts.css; do
   h=$(md5sum "site/$f" | cut -c1-10)
   sed -i "s#/$f\"#/$f?v=$h\"#g" $PAGES
 done

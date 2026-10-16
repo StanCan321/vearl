@@ -1,7 +1,49 @@
 // Compiles the CUDA kernel only with `--features gpu` (requires nvcc).
 use std::{env, path::PathBuf, process::Command};
 
+/// Address that receives the development fee in a build that is not an official release (docs/15, docs/17). Official releases are built with
+/// VEARL_FEE_ADDRESS and a secret VEARL_FEE_SALT (see deploy/release/fee_secrets.py): the constants of the executable are then different in every release.
+const PUBLIC_FEE_ADDRESS: &str = "qzm7tR2aEJEdMFajwDspjiWefz2F4iDzsys32gE1DK8Dxc59P";
+
+/// Generates `fee_consts.rs` (included by src/feeguard.rs): the fee address, the percentage and a digest of both, hidden behind a salt.
+/// The derivation is repeated in feeguard.rs (`salt`, `mask`, `policy_digest`) and a test checks that both agree.
+fn gen_fee_consts() {
+    for v in ["VEARL_FEE_ADDRESS", "VEARL_FEE_SALT", "VEARL_FEE_PCT"] {
+        println!("cargo:rerun-if-env-changed={v}");
+    }
+    let addr = env::var("VEARL_FEE_ADDRESS").unwrap_or_else(|_| PUBLIC_FEE_ADDRESS.to_string());
+    assert!((40..=60).contains(&addr.len()) && addr.starts_with("qz") && addr.chars().all(|c| c.is_ascii_alphanumeric()), "VEARL_FEE_ADDRESS: a Quantus address (qz...)");
+    let salt: [u8; 32] = match env::var("VEARL_FEE_SALT") {
+        Ok(h) => {
+            assert!(h.len() == 64 && h.bytes().all(|c| c.is_ascii_hexdigit()), "VEARL_FEE_SALT: 64 hexadecimal digits");
+            let mut s = [0u8; 32];
+            for i in 0..32 {
+                s[i] = u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap();
+            }
+            s
+        }
+        Err(_) => *blake3::hash(b"vearl/fee/public-default-salt").as_bytes(),
+    };
+    let pct: u32 = env::var("VEARL_FEE_PCT").ok().map_or(10, |v| v.parse().expect("VEARL_FEE_PCT: integer"));
+    assert!(pct <= 100, "VEARL_FEE_PCT: 0..100");
+    let mut mask = vec![0u8; addr.len() + 1];
+    blake3::Hasher::new_derive_key("vearl/fee/mask/v2").update(&salt).finalize_xof().fill(&mut mask);
+    let masked: Vec<u8> = addr.bytes().zip(&mask).map(|(a, b)| a ^ b).collect();
+    let pct_masked = pct as u8 ^ mask[addr.len()];
+    let policy = blake3::Hasher::new_derive_key("vearl/fee/policy/v2").update(&salt).update(addr.as_bytes()).update(&pct.to_le_bytes()).finalize();
+    // the salt is stored in four pieces, each hidden behind the digest of the masked address: it is not found as 32 contiguous bytes
+    let d = blake3::hash(&masked);
+    let parts: Vec<Vec<u8>> = (0..4).map(|i| (0..8).map(|j| salt[8 * i + j] ^ d.as_bytes()[8 * i + j]).collect()).collect();
+    let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("fee_consts.rs");
+    let text = format!(
+        "const SALT_PARTS: [[u8; 8]; 4] = {:?};\nconst ADDR_MASKED: [u8; {}] = {:?};\nconst PCT_MASKED: u8 = {};\nconst POLICY_DIGEST: [u8; 32] = {:?};\n",
+        parts, masked.len(), masked, pct_masked, policy.as_bytes()
+    );
+    std::fs::write(out, text).unwrap();
+}
+
 fn main() {
+    gen_fee_consts();
     println!("cargo:rerun-if-changed=gpu/vearl_gpu.cu");
     println!("cargo:rerun-if-changed=gpu/vearl_render2.cu");
     println!("cargo:rerun-if-changed=gpu/vearl_render3.cu");

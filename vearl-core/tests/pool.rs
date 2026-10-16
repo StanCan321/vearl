@@ -64,7 +64,7 @@ fn miner(pool: &Pool, seed: u8, worker: &str, threads: usize, hint: Option<f64>)
     let address = address_of(&pubkey(&SigningKey::from_bytes(&[seed; 32])));
     let stats = Arc::new(MinerStats::default());
     let stop = Arc::new(AtomicBool::new(false));
-    let c = MinerConfig { pool: pool.local_addr(), address: address.clone(), worker: worker.into(), threads, gpu: false, rate_hint: hint, log: false };
+    let c = MinerConfig { pool: pool.local_addr(), address: address.clone(), worker: worker.into(), threads, gpu: false, rate_hint: hint, log: false, receipts: None };
     let (s, st) = (stats.clone(), stop.clone());
     std::thread::spawn(move || run(c, s, st));
     (stats, stop, address)
