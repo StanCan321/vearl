@@ -23,6 +23,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: vearl-core
+      # the tools that the end-to-end pool test runs check Ed25519 signatures with this package
+      - name: python dependencies
+        run: pip install cryptography
       # CPU build: the GPU kernels need a CUDA toolkit and a card, they are tested by hand (docs/15 section 3)
       - name: build
         run: cargo build --release --bins

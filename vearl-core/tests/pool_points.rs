@@ -403,9 +403,9 @@ fn claimed_work_far_above_the_blocks_found_is_flagged_and_normal_luck_is_not() {
 /// The whole tool chain a person would use: the Python downloader against the live pool, then the `vearl-pool-audit` program on what it saved.
 #[test]
 fn the_command_line_tools_audit_a_live_pool_end_to_end() {
-    let python = ["python", "python3"].into_iter().find(|p| std::process::Command::new(p).arg("--version").output().map_or(false, |o| o.status.success()));
+    let python = ["python", "python3"].into_iter().find(|p| std::process::Command::new(p).args(["-c", "import cryptography"]).output().map_or(false, |o| o.status.success()));
     let Some(python) = python else {
-        eprintln!("no python on this machine: end-to-end tools test skipped");
+        eprintln!("no python with the `cryptography` package on this machine: end-to-end tools test skipped");
         return;
     };
     let r = start(&[(21, "a"), (22, "b")]);
