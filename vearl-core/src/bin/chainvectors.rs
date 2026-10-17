@@ -103,12 +103,12 @@ fn main() {
     let mut blocks = vec![];
     let mut ts = cfg.ts;
     let sink = [0x77u8; 32]; // address without a key: receives transfers
-    for h in 0..130u64 {
+    for h in 0..EPOCH_LEN + 30 {
         // deterministic timestamps, with a few extreme gaps to exercise the retargeting bounds
         let dt = match h % 23 {
             5 => 1,
-            11 => 400,
-            r => 12 + (r * 7 + h * 3) % 41,
+            11 => 13 * BLOCK_TIME,
+            r => BLOCK_TIME * 2 / 5 + (r * 7 + h * 3) % (BLOCK_TIME * 4 / 3 + 1),
         };
         ts += dt;
         let miner = key(1 + (h % 3) as u8);

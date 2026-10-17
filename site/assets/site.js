@@ -225,7 +225,7 @@
     code(b, 0, 6, 'weight = 2^64 / (target + 1);');
     put(b, 0, 7, 'the chain with the most cumulative work wins', 6);
     code(b, 0, 9, 'asert(anchor, dt, dh, halflife = 900);');
-    put(b, 0, 10, 'target 30 s per block, no window to game', 6);
+    put(b, 0, 10, 'target 10 s per block, no window to game', 6);
     code(b, 0, 12, 'reward = base + min(base / 2, rebate_left);');
     put(b, 0, 13, 'rebate <= what the client burned', 6);
     put(b, 0, 15, 'native: security  |  job: security + result', 1);

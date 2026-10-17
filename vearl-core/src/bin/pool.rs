@@ -3,7 +3,7 @@
 //!
 //! vearl-pool --wallet POOL.json [--account 0] [--password-file F]   (or --insecure-devnet-key N: PUBLIC seed key, devnet)
 //!            [--genesis FILE] [--listen 0.0.0.0:9000] [--peer HOST:PORT]... [--pool-listen 0.0.0.0:3333] [--http 127.0.0.1:8650]
-//!            [--data-dir DIR] [--fee 1.0] [--min-payout 1] [--payout-interval 600] [--confirmations 10] [--pplns 2.0]
+//!            [--data-dir DIR] [--fee 1.0] [--min-payout 1] [--payout-interval 600] [--confirmations 30] [--pplns 2.0]
 //!            [--share-secs 15] [--refresh-secs 30] [--max-conns 2000] [--max-per-ip 64] [--api ADDR [--api-public]]
 //!            [--fixed-share-target HEX16]   (tests: disables vardiff)
 //!            [--testnet-start 2026-10-23T16:00:00Z] [--leaderboard leaderboard.json]   (points shown to the miners, docs/16 section 13.6)
@@ -25,7 +25,7 @@ fn die(m: &str) -> ! {
 const HELP: &str = r#"vearl-pool: a Vearl mining pool (protocols vpool/2 and vpool/1). It runs a full node (without mining of its own) and the pool server.
 
   vearl-pool --wallet POOL.json [--genesis genesis.json] [--peer HOST:PORT]... [--listen 0.0.0.0:9000] [--pool-listen 0.0.0.0:3333]
-             [--http 127.0.0.1:8650] [--data-dir DIR] [--fee 1.0] [--min-payout 1] [--payout-interval 600] [--confirmations 10]
+             [--http 127.0.0.1:8650] [--data-dir DIR] [--fee 1.0] [--min-payout 1] [--payout-interval 600] [--confirmations 30]
              [--password-file FILE] [--testnet-start ISO_UTC] [--leaderboard FILE]
 
 The pool wallet receives the block rewards and signs the payouts: use a DEDICATED wallet with few funds of its own.
@@ -73,7 +73,7 @@ fn main() {
         http: arg("--http"),
         fee_bps: (num("--fee", 1.0) * 100.0).round() as u64,
         pplns_n: num("--pplns", 2.0),
-        confirmations: num("--confirmations", 10.0) as u64,
+        confirmations: num("--confirmations", vearl_core::pool::DEFAULT_CONFIRMATIONS as f64) as u64,
         min_payout: parse_amount(&arg("--min-payout").unwrap_or_else(|| "1".into())).unwrap_or_else(|e| die(&e)),
         payout_interval: num("--payout-interval", 600.0) as u64,
         share_secs: num("--share-secs", 15.0),

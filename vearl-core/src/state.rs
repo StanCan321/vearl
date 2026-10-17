@@ -13,7 +13,7 @@ use crate::work::*;
 use std::collections::BTreeMap;
 
 pub const COIN: u64 = 100_000_000;
-pub const BLOCK_TIME: u64 = 30;
+pub const BLOCK_TIME: u64 = 10;
 pub const CHALLENGE_WINDOW: u64 = 10; // blocks
 /// The window in blocks is not enough: on a fast network (or with a miner chaining blocks) 10 blocks
 /// can pass in under a second. A duration in timestamp seconds is ALSO required. Timestamps are
@@ -48,10 +48,16 @@ pub fn challenge_open(height: u64, ts: u64, at: u64, at_ts: u64) -> bool {
 pub const BURN_BPS: u64 = 1_000; // 10 % of the escrow burned at job creation
 pub const BOND_BPS: u64 = 1_000; // worker bond = 10 % of the net escrow
 pub const MIN_ESCROW: u64 = COIN; // minimum price of a job (testnet)
-pub const R0: u64 = 20 * COIN;
-pub const HALVING: u64 = 1_051_200;
-pub const TAIL: u64 = COIN / 2;
-pub const EPOCH_LEN: u64 = 100;
+/// Emission. The schedule is defined per YEAR and per second, not per block: 21,024,000 VRL in the first year, halved every
+/// 365 days (3,153,600 blocks of 10 s). The reward of a block is therefore 20 VRL x 10 s / 30 s, ROUNDED DOWN to the unit so that
+/// no year ever issues more than its nominal amount (6.66666666 VRL; the 31 years of halving issue 42,047,999.45 VRL, never more
+/// than the 42,048,000 of the published cap).
+pub const R0: u64 = 20 * COIN * BLOCK_TIME / 30;
+pub const HALVING: u64 = 365 * 86_400 / BLOCK_TIME;
+/// The floor of the testnet: 0.5 VRL per 30 s, i.e. 1/6 VRL per block of 10 s (mainnet plan: no floor, `docs/04`).
+pub const TAIL: u64 = COIN / 2 * BLOCK_TIME / 30;
+/// Native-work matrices change every 3,000 s (50 minutes), whatever the block time.
+pub const EPOCH_LEN: u64 = 3_000 / BLOCK_TIME;
 /// After the end of the auction, the winner has this delay (timestamp seconds) to claim; after that any worker
 /// can claim at the full price.
 pub const AUCTION_GRACE_SECS: u64 = 60;

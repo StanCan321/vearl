@@ -26,7 +26,7 @@ nrng = np.random.default_rng(SEED)
 alloc = [{"key": C.pub_hex(s), "amount": 10_000 * COIN} for s in range(1, 5)]
 G = {"params": {"n": N, "tile": 16, "rank": 63, "fold_k": 64}, "alloc": alloc, "timestamp": 1_700_000_000, "target": (1 << 64) // 16 - 1, "retarget": "Fixed",
      "timing": {"challenge_secs": 60, "serve_secs": 30},
-     "constants": {"block_time": 30, "epoch_len": 100, "r0": 20 * COIN, "halving": 1_051_200, "tail": COIN // 2, "lwma_n": 30, "max_future": 60,
+     "constants": {"block_time": 10, "epoch_len": 300, "r0": 20 * COIN * 10 // 30, "halving": 3_153_600, "tail": COIN // 2 * 10 // 30, "lwma_n": 90, "max_future": 60,
                    "burn_bps": 1000, "bond_bps": 1000, "min_escrow": COIN, "challenge_window": 10, "auction_grace_secs": 60, "max_auction_secs": 3600,
                    "fetch_fee": COIN // 20, "fetch_extend_secs": 60, "max_pending_fetches": 8}}
 

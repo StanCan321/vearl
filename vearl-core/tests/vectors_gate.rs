@@ -24,7 +24,7 @@ fn chain_vectors_are_frozen_and_python_mined_blocks_are_accepted() {
     // 2. the chain extended by 6 blocks MINED IN PYTHON (tools/chain_ref.py) is accepted by the Rust validator
     let v = Command::new(env!("CARGO_BIN_EXE_vearl-chain-vectors")).args(["verify", "tests/vectors/chain-native-v1.ext.json"]).output().unwrap();
     assert!(v.status.success(), "{}", String::from_utf8_lossy(&v.stdout));
-    assert!(String::from_utf8_lossy(&v.stdout).contains("136 blocks accepted"));
+    assert!(String::from_utf8_lossy(&v.stdout).contains("336 blocks accepted"));
 }
 
 #[test]

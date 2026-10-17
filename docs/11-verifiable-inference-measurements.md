@@ -56,7 +56,7 @@ Facts about Pearl: those of `docs/01` (third-party sources, a single empirical s
 
 - **Size**: `n ≤ 1024` (an `n×n` tensor), at most 240 operations and 64 weight blocks per program (§5 bis): wide MLPs or small CNNs, **not** a large language model (a 4096×4096 int8 layer is already 16 blocks of 1 MiB). The input and output must fit in a tensor. (Later work reached models of 33 M to 110 M parameters by chaining jobs: `docs/12`.)
 - **Quantization**: 8-bit integers in [−64, 64], power-of-two shifts; the loss is to be measured model by model. (Biases and batch-norm folding were added afterwards: `docs/12`.)
-- **Latency**: ≈ 3 minutes end to end with 30 s blocks (§2, measured), plus the challenge window (300 s default) if the client does not accept itself.
+- **Latency**: ≈ 3 minutes end to end with 30 s blocks (§2, measured), plus the challenge window (300 s default) if the client does not accept itself. A job crosses 7 blocks (measured on 2026-10-17 on a size-1024 chain, 39 operations, 1,024 images: 225 s on average with blocks of 29 s, 37 s with blocks of 5.5 s); since the block time became 10 s, expect about 70 s plus a few seconds of computation.
 - **The node computes under a lock**; a very heavy job briefly blocks the node `[TO IMPROVE]`.
 - **No pricing at real cost**: the minimum escrow is the same whatever the job.
 

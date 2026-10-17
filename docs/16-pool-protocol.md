@@ -142,7 +142,7 @@ the target of each worker was. The target of every worker is adjusted to about o
 - When the pool finds a block, the **net reward** (`emission + fees of the block's transactions`, minus the pool fee `fee_bps`, default 1 %) is split
   across the window in proportion to weight. The split is frozen at that moment and is exact (the remainder of the integer division goes to the largest
   holder; nothing is created or lost).
-- The block is `pending` until it is `confirmations` blocks deep (default 10) and still on the best chain; then each credit is added to the miners'
+- The block is `pending` until it is `confirmations` blocks deep (default 30, i.e. 300 s of blocks of 10 s; it was 10 with 30-s blocks) and still on the best chain; then each credit is added to the miners'
   balances. A block displaced by a reorganisation becomes `orphaned` and credits nothing.
 - The finder gets no bonus: the reward is by work only.
 
@@ -176,7 +176,7 @@ Pool operator (dedicated wallet; testnet example):
 ```
 vearl-wallet new pool.json
 vearl-pool --wallet pool.json --password-file pool.pw --genesis genesis.json --peer SEED:9000@KEY --listen 0.0.0.0:9000 \
-           --pool-listen 127.0.0.1:3333 --http 127.0.0.1:8650 --data-dir /var/lib/vearl-pool --fee 1 --min-payout 1 --confirmations 10
+           --pool-listen 127.0.0.1:3333 --http 127.0.0.1:8650 --data-dir /var/lib/vearl-pool --fee 1 --min-payout 1 --confirmations 30
 ```
 
 Expose `--pool-listen` through a TLS proxy for the public (see section 3). Fund nothing: the pool key only receives rewards and sends payouts.

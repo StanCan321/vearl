@@ -103,8 +103,8 @@ vearl-poolminer --pool POOL_HOST:3333 --address vrl1yourpayoutaddress --threads 
 
 ## 5. What to know
 
-- **Reward**: block reward (halved every 1,051,200 blocks, floor 0.5 VRL), plus, for a useful-work block, a bonus taken from what the client burned (never more than that amount: `docs/04`). Testnet: no value.
-- **Difficulty**: ASERT, aiming at 30 s per block (`docs/13` §5). A miner that switches on and off gains nothing by doing so.
+- **Reward**: block reward (6.66666666 VRL, halved every 3,153,600 blocks = every year, floor 0.16666666 VRL), plus, for a useful-work block, a bonus taken from what the client burned (never more than that amount: `docs/04`). Testnet: no value.
+- **Difficulty**: ASERT, aiming at 10 s per block (`docs/13` §5). A miner that switches on and off gains nothing by doing so.
 - **Network**: open the P2P port (9000/tcp). Do not expose the API (8545) directly: nginx with TLS and rate limiting (`deploy/nginx`).
 - **Machine security**: a node needs no root rights to run; the systemd unit isolates it (dedicated user, read-only file system except the data). No external audit of the code.
 - **Known limits**: no protection against selfish mining, no finality (reorganizations are only braked), P2P channel not post-quantum (`docs/13` §6, `docs/14`).

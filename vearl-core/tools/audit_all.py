@@ -20,7 +20,8 @@ BIN = "target/release"
 V = "tests/vectors"
 TMP = tempfile.mkdtemp(prefix="vearl-audit-")
 for f in os.listdir(V):
-    shutil.copy(f"{V}/{f}", TMP)          # the Python validators write their .ext files next to the input: we work on a copy
+    if os.path.isfile(f"{V}/{f}"):      # (the fixtures of the pool points are a directory, replayed by the Rust tests)
+        shutil.copy(f"{V}/{f}", TMP)          # the Python validators write their .ext files next to the input: we work on a copy
 T = lambda f: f"{TMP}/{f}"
 n_fuzz = 300 if QUICK else 1500
 py = sys.executable
@@ -51,6 +52,8 @@ env = dict(os.environ, PROG_VECTORS=T("prog-v1.json"), TILED_VECTORS=T("tiled-v1
 rows, bad = [], 0
 for name, cmd in checks:
     t0 = time.time()
+    if os.name == "nt":      # the programs of target/release have the .exe suffix
+        cmd = [os.path.abspath(c + ".exe") if isinstance(c, str) and c.startswith(BIN + "/") and not c.endswith(".exe") else c for c in cmd]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=3600)
         ok, out = r.returncode == 0, (r.stdout + r.stderr).strip()

@@ -628,7 +628,7 @@
             return panel(title, h('div', { class: 'chart' }, barChart(vals, o), h('div', { class: 'legend' }, h('span', { text: note || 'UTC days · the faded bar is the day in progress' }))));
           }
           var cw = h('div', { class: 'x-grid two' });
-          cw.appendChild(ch1('Blocks per day', rows.map(function (d) { return d.blocks; }), { ref: 2880, fmt: function (v) { return num(Math.round(v)); }, min: 10 }, 'dashed line: 2,880 blocks, a day at exactly 30 s per block'));
+          cw.appendChild(ch1('Blocks per day', rows.map(function (d) { return d.blocks; }), { ref: 8640, fmt: function (v) { return num(Math.round(v)); }, min: 10 }, 'dashed line: 8,640 blocks, a day at exactly 10 s per block'));
           cw.appendChild(ch1('Active miners per day', rows.map(function (d) { return d.miners; }), { cls: 'bar-b', fmt: function (v) { return String(Math.round(v)); }, min: 3 }, 'distinct addresses that won at least one block'));
           wrap.appendChild(cw);
           var cw2 = h('div', { class: 'x-grid two' });

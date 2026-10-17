@@ -18,6 +18,8 @@ use bincode::Options;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 const P: WorkParams = WorkParams::TESTNET;
+/// Seconds between two blocks in this test (the auctions and windows of the market are in seconds): independent of the protocol's block time.
+const STEP: u64 = 30;
 const N: usize = 128;
 
 fn key(seed: u8) -> SigningKey {
@@ -50,7 +52,7 @@ impl Rec {
         for t in &txs {
             self.kinds.push(t.tx.kind.clone());
         }
-        let ts = c.tip_ts() + BLOCK_TIME;
+        let ts = c.tip_ts() + STEP;
         let out = c.mine(&key(who), class, cm, txs, ts).expect("mine");
         let r = out.c.clone();
         c.validate_and_apply(out.block).expect("apply");
@@ -268,7 +270,7 @@ fn fuzz(rec: &Rec, per_pair: usize, seed: u64, st: &mut Stats) {
                 let t = SignedTx::new(Tx { from, nonce: state.nonce(&from), fee: if rng.gen_bool(0.9) { 0 } else { rng.gen_range(0..1000) }, kind: k.clone() }, &key(who));
                 let mut s2 = state.clone();
                 let miner = pubkey(&key(12));
-                match catch_unwind(AssertUnwindSafe(|| s2.apply_tx(&t, height + 1, ts + BLOCK_TIME, &miner, &P))) {
+                match catch_unwind(AssertUnwindSafe(|| s2.apply_tx(&t, height + 1, ts + STEP, &miner, &P))) {
                     Err(_) => st.panics.push(format!("[{}] PANIC on {:?}", rec.name, format!("{k:?}").chars().take(300).collect::<String>())),
                     Ok(Ok(())) => {
                         st.applied += 1;

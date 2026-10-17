@@ -5,8 +5,8 @@ testnet keeps its own test schedule (docs/04 section 4).
 
 Plan:
   supply       CAPPED. Never more than 56,064,000 VRL. Burned VRL (10 % of every job escrow, half of every slashed bond) make the real supply lower.
-  mining       R0 = 20 VRL per block, 30 s blocks, halving every year (1,051,200 blocks), NO tail: 42,048,000 VRL in total, 100 % of every block to the miner.
-               (integer halving of 20.00000000 VRL ends after 31 years; the issued total is a hair under 42,048,000 because of the rounding)
+  mining       R0 = 6.66666666 VRL per block (20 VRL per 30 s), 10 s blocks, halving every year (3,153,600 blocks), NO tail: 42,048,000 VRL in total, 100 % of every block to the miner.
+               (integer halving of 6.66666666 VRL ends after 31 years; the issued total is a hair under 42,048,000 because of the rounding, never above)
   genesis      25 % of the maximum supply is created once, in the genesis block of the mainnet, in public and locked:
                  10 % team & foundation       12-month cliff, then linear over 36 months
                   8 % ecosystem & grants      partnerships, grants, job credits, audits, bounties; released in public tranches, decided in advance
@@ -23,8 +23,8 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else "."
 os.makedirs(OUT, exist_ok=True)
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-UNIT, BPY = 10 ** 8, 1_051_200                            # units per VRL, blocks per year (30 s blocks)
-R0 = 20 * UNIT
+UNIT, BPY = 10 ** 8, 3_153_600                            # units per VRL, blocks per year (10 s blocks)
+R0 = 20 * UNIT * 10 // 30                                  # 20 VRL per 30 s, scaled to the block time, rounded down to the unit
 SHARE = {"Mining rewards": 75.0, "Team & foundation": 10.0, "Ecosystem & grants": 8.0, "Testnet contributors": 7.0}   # % of the maximum supply
 TESTNETS = [0.7, 1.05, 1.4, 1.75, 2.1]                    # % of the maximum supply, testnets 1 to 5 (sum = 7)
 assert abs(sum(SHARE.values()) - 100) < 1e-9 and abs(sum(TESTNETS) - SHARE["Testnet contributors"]) < 1e-9
@@ -35,7 +35,7 @@ while (R0 >> k) > 0:
     issued += (R0 >> k) * BPY
     k += 1
 issued_vrl = issued / UNIT                                 # a hair under 42,048,000
-MINED = 2 * 20 * BPY                                       # 42,048,000 nominal
+MINED = 2 * 21_024_000                                     # 42,048,000 nominal: 21,024,000 VRL a year, halved every year
 T = MINED / (SHARE["Mining rewards"] / 100)                # maximum supply: 56,064,000
 alloc = {name: T * pct / 100 for name, pct in SHARE.items()}
 genesis = T - MINED
@@ -54,10 +54,10 @@ year_supply = [genesis + v for v in year_mined]
 rows = []
 for y in range(1, 13):
     em = year_mined[y] - year_mined[y - 1]
-    rows.append({"year": y, "reward_per_block": 20 / 2 ** (y - 1), "mined_in_year": em, "mined_total": year_mined[y], "pct_of_mining": year_mined[y] / MINED * 100,
+    rows.append({"year": y, "reward_per_block": 20 / 3 / 2 ** (y - 1), "mined_in_year": em, "mined_total": year_mined[y], "pct_of_mining": year_mined[y] / MINED * 100,
                  "supply_total": year_supply[y], "pct_of_max": year_supply[y] / T * 100})
 data = {"max_supply": T, "mining_total": MINED, "mining_issued_by_code": issued_vrl, "genesis_total": genesis, "allocations": alloc, "testnets": [T * p / 100 for p in TESTNETS],
-        "testnets_pct": TESTNETS, "years": rows, "years_with_a_reward": k, "parameters": {"R0": 20, "halving_blocks": BPY, "tail": 0, "block_time_s": 30}}
+        "testnets_pct": TESTNETS, "years": rows, "years_with_a_reward": k, "parameters": {"R0": 6.66666666, "halving_blocks": BPY, "tail": 0, "block_time_s": 10}}
 json.dump(data, open(os.path.join(OUT, "tokenomics.json"), "w"), indent=1)
 print(f"maximum supply {T:,.0f} VRL   (mining {MINED:,.0f} = {SHARE['Mining rewards']:g} %, genesis {genesis:,.0f})   issued by the integer schedule: {issued_vrl:,.2f}")
 for name, v in alloc.items():
@@ -102,7 +102,7 @@ grid = "".join(f'<line x1="{cx0}" x2="{cx0 + cw}" y1="{Y(v):.1f}" y2="{Y(v):.1f}
                for v in range(0, int(ymax) + 1, 20_000_000))
 halv = "".join(f'<line x1="{X(m):.1f}" x2="{X(m):.1f}" y1="{cy0 - 40}" y2="{cy0 + ch}" stroke="{C["line2"]}" stroke-dasharray="3 7" stroke-width="1.5"/>' for m in range(12, 12 * YEARS, 12))
 xt = "".join(f'<text x="{X(m):.1f}" y="{cy0 + ch + 30}" text-anchor="middle" class="ax">{"Mainnet" if m == 0 else "Y" + str(m // 12)}</text>' for m in range(0, 12 * YEARS + 1, 24))
-rew = "".join(f'<text x="{X(12 * y + 6):.1f}" y="{cy0 - 18}" text-anchor="middle" class="rw">{20 / 2 ** y:g}</text>' for y in range(0, 6))
+rew = "".join(f'<text x="{X(12 * y + 6):.1f}" y="{cy0 - 18}" text-anchor="middle" class="rw">{20 / 3 / 2 ** y:.2f}</text>' for y in range(0, 6))
 rew += f'<text x="{cx0 - 14}" y="{cy0 - 18}" text-anchor="end" class="ax">VRL / block</text>'
 
 # ---- allocations (left): donut + legend

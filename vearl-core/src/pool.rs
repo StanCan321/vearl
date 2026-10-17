@@ -331,6 +331,9 @@ impl Ledger {
 
 // ---------------------------------------------------------------- configuration, jobs, sessions
 
+/// A block pays its miners after 300 s on the best chain (10 blocks of 30 s before the block time became 10 s).
+pub const DEFAULT_CONFIRMATIONS: u64 = 300 / BLOCK_TIME;
+
 #[derive(Clone, Debug)]
 pub struct PoolConfig {
     /// listening for workers (JSON lines over TCP)
@@ -382,7 +385,7 @@ impl Default for PoolConfig {
             http: None,
             fee_bps: 100,
             pplns_n: 2.0,
-            confirmations: 10,
+            confirmations: DEFAULT_CONFIRMATIONS,
             min_payout: COIN,
             payout_interval: 600,
             max_payouts_per_round: 50,

@@ -382,7 +382,9 @@ fn main() {
                 let cm = CommittedMatrices::new(a_t, tens[*x as usize].clone(), &p);
                 g.block(worker, WorkClass::Op { job: id, op: k as u8 }, Some(&cm), vec![], 20);
             } else if *tamper == Tamper::Elem(k) || *tamper == Tamper::Col(k) {
-                out[0] = out[0].wrapping_add(1);
+                // one entry too large by one; never beyond the range of the operands (|v| <= 64), which would make the later tile proofs unprovable
+                let i = out.iter().position(|v| (*v as i32) < 64).unwrap_or(0);
+                out[i] = out[i].wrapping_add(1);
             }
             let z_root = z.as_ref().map_or([0u8; 32], |zz| c_tree(zz, n).root());
             let post = g.tx(worker, TxKind::Prog(ProgTx::PostOp { job_id: id, op: k as u8, z_root, x_root: cols_root_of(&out, n) }));

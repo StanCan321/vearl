@@ -5,7 +5,7 @@
 
 A. `reorg`    : attacker with share `q` of the hashrate who privately mines a branch from a common ancestor; it publishes when its branch is
                 accepted by the local rule (simple work, or MESS). Probability of replacing >= d honest blocks within a given horizon.
-B. `lwma`     : "on/off" miner who brings power when the difficulty is low (LWMA-1 EXACTLY as chain.rs: window 30,
+B. `lwma`     : "on/off" miner who brings power when the difficulty is low (LWMA-1 EXACTLY as chain.rs: window 900 s / T blocks,
                 solve times bounded to [1, 6T], variation per block bounded to [x0.5; x2]).
 C. `timewarp` : attacker who timestamps its blocks as far in the future as possible (bound MAX_FUTURE = 60 s; the honest clock stays below).
 D. `selfish`  : selfish mining (Eyal-Sirer): share of the revenue for q and gamma (the MESS rule does not change it; checks the known threshold ~ 1/3).
@@ -16,7 +16,8 @@ prove the security of the protocol. Fixed seed.
 import sys
 import numpy as np
 
-T = 30                      # BLOCK_TIME
+T = 10                      # BLOCK_TIME (state.rs); every duration below is expressed in SECONDS and converted to blocks with T
+K = 30 // T * 1               # blocks per 'old block' (a block was 30 s before the change to 10 s): depths and windows keep their duration
 MESS_T_MAX = 25_132          # ECIP-1100 (chain.rs)
 MESS_MAX = 31
 
@@ -32,7 +33,7 @@ def reorg(runs, rng):
     print("A. Private branch attack: probability of replacing >= d honest blocks (4 h horizon, blocks of equal work)")
     print("   q = attacker's share of the hashrate; rule = work comparison (`simple`) or MESS (`mess`)")
     horizon = 4 * 3600
-    depths = [6, 30, 100]
+    depths = [6 * K, 30 * K, 100 * K]      # the same durations as with 30 s blocks (3 min, 15 min, 50 min)
     print(f"   {'q':>5} | " + " | ".join(f"d>={d:<3} simple  mess " for d in depths))
     for q in (0.10, 0.30, 0.40, 0.45, 0.55, 0.70, 0.90):
         row = []
@@ -63,7 +64,7 @@ def reorg(runs, rng):
 # ---------------------------------------------------------------- B. LWMA and on/off miner
 def lwma_next(bt, bs, fallback):
     """Target of the next block from the targets `bt` and timestamps `bs` of the blocks already mined (chain.rs::lwma_next_target)."""
-    N = 30
+    N = 900 // T                      # LWMA window: 900 s, the half-life of ASERT
     if len(bt) < N + 1:
         return fallback
     wt, ws = bt[-N - 1:], bs[-N - 1:]
@@ -83,25 +84,25 @@ def lwma(runs, rng):
     print(f"   {'X':>3} {'on/off rule':>28} | mean interval | gap to the target time | share of the blocks it wins while present: X/(1+X)")
     for X in (2, 5, 20):
         res = []
-        for policy in ("on when target > 1.3 x ref", "on 30 blocks / off 60 blocks"):
+        for policy in ("on when target > 1.3 x ref", f"on {900 // T} blocks / off {1800 // T} blocks"):
             tot_t = tot_b = att_b = 0
             on = False
             for r in range(max(1, runs // 50)):
                 bt, bs = [], []
                 tg = T0
                 t = 0.0
-                for blk in range(3000):
+                for blk in range(3000 * K):
                     if policy.startswith("on when"):
                         on = tg > 1.3 * T0 if not on else tg > 0.9 * T0
                     else:
-                        on = (blk % 90) < 30
+                        on = (blk % (2700 // T)) < (900 // T)
                     power = 1 + (X if on else 0)
                     dt = rng.exponential(T * (T0 / tg) / power)
                     t += dt
                     bt.append(tg)
                     bs.append(max(int(t), (bs[-1] + 1) if bs else 1))
                     tg = lwma_next(bt, bs, tg)
-                    if blk >= 300:
+                    if blk >= 300 * K:
                         tot_t += dt
                         tot_b += 1
                         att_b += (X / (1 + X)) if on else 0
@@ -201,7 +202,7 @@ def daa(runs, rng):
     reactive miner, power jump x10 then /10."""
     import asert_ref as A
     T0 = 1 << 60
-    rules = [("LWMA-1 (N=30)", None)] + [(f"ASERT half-life {h} s", h) for h in (600, 900, 1800, 3600)]
+    rules = [(f"LWMA-1 (N={900 // T})", None)] + [(f"ASERT half-life {h} s", h) for h in (600, 900, 1800, 3600)]
 
     def simulate(rule_h, power_of, n_blocks, seed):
         r = np.random.default_rng(seed)
@@ -223,11 +224,11 @@ def daa(runs, rng):
         return np.array(dts), np.array(share)
 
     reps = max(2, runs // 100)
-    print("E. LWMA-1 against ASERT: mean interval (target 30 s) and gap to the target time; 3000 blocks per draw, " + str(reps) + " draws")
+    print("E. LWMA-1 against ASERT: mean interval (target " + str(T) + " s) and gap to the target time; " + str(3000 * K) + " blocks (= 25 h) per draw, " + str(reps) + " draws")
     scen = [
         ("constant power", lambda b, tg: (1.0, 0.0)),
-        ("periodic X=5 (30 on / 60 off)", lambda b, tg: (6.0, 5.0) if b % 90 < 30 else (1.0, 0.0)),
-        ("periodic X=20 (30 on / 60 off)", lambda b, tg: (21.0, 20.0) if b % 90 < 30 else (1.0, 0.0)),
+        ("periodic X=5 (15 min on / 30 min off)", lambda b, tg: (6.0, 5.0) if b % (2700 // T) < (900 // T) else (1.0, 0.0)),
+        ("periodic X=20 (15 min on / 30 min off)", lambda b, tg: (21.0, 20.0) if b % (2700 // T) < (900 // T) else (1.0, 0.0)),
     ]
     print(f"   {'rule':22s} | " + " | ".join(f"{name:34s}" for name, _ in scen))
     for rname, h in rules:
@@ -236,19 +237,19 @@ def daa(runs, rng):
             m = []
             sd = []
             for rep in range(reps):
-                dts, _ = simulate(h, pw, 3000, 1000 + rep)
-                m.append(dts[300:].mean())
-                sd.append(dts[300:].std())
+                dts, _ = simulate(h, pw, 3000 * K, 1000 + rep)
+                m.append(dts[300 * K:].mean())
+                sd.append(dts[300 * K:].std())
             mean = float(np.mean(m))
             cells.append(f"{mean:6.1f} s ({100 * (mean / T - 1):+5.1f} %), standard deviation {np.mean(sd):5.1f} s")
         print(f"   {rname:22s} | " + " | ".join(f"{c:34s}" for c in cells))
-    print("   Power jump x10 at t = 1000 blocks then /10 at 2000: mean interval of the 100 blocks following each jump (ideal 30 s)")
+    print(f"   Power jump x10 at t = {1000 * K} blocks then /10 at {2000 * K}: mean interval of the {100 * K} blocks (50 min) following each jump (ideal {T} s)")
     for rname, h in rules:
         up, down = [], []
         for rep in range(reps):
-            dts, _ = simulate(h, lambda b, tg: (10.0 if 1000 <= b < 2000 else 1.0, 0.0), 3000, 2000 + rep)
-            up.append(dts[1000:1100].mean())
-            down.append(dts[2000:2100].mean())
+            dts, _ = simulate(h, lambda b, tg: (10.0 if 1000 * K <= b < 2000 * K else 1.0, 0.0), 3000 * K, 2000 + rep)
+            up.append(dts[1000 * K:1100 * K].mean())
+            down.append(dts[2000 * K:2100 * K].mean())
         print(f"   {rname:22s} | after x10: {np.mean(up):6.1f} s | after /10: {np.mean(down):6.1f} s")
     print("   Reading: see docs/13 section 5 (choice of the rule and of the half-life).")
 

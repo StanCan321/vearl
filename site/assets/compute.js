@@ -518,7 +518,7 @@
         notes.length ? h('ul', { class: 'prog' }, notes.map(function (n) { return h('li', { text: n }); })) : null);
     }
     var side = j.kind === 'pi' ? 0 : Math.min(j.params.size, 256);
-    var msg = { queued: 'Queued.', submitting: 'Sending the job to the chain…', open: 'On the chain. Waiting for a miner to take it. This is the longest step: a block comes about every 30 seconds.', claimed: 'A miner is computing your job.', posted: 'The miner posted its result. The audit starts now.', verifying: 'Recomputing random chunks and opening them against the miner’s root…' }[j.status] || '';
+    var msg = { queued: 'Queued.', submitting: 'Sending the job to the chain…', open: 'On the chain. Waiting for a miner to take it. This is the longest step: a block comes about every 10 seconds.', claimed: 'A miner is computing your job.', posted: 'The miner posted its result. The audit starts now.', verifying: 'Recomputing random chunks and opening them against the miner’s root…' }[j.status] || '';
     return h('div', { class: 'waiting' }, side ? tilesSvg(side) : piSvg(j.params.samples * j.params.chunks), h('div', { text: msg }));
   }
   function resultPanel(j) {

@@ -512,7 +512,7 @@ fn hostile_documents_are_refused_or_held_and_never_trusted() {
     let rec = |job: u32, i: u64| ShareRec { addr: pubkey(&SigningKey::from_bytes(&[9; 32])), job, extra_nonce: i, ti: 0, tj: 0, target: u64::MAX / 2, v2: true };
     let epoch = 1_000_000u64;
     let t0 = epoch * 3600;
-    let job = |height: u64, ts: u64| JobRec { prev: [1; 32], height, timestamp: ts, tx_root: [2; 32], target: 1 << 40, native_epoch: height / 100 };
+    let job = |height: u64, ts: u64| JobRec { prev: [1; 32], height, timestamp: ts, tx_root: [2; 32], target: 1 << 40, native_epoch: height / vearl_core::state::EPOCH_LEN };
     let doc = |epoch_secs: u64, jobs: &[JobRec], recs: &[ShareRec]| {
         let d = build_doc(&sk, &g, &ZERO_HASH, &EpochData { epoch, epoch_secs, fee_bps: 0, blocks: &[], jobs, records: recs });
         let mut inp = AuditInput::default();
@@ -546,7 +546,7 @@ fn hostile_documents_are_refused_or_held_and_never_trusted() {
     assert!(!audit_pool(&cfg, &punctual).has("late_document"));
 
     // many different matrices to rebuild (one per job height): the audit stops at its budget and says so, it does not run for hours
-    let jobs: Vec<JobRec> = (0..30u64).map(|i| job(i * 100 + 5, t0 + 10)).collect();
+    let jobs: Vec<JobRec> = (0..30u64).map(|i| job(i * vearl_core::state::EPOCH_LEN + 5, t0 + 10)).collect();
     let recs: Vec<ShareRec> = (0..30u32).map(|i| rec(i, i as u64)).collect();
     let mut inp = doc(3600, &jobs, &recs);
     inp.samples.insert(epoch, Samples::Full(recs.clone()));

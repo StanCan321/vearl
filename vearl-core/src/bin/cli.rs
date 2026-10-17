@@ -33,7 +33,10 @@ use vearl_core::crypto::*;
 use vearl_core::l2::*;
 use vearl_core::mlp::*;
 use vearl_core::net::*;
-use vearl_core::state::COIN;
+use vearl_core::state::{BLOCK_TIME, COIN};
+
+/// A job submitted by this tool expires after 12,000 s (3 h 20) if nobody takes it, whatever the block time.
+const DEADLINE_BLOCKS: u64 = 12_000 / BLOCK_TIME;
 use vearl_core::types::*;
 use vearl_core::wallet::{load_signing_key, parse_address, read_password};
 use vearl_core::prog::*;
@@ -164,8 +167,8 @@ fn run_cmd() {
             let id = job_id(&pubkey(&sk), nonce, &cm.a_root(), &cm.b_root());
             println!("data deposited with the worker: {:?}", request(worker, &Msg::PutJob { a: cm.a.clone(), b: cm.b.clone() }).expect("worker"));
             let kind = match a.get(6).map(|s| s.parse::<u64>().unwrap()) {
-                Some(secs) => TxKind::SubmitJobAuction { a_root: cm.a_root(), b_root: cm.b_root(), escrow, deadline: height + 400, auction_secs: secs },
-                None => TxKind::SubmitJob { a_root: cm.a_root(), b_root: cm.b_root(), escrow, deadline: height + 400 },
+                Some(secs) => TxKind::SubmitJobAuction { a_root: cm.a_root(), b_root: cm.b_root(), escrow, deadline: height + DEADLINE_BLOCKS, auction_secs: secs },
+                None => TxKind::SubmitJob { a_root: cm.a_root(), b_root: cm.b_root(), escrow, deadline: height + DEADLINE_BLOCKS },
             };
             println!("SubmitJob: {:?}", send(node, &sk, kind));
             println!("job_id = {}", hex(&id));
@@ -259,7 +262,7 @@ fn run_cmd() {
             };
             let id = tiled_id(&pubkey(&sk), next_nonce(node, pubkey(&sk)), d8, &ar, &br);
             println!("matrices deposited with the worker: {:?}", request(worker, &Msg::PutTiled { a: am, b: bm, dims: d8 }).expect("worker"));
-            let kind = TxKind::Tiled(TiledTx::Submit { dims: d8, a_roots: ar, b_roots: br, escrow: per * (dims.0 * dims.1 * dims.2) as u64, deadline: height + 400 });
+            let kind = TxKind::Tiled(TiledTx::Submit { dims: d8, a_roots: ar, b_roots: br, escrow: per * (dims.0 * dims.1 * dims.2) as u64, deadline: height + DEADLINE_BLOCKS });
             println!("Submit: {:?}", send(node, &sk, kind));
             println!("job_id = {}", hex(&id));
         }
@@ -300,7 +303,7 @@ fn run_cmd() {
             };
             let products = (bi * bk * bj) as u64;
             let id = tiled_id(&pubkey(&sk), next_nonce(node, pubkey(&sk)), dd, &a_roots, &b_roots);
-            let r = send(node, &sk, TxKind::Tiled(TiledTx::Submit { dims: dd, a_roots, b_roots, escrow: per * products, deadline: height + 800 }));
+            let r = send(node, &sk, TxKind::Tiled(TiledTx::Submit { dims: dd, a_roots, b_roots, escrow: per * products, deadline: height + 2 * DEADLINE_BLOCKS }));
             assert!(matches!(r, Msg::Ack { ok: true, .. }), "Submit refused: {r:?}");
             println!("job_id = {} ({} block products {}x{}, escrow {:.2} VRL); deposit {:.1} s", hex(&id), products, p.n, p.n, (per * products) as f64 / COIN as f64, t_upload);
             // 3) wait for the worker to publish the roots
@@ -537,7 +540,7 @@ fn run_cmd() {
                 assert!(matches!(r, Msg::Ack { ok: true, .. }), "weight deposit refused: {r:?}");
             }
             println!("input deposited with the worker: {:?}", request(worker, &Msg::PutProgRef { x0, w_roots: w_roots.clone() }).expect("worker"));
-            println!("Submit: {:?}", send(node, &sk, TxKind::Prog(ProgTx::Submit { x0_root, w_roots, ops: ops.clone(), escrow: per * gemms, deadline: height + 400 })));
+            println!("Submit: {:?}", send(node, &sk, TxKind::Prog(ProgTx::Submit { x0_root, w_roots, ops: ops.clone(), escrow: per * gemms, deadline: height + DEADLINE_BLOCKS })));
             println!("job_id = {}", hex(&id));
         }
         "prog-status" => println!("{:?}", request(node, &Msg::GetProg(parse_pk(&a[2]))).expect("node")),
@@ -685,7 +688,7 @@ fn run_cmd() {
                     let id = prog_id(&pubkey(&sk), next_nonce(node, pubkey(&sk)), &x0_root, &w_roots, &ops);
                     // submission first: the mempool limits the number of pending transactions per sender; if it is full we wait for a block
                     // (nothing has been deposited with the worker); the data arrives afterwards, before the claim (the worker only claims what it has)
-                    let r = send(node, &sk, TxKind::Prog(ProgTx::Submit { x0_root, w_roots: w_roots.clone(), ops: ops.clone(), escrow: per * gemms, deadline: height + 400 }));
+                    let r = send(node, &sk, TxKind::Prog(ProgTx::Submit { x0_root, w_roots: w_roots.clone(), ops: ops.clone(), escrow: per * gemms, deadline: height + DEADLINE_BLOCKS }));
                     if let Msg::Ack { ok: false, info } = &r {
                         if info.contains("too many pending") || info.contains("mempool full") {
                             queue.push(idx);
@@ -895,7 +898,7 @@ fn run_cmd() {
                 m => panic!("{m:?}"),
             };
             let id = l2_id(&pubkey(&sk), next_nonce(node, pubkey(&sk)), &kernel, chunks);
-            println!("Submit: {:?}", send(node, &sk, TxKind::L2(L2Tx::Submit { kernel: kernel.clone(), chunks, escrow, deadline: height + 400 })));
+            println!("Submit: {:?}", send(node, &sk, TxKind::L2(L2Tx::Submit { kernel: kernel.clone(), chunks, escrow, deadline: height + DEADLINE_BLOCKS })));
             println!("{chunks} chunks (cost {} units per chunk)", kernel.cost());
             println!("job_id = {}", hex(&id));
         }
@@ -1072,7 +1075,7 @@ fn run_cmd() {
             };
             let id = mlp_id(&pubkey(&sk), next_nonce(node, pubkey(&sk)), &x0_root, &w_roots);
             println!("data deposited with the worker: {:?}", request(worker, &Msg::PutMlp { x0, ws }).expect("worker"));
-            let kind = TxKind::Mlp(MlpTx::Submit { x0_root, w_roots, shifts: vec![DEMO_SHIFT; layers], escrow: per_layer * layers as u64, deadline: height + 400 });
+            let kind = TxKind::Mlp(MlpTx::Submit { x0_root, w_roots, shifts: vec![DEMO_SHIFT; layers], escrow: per_layer * layers as u64, deadline: height + DEADLINE_BLOCKS });
             println!("Submit: {:?}", send(node, &sk, kind));
             println!("job_id = {}", hex(&id));
         }
@@ -1177,7 +1180,7 @@ fn main() {
     };
     let t0 = std::time::Instant::now();
     let mut last = String::new();
-    // with ~30 s blocks, the inclusion of the Accept can take more than one block: VEARL_WAIT_SECS (default 90)
+    // with slow blocks, the inclusion of the Accept can take more than one block: VEARL_WAIT_SECS (default 90)
     let wait: u64 = std::env::var("VEARL_WAIT_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(90);
     while t0.elapsed().as_secs() < wait {
         last = match request(&a[1], &q) {

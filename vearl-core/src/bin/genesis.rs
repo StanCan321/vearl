@@ -5,7 +5,7 @@
 //! --preset devnet (default): n = 128, runs fast on CPU (trials, tests). --preset public: n = 1024 (size of the models and jobs), rank 63, fold_k 64.
 //! --launch / --timestamp: the START instant of the network (required with `public`): ASERT retargeting starts from that instant, a genesis
 //!   dated too early would make the first blocks almost free.
-//! --hashrate H: total expected rate at launch, in attempts (tiles) per second; the initial target aims at 30 s per block at that rate.
+//! --hashrate H: total expected rate at launch, in attempts (tiles) per second; the initial target aims at one block per BLOCK_TIME (10 s) at that rate.
 //!   Or --target-divisor D (target = 2^64 / D). One or the other; with neither: D = 2048 (devnet).
 //! All the nodes of the network must use the SAME file (their genesis hash must be identical). The summary goes to the error output.
 use vearl_core::chain::{GenesisConfig, Retarget};

@@ -29,7 +29,7 @@ All GPUs produce attempts at the same rate. At the marginal equilibrium: if the 
 
 ## 3. Security: how many confirmations? `[SIM]`
 
-Cost for an attacker to rent as much power as the honest miners (≈ 50 %) for `k` blocks of 30 s, to be compared with the value `V` at risk:
+Cost for an attacker to rent as much power as the honest miners (≈ 50 %) for `k` blocks of 10 s, to be compared with the value `V` at risk:
 
 | scenario | GPUs | gross cost $/h | V = $1k | V = $10k | V = $100k |
 |---|---|---|---|---|---|
@@ -41,14 +41,14 @@ Cost for an attacker to rent as much power as the honest miners (≈ 50 %) for `
 
 ## 4. Emission and supply `[SIM]` (testnet schedule in force; mainnet plan decided 2026-10-15)
 
-**Testnet (what the code does today).** `R0 = 20` VRL/block, annual halving (1,051,200 blocks of 30 s), floor 0.5 VRL/block: 21.0 M issued in the 1st year, 10.5 M in the 2nd, 41.4 M after 6 years, then 0.525 M a year with no end (uncapped). Testnet tokens have no value; this schedule is only there to exercise the mechanisms. It is not changed for the public testnet.
+**Testnet (what the code does today).** `R0 = 6.66666666` VRL/block (20 VRL per 30 s, the block time having been 30 s until 2026-10-17 and now being 10 s), annual halving (3,153,600 blocks of 10 s), floor 0.16666666 VRL/block: 21.0 M issued in the 1st year, 10.5 M in the 2nd, 41.4 M after 6 years, then 0.525 M a year with no end (uncapped). The emission per year does not depend on the block time: `R0`, `TAIL` and `HALVING` are derived from `BLOCK_TIME` in `state.rs`, rounded down to the unit so that no year ever issues more than its nominal amount. Testnet tokens have no value; this schedule is only there to exercise the mechanisms. It is not changed for the public testnet.
 
 **Mainnet plan (a decision of the team, not yet in the code; subject to the legal review of docs/19).** The supply is **capped**:
 
 | | |
 |---|---|
 | maximum supply | **56,064,000 VRL**, never more; burned VRL (10 % of every job escrow, half of every slashed bond) make the real supply lower |
-| mining | `R0 = 20`, halving every 1,051,200 blocks, **no tail**: 42,048,000 VRL in total (the integer halving ends after 31 years; the code would issue 42,047,999.86 VRL), **100 % of every block to the miner** = 75 % of the maximum supply |
+| mining | `R0 = 6.66666666` per block of 10 s (= 20 per 30 s), halving every 3,153,600 blocks (one year), **no tail**: 42,048,000 VRL in total (the integer halving ends after 31 years; the code would issue 42,047,999.45 VRL, so never more than the cap), **100 % of every block to the miner** = 75 % of the maximum supply |
 | genesis (25 %, created once in the mainnet genesis block, public, locked) | team & foundation 10 % = 5,606,400, **12-month cliff, then linear over 36 months**; ecosystem & grants 8 % = 4,485,120 (partnerships, grants, job credits, audits, bounties), released in public tranches announced in advance; testnet contributors 7 % = 3,924,480 |
 | testnet contributors | shared by **5 public testnets**: 0.7 / 1.05 / 1.4 / 1.75 / 2.1 % of the maximum supply = 392,448 / 588,672 / 784,896 / 981,120 / 1,177,344 VRL; the public testnet of 23 October 2026 is the first |
 
@@ -56,7 +56,7 @@ Mined supply by the end of each year (units: VRL): 21.0 M (50 %), 31.5 M (75 %),
 
 Consequences to keep in mind (they are the price of a cap):
 1. **Concentration.** Half of the mined supply is issued in the first year and three quarters in two years, so the early miners hold a large share. A gentler curve (a longer halving period) was considered and set aside.
-2. **Security budget.** After year 5 a block pays 1.25 VRL or less, after year 10 less than 0.04: miners will live on job fees, so security then depends on real demand (§3, §6). With a tail (the old schedule) they would always be paid; with a cap they are not. This is a conscious trade-off, not a free lunch.
+2. **Security budget.** After year 5 a block pays 0.42 VRL or less, after year 10 less than 0.014 (a block lasts 10 s): miners will live on job fees, so security then depends on real demand (§3, §6). With a tail (the old schedule) they would always be paid; with a cap they are not. This is a conscious trade-off, not a free lunch.
 3. **No on-chain support yet** for the genesis lock (cliff and linear release) and for the mainnet genesis with several allocations: both have to be built and tested before any mainnet. The block reward needs only one change: the tail constant becomes 0.
 4. The 7 % for testnet contributors replaces the earlier plan of 5 % for one testnet (docs/19).
 

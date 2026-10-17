@@ -339,7 +339,7 @@ fn data_availability_fetch_serve_and_slash_unserved() {
     mine(&mut j.c, vec![fetch]).unwrap();
     let early = ltx(&j.c, 13, L2Tx::SlashUnserved { job_id: j.id });
     assert!(mine(&mut j.c, vec![early]).is_err(), "not before the deadline");
-    for _ in 0..3 {
+    for _ in 0..SERVE_SECS / BLOCK_TIME {
         mine(&mut j.c, vec![]).unwrap();
     }
     let block_settle = ltx(&j.c, 13, L2Tx::Settle { job_id: j.id });

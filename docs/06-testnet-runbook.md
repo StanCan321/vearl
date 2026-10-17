@@ -41,7 +41,7 @@ To mine with **your** wallet: `--miner-wallet miner.json` (password through `VEA
 
 - **Work parameters**: `n = 1024`, tile 16, rank 63, `fold_k = 64`. The default `devnet` preset (`n = 128`) is a toy size for tests; the models and jobs of the testnet are sized for 1024.
 - **Start time (`LAUNCH_UTC`)**: the instant the network starts. The difficulty rule (ASERT) is anchored on the genesis timestamp, so a file dated too early would make the first blocks almost free, and one dated later makes nodes wait: a node started before the timestamp simply sleeps until a minute before it. Default: 2026-10-23 16:00 UTC (18:00 in Paris). If the launch slips, build a new file: a new timestamp is a new genesis hash and every node must use the same one.
-- **Initial target (`HASHRATE`)**: set so that a network of that many tile attempts per second finds a block every 30 s (`target = 2^64 / (hashrate × 30)`). One RTX 5060 Ti measured about 49 million attempts per second at `n = 1024`; the default 100 million assumes two or three cards at the start. ASERT corrects the rest, with a half-life of 15 minutes.
+- **Initial target (`HASHRATE`)**: set so that a network of that many tile attempts per second finds a block every 10 s (`target = 2^64 / (hashrate × 10)`; the published genesis of the 23 October testnet was calibrated for 30 s before the block time became 10 s, so its first blocks may be slower than 10 s until ASERT, which anchors on the first block, has corrected the schedule). One RTX 5060 Ti measured about 49 million attempts per second at `n = 1024`; the default 100 million assumes two or three cards at the start. ASERT corrects the rest, with a half-life of 15 minutes.
 - **Allocations**: one dedicated faucet wallet (1,000,000 VRL, i.e. 100 days at the faucet's 10,000 VRL daily cap) and optional extra allocations. No other premine. The tool refuses any address derived from a public devnet seed.
 - **Faucet wallet**: created **offline** (`vearl-wallet new --file faucet.json`), the 24 words on paper. Only its address is needed to build the genesis.
 
@@ -158,7 +158,7 @@ Producing the model files (once, on a CUDA machine; Windows works): `pip install
 
 ```
 vearl-wallet new --file pool.json            # DEDICATED wallet: it receives the block rewards and signs the payouts
-vearl-pool --wallet pool.json --password-file pool.pw --genesis genesis.json --peer SEED:9000@KEY --listen 0.0.0.0:9000            --pool-listen 127.0.0.1:3333 --http 127.0.0.1:8650 --data-dir /var/lib/vearl-pool --fee 1 --min-payout 1 --confirmations 10
+vearl-pool --wallet pool.json --password-file pool.pw --genesis genesis.json --peer SEED:9000@KEY --listen 0.0.0.0:9000            --pool-listen 127.0.0.1:3333 --http 127.0.0.1:8650 --data-dir /var/lib/vearl-pool --fee 1 --min-payout 1 --confirmations 30
 ```
 
 - Put a TLS proxy (nginx `stream` or stunnel) in front of `--pool-listen` for the public, and a reverse proxy in front of `--http` (read-only statistics: `/api/stats`, `/api/blocks`, `/api/payments`, `/api/miner/<address>`). Behind a proxy all workers share its IP: raise `--max-per-ip` or apply the limits in the proxy.

@@ -143,7 +143,8 @@ fn honest_job_lifecycle_pays_worker_and_conserves_supply() {
     let out = chain.mine(&carol, WorkClass::Native, None, vec![early], t).unwrap();
     assert!(chain.validate_and_apply(out.block).is_err());
 
-    for _ in 0..CHALLENGE_WINDOW + 1 {
+    // the window closes after CHALLENGE_WINDOW blocks AND CHALLENGE_SECS seconds, whichever is later
+    for _ in 0..(CHALLENGE_WINDOW + 1).max(CHALLENGE_SECS / BLOCK_TIME + 1) {
         mine_native(&mut chain, &carol, vec![]);
     }
     let before = chain.state.balance(&pubkey(&bob));
@@ -339,7 +340,7 @@ fn series(target: u64, solvetime: u64, n: usize) -> Vec<Block> {
 #[test]
 fn lwma_keeps_the_target_when_blocks_arrive_on_schedule() {
     let t = u64::MAX / 1000;
-    let blocks = series(t, BLOCK_TIME, 40);
+    let blocks = series(t, BLOCK_TIME, LWMA_N + 10);
     assert_eq!(lwma_next_target(&blocks, 7), t, "block time = target => target unchanged");
     assert_eq!(lwma_next_target(&blocks[..10], 7), 7, "incomplete window: fallback to the starting rule");
 }
@@ -347,30 +348,31 @@ fn lwma_keeps_the_target_when_blocks_arrive_on_schedule() {
 #[test]
 fn lwma_reacts_in_the_right_direction_and_within_bounds() {
     let t = u64::MAX / 1000;
-    let slow = lwma_next_target(&series(t, 6 * BLOCK_TIME, 40), 0);
+    let slow = lwma_next_target(&series(t, 6 * BLOCK_TIME, LWMA_N + 10), 0);
     assert!(slow > t && slow <= 2 * t, "blocks too slow => easier target (at most x2 per block)");
-    let fast = lwma_next_target(&series(t, 1, 40), 0);
+    let fast = lwma_next_target(&series(t, 1, LWMA_N + 10), 0);
     assert!(fast < t && fast >= t / 2, "blocks too fast => harder target (at most /2 per block)");
     // extreme values: no overflow, lower bound respected
-    assert_eq!(lwma_next_target(&series(u64::MAX, 6 * BLOCK_TIME, 40), 0), u64::MAX);
-    assert!(lwma_next_target(&series(1 << 16, 1, 40), 0) >= 1 << 16);
+    assert_eq!(lwma_next_target(&series(u64::MAX, 6 * BLOCK_TIME, LWMA_N + 10), 0), u64::MAX);
+    assert!(lwma_next_target(&series(1 << 16, 1, LWMA_N + 10), 0) >= 1 << 16);
     // a timestamp that goes backwards does not blow up the computation (solve time bounded to >= 1)
-    let mut weird = series(t, BLOCK_TIME, 40);
-    weird[35].header.timestamp = 500;
+    let mut weird = series(t, BLOCK_TIME, LWMA_N + 10);
+    weird[LWMA_N + 5].header.timestamp = 500;
     let _ = lwma_next_target(&weird, 0);
 }
 
 #[test]
 fn lwma_recovers_after_a_hashrate_collapse() {
-    // Poisson process: the power drops by 95 % at block 60; the protocol's EXACT rule must bring back blocks
-    // of about 30 s within a few dozen blocks (the EMA needed > 100).
+    // Poisson process: the power drops by 95 % at block 6 x LWMA_N; the protocol's EXACT rule must bring back blocks
+    // of about BLOCK_TIME within a few windows (the EMA needed > 100 blocks of 30 s).
     let mut rng = StdRng::seed_from_u64(7);
     let mut blocks: Vec<Block> = vec![];
-    let (mut target, mut t_real, mut last_ts) = (u64::MAX / 30_000, 0.0f64, 1_000u64);
-    let hash0 = 1000.0; // attempts/s; p_block/s = hash * target / 2^64; equilibrium: target = 2^64 / (hash*30)
+    let (mut target, mut t_real, mut last_ts) = (u64::MAX / (1000 * BLOCK_TIME), 0.0f64, 1_000u64);
+    let hash0 = 1000.0; // attempts/s; p_block/s = hash * target / 2^64; equilibrium: target = 2^64 / (hash * BLOCK_TIME)
     let mut intervals = vec![];
-    for i in 0..400usize {
-        let hash = if i >= 60 { hash0 * 0.05 } else { hash0 };
+    let (drop_at, total) = (2 * LWMA_N, 13 * LWMA_N + 30);
+    for i in 0..total {
+        let hash = if i >= drop_at { hash0 * 0.05 } else { hash0 };
         let rate = hash * target as f64 / 18446744073709551616.0;
         let dt = -(1.0 - rng.gen::<f64>()).ln() / rate;
         t_real += dt;
@@ -382,6 +384,46 @@ fn lwma_recovers_after_a_hashrate_collapse() {
         target = lwma_next_target(&blocks, ema);
         last_ts = ts;
     }
-    let tail: f64 = intervals[350..].iter().sum::<f64>() / 50.0;
-    assert!((18.0..=48.0).contains(&tail), "after 290 blocks the average time is back near 30 s (got {tail:.1} s)");
+    let last = &intervals[total - 50..];
+    let tail: f64 = last.iter().sum::<f64>() / 50.0;
+    let t = BLOCK_TIME as f64;
+    assert!((0.6 * t..=1.6 * t).contains(&tail), "long after the collapse the average time is back near {t} s (got {tail:.1} s)");
+}
+
+/// The emission is a function of the calendar, not of the block time: 21,024,000 VRL in the first year, halved every 365 days, never
+/// above those nominal amounts (the cap of the mainnet plan relies on it), and every duration expressed in blocks keeps its length in seconds.
+#[test]
+fn the_emission_schedule_follows_the_calendar_whatever_the_block_time() {
+    assert_eq!(HALVING, 365 * 86_400 / BLOCK_TIME, "one halving = 365 days");
+    assert_eq!(EPOCH_LEN * BLOCK_TIME, 3_000, "native matrices change every 50 minutes");
+    assert_eq!(LWMA_N as u64 * BLOCK_TIME, 900, "LWMA window = half-life of ASERT");
+    assert_eq!(SNAP_EVERY * BLOCK_TIME, 480, "one state snapshot every 8 minutes");
+    let nominal_first_year = 21_024_000u128 * COIN as u128;
+    for year in 0..6u64 {
+        // before the tail: the reward is the shifted R0
+        let issued = base_reward(year * HALVING) as u128 * HALVING as u128;
+        let nominal = nominal_first_year >> year;
+        assert!(issued <= nominal, "year {}: {issued} units issued, above the nominal {nominal}", year + 1);
+        assert!(nominal - issued < 2 * HALVING as u128, "year {}: rounding larger than 2 units per block ({} units missing)", year + 1, nominal - issued);
+    }
+    // the floor of the testnet: 0.5 VRL per 30 s, rounded down
+    assert!(TAIL as u128 * 30 <= (COIN as u128 / 2) * BLOCK_TIME as u128);
+    assert!((COIN as u128 / 2) * BLOCK_TIME as u128 - TAIL as u128 * 30 < 30);
+    // the halving never stops being a halving, and the reward never rises
+    assert_eq!(base_reward(0), R0);
+    assert_eq!(base_reward(HALVING), R0 / 2);
+    let mut prev = u64::MAX;
+    for y in 0..70u64 {
+        let r = base_reward(y * HALVING);
+        assert!(r <= prev && r >= TAIL);
+        prev = r;
+    }
+    // the mainnet plan (no tail): the whole integer schedule stays under 42,048,000 VRL
+    let (mut total, mut k) = (0u128, 0u32);
+    while (R0 >> k) > 0 {
+        total += (R0 >> k) as u128 * HALVING as u128;
+        k += 1;
+    }
+    assert!(total <= 42_048_000u128 * COIN as u128, "the mined supply of the mainnet plan would exceed 42,048,000 VRL");
+    assert!(total > 42_047_999u128 * COIN as u128, "…and stays within one VRL of it ({} units)", total);
 }

@@ -1032,7 +1032,7 @@ fn modal(ctx: &egui::Context, s: &mut Session, cmds: &mut Vec<Cmd>, explorer: &s
                     summary_row(ui, "Fee", &format!("{} {SYMBOL}", fmt_amount(fee)), false);
                     summary_row(ui, "Transaction", &txid, true);
                     ui.add_space(8.0);
-                    t::muted(ui, "It becomes final once a miner includes it in a block (about 30 seconds).");
+                    t::muted(ui, "It becomes final once a miner includes it in a block (about 10 seconds).");
                     ui.add_space(16.0);
                     ui.horizontal(|ui| {
                         if t::primary(ui, "Done", true).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {

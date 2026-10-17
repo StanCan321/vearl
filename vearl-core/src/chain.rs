@@ -35,7 +35,8 @@ pub fn txs_bytes(txs: &[SignedTx]) -> u64 {
 
 /// State snapshots: one every SNAP_EVERY blocks, the last SNAP_KEEP are kept (plus the genesis one).
 /// They are used to reorganise without replaying the whole chain from genesis.
-pub const SNAP_EVERY: u64 = 16;
+/// 480 s of blocks (16 blocks of 30 s before the block time became 10 s): 64 snapshots reach back 8.5 hours, the horizon of MESS.
+pub const SNAP_EVERY: u64 = 480 / BLOCK_TIME;
 pub const SNAP_KEEP: usize = 64;
 
 /// Slowing down of deep reorganisations (MESS, inspired by ECIP-1100 of Ethereum Classic): a competing chain must have
@@ -83,7 +84,7 @@ pub enum Retarget {
     Asert,
 }
 
-/// ASERT half-life: 900 s = 30 blocks (chosen by simulation, docs/13 section 5: neutralises the periodic miner, reaction to jumps in
+/// ASERT half-life: 900 s = 90 blocks of 10 s (chosen by simulation, docs/13 section 5: neutralises the periodic miner, reaction to jumps in
 /// power comparable to LWMA-1; a timestamp advance of MAX_FUTURE = 60 s makes the next block only 2^(60/900) = 4.7 % easier).
 pub const ASERT_HALFLIFE: u64 = 900;
 
@@ -116,7 +117,7 @@ pub fn asert_next_target(blocks: &[Block], halflife: u64) -> Option<u64> {
     Some(asert_core(first.header.target, time_delta, (blocks.len() - 1) as u64, BLOCK_TIME, halflife))
 }
 
-pub const LWMA_N: usize = 30;
+pub const LWMA_N: usize = 90; // 900 s of blocks, as the half-life of ASERT
 
 /// LWMA-1: mean target of the window x (weighted sum of solve times) / (T x N(N+1)/2).
 /// Solve times bounded to [1, 6T]; variation per block bounded to [x0.5; x2]. Integers only.

@@ -22,7 +22,7 @@ A_HALFLIFE = 900   # ASERT half-life of VEARL (docs/13 section 5)
 
 PATTERN = b"Noise_XX_25519_ChaChaPoly_BLAKE2s"
 MAX_FRAME, TAG = 65535, 16
-CONSTANTS = {"block_time": 30, "epoch_len": 100, "r0": 20 * 10**8, "halving": 1_051_200, "tail": 5 * 10**7, "lwma_n": 30, "max_future": 60}
+CONSTANTS = {"block_time": 10, "epoch_len": 300, "r0": 20 * 10**8 * 10 // 30, "halving": 3_153_600, "tail": 5 * 10**7 * 10 // 30, "lwma_n": 90, "max_future": 60}
 
 
 # ---------------- Bech32m addresses (BIP-350) ----------------

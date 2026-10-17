@@ -60,7 +60,7 @@ python3 tools/vearl_ref.py fuzz 2000 target/release/vearl-model         # 2000 t
 python3 tools/soak.py 300 11                                              # endurance: 4 real nodes, chaos (SIGKILL), jobs of every type, cheater
 python3 tools/fork_test.py 90                                             # partition of two groups of nodes then merge (deep reorganization)
 python3 tools/spec_ref.py tests/vectors/consensus-work-v1.json          # 40 checks of the work layer
-python3 tools/chain_ref.py tests/vectors/chain-native-v1.json           # chain of 130 blocks + 13 refusals + 6 blocks mined in Python
+python3 tools/chain_ref.py tests/vectors/chain-native-v1.json           # chain of 330 blocks + 13 refusals + 6 blocks mined in Python
 python3 tools/market_ref.py tests/vectors/market-v1.json                # market: 52 blocks, 17 refusals, 10 blocks mined in Python
 python3 tools/diff_fuzz.py 3000 11                                       # Rust/Python differential fuzz of the market: identical decisions and final state
 python3 tools/diff_fuzz_prog.py 3000 11                                  # same for tensor programs (4 fraud types)

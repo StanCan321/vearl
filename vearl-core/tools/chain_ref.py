@@ -249,7 +249,7 @@ def main(path):
             c2.apply(b)
         return c2
 
-    k = next(i for i, b in enumerate(V["blocks"]) if b["txs"] and i > 40)  # a block with a transaction after the LWMA window
+    k = next(i for i, b in enumerate(V["blocks"]) if b["txs"] and i > V["genesis"]["constants"]["lwma_n"] + 10)  # a block with a transaction after the LWMA window
     base = state_at(k)
 
     def mutate(fn):

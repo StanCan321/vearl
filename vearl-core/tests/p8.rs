@@ -502,9 +502,9 @@ fn genesis_tool_builds_a_public_genesis_and_checks_it() {
     assert_eq!(cfg.alloc.len(), 2);
     assert_eq!(cfg.alloc[0].1, 1_000_000 * COIN);
     assert_eq!(cfg.alloc[1].1, 250 * COIN + COIN / 2);
-    // 100 M attempts per second and 30 s per block: one attempt in 3 x 10^9 succeeds
+    // 100 M attempts per second and BLOCK_TIME seconds per block: one attempt in 10^8 x BLOCK_TIME succeeds
     let p = (u64::MAX as f64) / (cfg.target as f64);
-    assert!((p / 3.0e9 - 1.0).abs() < 1e-6, "{p}");
+    assert!((p / (1.0e8 * BLOCK_TIME as f64) - 1.0).abs() < 1e-6, "{p}");
     let err = String::from_utf8(out.stderr).unwrap();
     assert!(err.contains("GENESIS HASH") && err.contains("2026-10-23 16:00:00 UTC") && err.contains("n = 1024"), "{err}");
     // --check prints the same hash from the file, and refuses a damaged file

@@ -117,7 +117,7 @@ Scope: a chain of **Native work blocks** carrying **transfers**. The other work 
 
 ### 10.1 Genesis and constants
 
-Initial state: balances = genesis allocation, nonces = 0. `prev` of block 0 = 32 zero bytes; "tip timestamp" before block 0 = genesis timestamp; initial target = genesis parameter. v1 constants: `BLOCK_TIME = 30` s, `EPOCH_LEN = 100`, `R0 = 20·10⁸` units (1 VRL = 10⁸), `HALVING = 1,051,200` blocks, `TAIL = 0.5·10⁸`, `LWMA_N = 30`, `MAX_FUTURE = 60` s.
+Initial state: balances = genesis allocation, nonces = 0. `prev` of block 0 = 32 zero bytes; "tip timestamp" before block 0 = genesis timestamp; initial target = genesis parameter. v1 constants: `BLOCK_TIME = 10` s, `EPOCH_LEN = 300`, `R0 = 666,666,666` units (1 VRL = 10⁸; 20 VRL per 30 s, rounded down), `HALVING = 3,153,600` blocks (365 days), `TAIL = 16,666,666` units, `LWMA_N = 90`, `MAX_FUTURE = 60` s. (Until 2026-10-17 the block time was 30 s, `EPOCH_LEN` 100, `R0` 20 VRL, `HALVING` 1,051,200, `TAIL` 0.5 VRL and `LWMA_N` 30: the same durations and the same emission per year.)
 
 ### 10.2 Transfer transaction
 
@@ -136,12 +136,12 @@ Initial state: balances = genesis allocation, nonces = 0. `prev` of block 0 = 32
 After each applied block, with `E = BLOCK_TIME` and `dt = block timestamp − parent timestamp`:
 
 - EMA (fallback): `ema = target × (15E + clamp(dt, E/2, 2E)) / (16E)`, bounded to `[2¹⁶, 2⁶⁴−1]` (integer division).
-- **LWMA-1** (production rule): if the number of blocks `< N+1 = 31`, the next target is `ema`. Otherwise, over the window `w` of the last `N+1` blocks (`w[0]` = the oldest): `st_i = clamp(ts(w[i]) − ts(w[i−1]), 1, 6E)`, `num = Σ_{i=1..N} i·st_i`, `sum_t = Σ_{i=1..N} target(w[i])`, `den = E·N(N+1)/2`, `next = (sum_t / N) · num / den` (integers, integer division **before** the multiplication), then bounded to `[target(w[N])/2, 2·target(w[N])]`, then to `[2¹⁶, 2⁶⁴−1]`. (ASERT, `docs/13` §5, has since become the default rule: the genesis `retarget` parameter selects it.)
+- **LWMA-1** (production rule): if the number of blocks `< N+1 = 91`, the next target is `ema`. Otherwise, over the window `w` of the last `N+1` blocks (`w[0]` = the oldest): `st_i = clamp(ts(w[i]) − ts(w[i−1]), 1, 6E)`, `num = Σ_{i=1..N} i·st_i`, `sum_t = Σ_{i=1..N} target(w[i])`, `den = E·N(N+1)/2`, `next = (sum_t / N) · num / den` (integers, integer division **before** the multiplication), then bounded to `[target(w[N])/2, 2·target(w[N])]`, then to `[2¹⁶, 2⁶⁴−1]`. (ASERT, `docs/13` §5, has since become the default rule: the genesis `retarget` parameter selects it.)
 - Work of a block: `⌊2⁶⁴ / (target + 1)⌋`; the chain kept is the one with maximal **cumulative work** (a candidate only replaces the current chain if its cumulative work is **strictly** greater; on a tie the current chain is kept — see `docs/08` §5).
 
 ### 10.6 Verification by a second implementation (measured)
 
-- `vearl-chain-vectors` produces a chain of 130 blocks (transfers, extreme timestamp gaps of 1 s and 400 s, two epochs of native matrices, LWMA active from block 31), frozen in `tests/vectors/chain-native-v1.json`.
+- `vearl-chain-vectors` produces a chain of 330 blocks (transfers, extreme timestamp gaps of 1 s and 130 s, two epochs of native matrices, LWMA active from block 91), frozen in `tests/vectors/chain-native-v1.json`.
 - `tools/chain_ref.py`, written from this §10, **fully re-validates** it (recomputed tile, Ed25519 signatures, nonces, balances, LWMA, emission, monetary supply, cumulative work) and recovers the exact final state; it **refuses for the right reason** 13 altered blocks (target, prev, timestamp, amount, miner, extra_nonce, tile, version, null signature, signature of another account, replayed nonce, fee or amount above the balance).
 - **Reverse direction**: `chain_ref.py` **mines** 6 blocks (with transfers signed in Python); the Rust validator accepts them (`vearl-chain-vectors verify`, test `chain_vectors_are_frozen_and_python_mined_blocks_are_accepted`).
 - Limit: same author for the code, the specification and the second implementer; a real third party remains to be found `[AUDIT ACTION]`. The comparison covers neither the P2P network, nor reorganizations, nor the useful-work classes.

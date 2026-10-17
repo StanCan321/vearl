@@ -96,7 +96,7 @@
   <p>A block counts as useful only when the matrices are the ones a client committed to in an escrowed job. The client checks the returned result with a probabilistic test that costs a small fraction of the computation itself. Any single wrong value can be proven on chain with a proof of about a kilobyte, and the worker that returned it loses its bond. When there is no client demand, miners work on matrices derived from the protocol itself, so the security of the chain never depends on the market.</p>
   <p>Results are exact integers, so every node computes identical bits and a fraud proof is never ambiguous. On this base, programs of up to 240 tensor operations run as verified jobs, and jobs chain together. The testnet has verified a 12-layer vision transformer, a 110-million-parameter text encoder and a small language model that writes stories word by word, each checked bit for bit against an independent reference engine.</p>
   <div class="cards">
-    <div><div class="v mint">30 s</div><p>target block time, adjusted by ASERT</p></div>
+    <div><div class="v mint">10 s</div><p>target block time, adjusted by ASERT</p></div>
     <div><div class="v mint">2<sup>−24</sup></div><p>worst-case error of the client's 24-round Freivalds check</p></div>
     <div><div class="v mint">240</div><p>operations in one verified tensor program</p></div>
     <div><div class="v">0</div><p>external audits so far</p></div>
@@ -194,7 +194,7 @@
   <div class="tbl-wrap"><table class="tbl">
     <thead><tr><th>Class</th><th>Matrices come from</th><th>Who may mine it</th><th>Reward</th></tr></thead>
     <tbody>
-      <tr><td><code>Native</code></td><td>The protocol: derived from the epoch number (100 blocks per epoch)</td><td>Any miner</td><td>Base reward. <strong>No usefulness is claimed.</strong></td></tr>
+      <tr><td><code>Native</code></td><td>The protocol: derived from the epoch number (300 blocks per epoch, 50 minutes)</td><td>Any miner</td><td>Base reward. <strong>No usefulness is claimed.</strong></td></tr>
       <tr><td><code>Job</code></td><td>A client's committed matrices <em>A</em> and <em>B</em></td><td>Only the worker of that job</td><td>Base reward plus a capped rebate</td></tr>
       <tr><td><code>Product</code></td><td>One <em>n</em> × <em>n</em> block of a large tiled product</td><td>Only the worker of that job</td><td>Same as <code>Job</code></td></tr>
       <tr><td><code>Op</code></td><td>One GEMM inside a verified tensor program</td><td>Only the worker of that program</td><td>Same as <code>Job</code></td></tr>
@@ -338,21 +338,21 @@ wins    if  first 8 bytes of jackpot, read big-endian,  &lt;  target</code></div
   <h3><span class="n">4.5</span>Difficulty: ASERT</h3>
   <p>The target adjusts at every block with an exponential rule anchored to an ideal schedule <span class="ev impl">Implemented</span> <span class="ev lit">Literature</span>:</p>
   <div class="eq"><code>target = anchor_target · 2^( (Δt − T·(Δh + 1)) / halflife )
-         <span class="cm">T = 30 s, halflife = 900 s (30 blocks), anchor = first block, integer arithmetic only</span></code></div>
+         <span class="cm">T = 10 s, halflife = 900 s (90 blocks), anchor = first block, integer arithmetic only</span></code></div>
   <p>Because the target depends only on how far real time has drifted from the ideal schedule, there is no sliding window for an intermittent miner to game. Our first rule, LWMA-1 [12], could be slowed by a miner that switches on and off. We measured this by simulation <span class="ev sim">Simulated</span>:</p>
   <div class="tbl-wrap"><table class="tbl keep">
     <thead><tr><th>Rule</th><th class="num">Steady</th><th class="num">On/off ×20</th><th class="num">After ×10 jump</th><th class="num">After ÷10 drop</th></tr></thead>
     <tbody>
-      <tr><td>LWMA-1 (30 blocks)</td><td class="num">30.3 s</td><td class="num">38.3 s (+27.8 %)</td><td class="num">20.7 s</td><td class="num">58.6 s</td></tr>
-      <tr class="hl"><td>ASERT, halflife 900 s</td><td class="num">30.0 s</td><td class="num">30.0 s (−0.1 %)</td><td class="num">7.8 s</td><td class="num">62.1 s</td></tr>
+      <tr><td>LWMA-1 (90 blocks)</td><td class="num">10.0 s</td><td class="num">12.3 s (+23.3 %)</td><td class="num">7.2 s</td><td class="num">16.4 s</td></tr>
+      <tr class="hl"><td>ASERT, halflife 900 s</td><td class="num">10.0 s</td><td class="num">10.0 s (−0.1 %)</td><td class="num">2.7 s</td><td class="num">19.5 s</td></tr>
     </tbody>
   </table></div>
-  <p class="tbl-cap">Average block time in seconds, steady hash rate and over the 100 blocks that follow a sudden change. The cost of ASERT is a temporarily faster emission after a sustained jump in hash rate, which the absolute schedule later claws back.</p>
+  <p class="tbl-cap">Average block time in seconds, steady hash rate and over the 300 blocks (50 minutes) that follow a sudden change; the on/off miner is active for 15 minutes and idle for 30. The cost of ASERT is a temporarily faster emission after a sustained jump in hash rate, which the absolute schedule later claws back.</p>
   <p>The implementation was checked against the 29 official test vectors of the Bitcoin Cash Node reference and against an independent Python implementation on 50,000 random inputs, with no difference <span class="ev meas">Measured</span>. A timestamp pushed 60 s into the future makes the next block at most about 4.7 % easier, and the next block corrects it. The simulation uses exponential solve times and no network latency, so it gives orders of magnitude, not guarantees.</p>
 
   <h3><span class="n">4.6</span>Reorganisations and synchronisation</h3>
   <ul>
-    <li>A node keeps full-state snapshots every 16 blocks (the last 64 plus genesis) and can rewind to any height by replaying at most 15 blocks.</li>
+    <li>A node keeps full-state snapshots every 48 blocks (the last 64 plus genesis, 8.5 hours) and can rewind to any height by replaying at most 47 blocks.</li>
     <li>On a fork, it locates the common ancestor by stepping back 8, 16, 32 … blocks, downloads only the diverging branch, and performs an <strong>atomic</strong> reorganisation: if any block is invalid, the work is insufficient or the brake refuses, the original chain is restored exactly.</li>
     <li>Transactions from the abandoned branch that the winning branch did not include return to the mempool.</li>
     <li>Sync replies are bounded to 8 MiB, and the requester continues until it receives an empty batch.</li>
@@ -559,17 +559,17 @@ wins    if  first 8 bytes of jackpot, read big-endian,  &lt;  target</code></div
   </div>
 
   <h3><span class="n">10.1</span>Block reward and emission</h3>
-  <p>The reward of a block of height <em>h</em> is max(<em>R</em><sub>0</sub> ≫ ⌊<em>h</em> / 1,051,200⌋, tail) with <em>R</em><sub>0</sub> = 20 units and a tail of 0.5 units per block. At the target block time of 30 seconds, 1,051,200 blocks correspond to one year. Halving depends on block height, not on time. The schedule below is derived directly from these constants.</p>
+  <p>The reward of a block of height <em>h</em> is max(<em>R</em><sub>0</sub> ≫ ⌊<em>h</em> / 3,153,600⌋, tail) with <em>R</em><sub>0</sub> = 6.66666666 units and a tail of 0.16666666 units per block. At the target block time of 10 seconds, 3,153,600 blocks correspond to one year. These constants are 20 units and 0.5 units per 30 seconds scaled to the block time and rounded down to the unit, so the amount issued each year does not depend on the block time and never exceeds its nominal value. Halving depends on block height, not on time. The schedule below is derived directly from these constants.</p>
   <div class="tbl-wrap"><table class="tbl keep">
     <thead><tr><th>Year</th><th class="num">Reward per block</th><th class="num">Emitted in the year</th><th class="num">Cumulative</th></tr></thead>
     <tbody>
-      <tr><td>1</td><td class="num">20</td><td class="num">21,024,000</td><td class="num">21,024,000</td></tr>
-      <tr><td>2</td><td class="num">10</td><td class="num">10,512,000</td><td class="num">31,536,000</td></tr>
-      <tr><td>3</td><td class="num">5</td><td class="num">5,256,000</td><td class="num">36,792,000</td></tr>
-      <tr><td>4</td><td class="num">2.5</td><td class="num">2,628,000</td><td class="num">39,420,000</td></tr>
-      <tr><td>5</td><td class="num">1.25</td><td class="num">1,314,000</td><td class="num">40,734,000</td></tr>
-      <tr><td>6</td><td class="num">0.625</td><td class="num">657,000</td><td class="num">41,391,000</td></tr>
-      <tr><td>7 onwards</td><td class="num">0.5 (tail)</td><td class="num">525,600 each year</td><td class="num">no cap</td></tr>
+      <tr><td>1</td><td class="num">6.66666666</td><td class="num">21,024,000</td><td class="num">21,024,000</td></tr>
+      <tr><td>2</td><td class="num">3.33333333</td><td class="num">10,512,000</td><td class="num">31,536,000</td></tr>
+      <tr><td>3</td><td class="num">1.66666666</td><td class="num">5,256,000</td><td class="num">36,792,000</td></tr>
+      <tr><td>4</td><td class="num">0.83333333</td><td class="num">2,628,000</td><td class="num">39,420,000</td></tr>
+      <tr><td>5</td><td class="num">0.41666666</td><td class="num">1,314,000</td><td class="num">40,734,000</td></tr>
+      <tr><td>6</td><td class="num">0.20833333</td><td class="num">657,000</td><td class="num">41,391,000</td></tr>
+      <tr><td>7 onwards</td><td class="num">0.16666666 (tail)</td><td class="num">525,600 each year</td><td class="num">no cap</td></tr>
     </tbody>
   </table></div>
   <p class="tbl-cap">Units, before any genesis allocation. This is the schedule of the public testnet, as built: it has a tail, so it is not capped. Testnet tokens have no value.</p>
@@ -706,11 +706,11 @@ wins    if  first 8 bytes of jackpot, read big-endian,  &lt;  target</code></div
       <tr><td>Work parameters (<em>genesis</em>)</td><td class="m">n 128, tile 16, rank 63, fold_k 64</td><td>Model workloads use chains with n = 1024</td></tr>
       <tr><td>Entry range</td><td class="m">[−64, 64]</td><td>Signed 8-bit integers</td></tr>
       <tr><td>Target block time</td><td class="m">30 s</td><td></td></tr>
-      <tr><td>Native work epoch</td><td class="m">100 blocks</td><td>Native matrices change every epoch</td></tr>
+      <tr><td>Native work epoch</td><td class="m">300 blocks</td><td>Native matrices change every epoch (50 minutes)</td></tr>
       <tr><td>Difficulty rule (<em>genesis</em>)</td><td class="m">ASERT, halflife 900 s</td><td>LWMA-1, EMA and fixed also exist</td></tr>
       <tr><td>Future timestamp tolerance</td><td class="m">60 s</td><td>Local rule</td></tr>
       <tr><td>Block limits</td><td class="m">256 transactions, 4 MiB</td><td>Consensus</td></tr>
-      <tr><td>Initial reward, halving, tail</td><td class="m">20 · 1,051,200 blocks · 0.5</td><td>Units; testnet. Mainnet plan: tail 0, capped</td></tr>
+      <tr><td>Initial reward, halving, tail</td><td class="m">6.66666666 · 3,153,600 blocks · 0.16666666</td><td>Units; testnet. Mainnet plan: tail 0, capped</td></tr>
       <tr><td>Unit</td><td class="m">10<sup>8</sup> base units</td><td></td></tr>
       <tr><td>Job burn, worker bond</td><td class="m">10 %, 10 %</td><td>Provisional</td></tr>
       <tr><td>Minimum escrow</td><td class="m">1 unit</td><td>Provisional; to be made adaptive</td></tr>
@@ -719,7 +719,7 @@ wins    if  first 8 bytes of jackpot, read big-endian,  &lt;  target</code></div
       <tr><td>Data request fee, pending requests</td><td class="m">0.05 unit, 8</td><td></td></tr>
       <tr><td>Auction</td><td class="m">up to 3,600 s; 60 s winner grace</td><td></td></tr>
       <tr><td>Tensor program</td><td class="m">240 operations, 64 weight blocks</td><td></td></tr>
-      <tr><td>Snapshots</td><td class="m">every 16 blocks, last 64</td><td></td></tr>
+      <tr><td>Snapshots</td><td class="m">every 48 blocks, last 64</td><td></td></tr>
       <tr><td>Peer limits</td><td class="m">24 in, 6 out, 2 per IP, 4 per /16</td><td>Local rule</td></tr>
       <tr><td>Message size, rate</td><td class="m">16 MiB, 100 per s</td><td></td></tr>
       <tr><td>Mempool</td><td class="m">5,000 total, 16 per sender</td><td>Local rule</td></tr>
