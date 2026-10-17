@@ -121,7 +121,7 @@ C = c.result_and_settle(job, worker="127.0.0.1:9300", a=A, b=B)          # Freiv
 - **Model registry**: weights deposited once (`PutModel`) are reused by all the jobs that reference them (`vearl-cli infer`); they are persisted with the rest.
 - **Availability**: the worker **automatically serves** its clients' on-chain data requests (`Fetch`); do not shut it down during the challenge window (otherwise the bond is seized through `SlashUnserved`). `--no-serve` is a TEST flag (a worker that withholds): never in production.
 - **Mempool policy**: 64 pending transactions per sender, 5,000 in total; a worker publishes one transaction per job (`PostBatch`) plus one claim.
-- **Client tools**: `vearl-cli infer` (inference / embedding batches), `vearl-cli tiled-run` (large products), `tools/embed_client.py`, `tools/la_client.py`; model conversion: `tools/quantize.py`, `tools/quantize_cnn.py`, `tools/import_onnx.py` (`docs/12`).
+- **Client tools**: `vearl-cli infer` (inference / embedding batches; `WORKER1,WORKER2,...` deposits the data with several workers so that they share the jobs), `vearl-cli tiled-run` (large products), `tools/embed_client.py`, `tools/la_client.py`; model conversion: `tools/quantize.py`, `tools/quantize_cnn.py`, `tools/import_onnx.py` (`docs/12`).
 - **Checking an installation**: `python3 tools/audit_all.py --quick` (17 independent checks, `docs/09`).
 
 ## 4 quater. The explorer website

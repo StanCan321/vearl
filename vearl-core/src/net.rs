@@ -449,6 +449,10 @@ const MAX_MODEL_BLOCKS: usize = 512;
 /// Maximum number of program data sets (input + weights) kept by a worker.
 const MAX_PROG_DATA: usize = 32;
 
+/// Number of tensor-program jobs a worker takes at a time unless `--max-jobs` says otherwise (a value above 1 replaces it). A program takes
+/// seconds to run, so a worker keeps several going, but not the whole queue: the other workers that hold the same data take the rest.
+const PROG_ACTIVE: usize = 16;
+
 /// Frees room in the program data store: drops the oldest sets for which NO job is alive
 /// (Open / Working / Complete) - settled, penalised, expired jobs, or deposits never submitted - together with the matching computations.
 fn prog_store_make_room(n: &mut Node) -> bool {
@@ -2266,13 +2270,51 @@ fn worker_step(n: &mut Node, sk: &SigningKey) -> Option<Target> {
         n.prog_computing.remove(&id);
         n.prog_runs.insert(id, run);
     }
-    let pjobs: Vec<(JobId, ProgJob)> = n.chain.state.progs.iter().map(|(k, v)| (*k, v.clone())).collect();
+    // claims that lost the race (another worker took the job first) will never go through and would block every later transaction of this
+    // worker (nonces) until the eviction of stuck transactions: when everything from the first lost claim on is a claim, drop it all at once,
+    // the jobs still open are claimed again with fresh nonces at the next turn
+    {
+        let mut mine: Vec<(u64, bool, bool)> = n
+            .mempool
+            .iter()
+            .filter(|t| t.tx.from == me)
+            .map(|t| match &t.tx.kind {
+                TxKind::Prog(ProgTx::Claim { job_id }) => (t.tx.nonce, true, !matches!(n.chain.state.progs.get(job_id).map(|j| &j.status), Some(ProgStatus::Open))),
+                _ => (t.tx.nonce, false, false),
+            })
+            .collect();
+        mine.sort();
+        if let Some(first_lost) = mine.iter().position(|m| m.2) {
+            if mine[first_lost..].iter().all(|m| m.1) {
+                let from_nonce = mine[first_lost].0;
+                n.mempool.retain(|t| !(t.tx.from == me && t.tx.nonce >= from_nonce));
+                prune_mempool(n);
+            }
+        }
+    }
+    let mut pjobs: Vec<(JobId, ProgJob)> = n.chain.state.progs.iter().map(|(k, v)| (*k, v.clone())).collect();
+    // several workers may hold the data of the same jobs (the client deposited it with each of them): each looks at the queue in its own
+    // order and takes at most PROG_ACTIVE jobs at a time, so that the jobs spread over the workers instead of all going to the first claim
+    pjobs.sort_by_key(|(id, _)| id.iter().zip(me.iter()).fold(0u64, |a, (x, y)| a.wrapping_mul(1_000_003).wrapping_add((x ^ y) as u64 + 1)));
+    let prog_cap = match n.worker.map_or(0, |w| w.max_jobs) {
+        0 | 1 => PROG_ACTIVE, // default
+        k => k,         // set explicitly with --max-jobs
+    };
+    let mut prog_busy = pjobs
+        .iter()
+        .filter(|(id, j)| match &j.status {
+            ProgStatus::Working { worker, .. } => *worker == me,
+            ProgStatus::Open => has_pending(n, &me, |k| matches!(k, TxKind::Prog(ProgTx::Claim { job_id }) if job_id == id)),
+            _ => false,
+        })
+        .count();
     for (id, j) in pjobs {
         let Some(di) = n.prog_data.iter().position(|d| d.x0_root == j.x0_root && d.w_roots == j.w_roots) else { continue };
         match &j.status {
             ProgStatus::Open if height <= j.deadline => {
-                if !has_pending(n, &me, |k| matches!(k, TxKind::Prog(ProgTx::Claim { job_id }) if *job_id == id)) {
+                if prog_busy < prog_cap && !has_pending(n, &me, |k| matches!(k, TxKind::Prog(ProgTx::Claim { job_id }) if *job_id == id)) {
                     push_own_tx(n, sk, TxKind::Prog(ProgTx::Claim { job_id: id }));
+                    prog_busy += 1;
                 }
             }
             ProgStatus::Working { worker, .. } if *worker == me => {
@@ -2456,7 +2498,7 @@ fn worker_step(n: &mut Node, sk: &SigningKey) -> Option<Target> {
         let lost_claim = {
             let mut mine = n.mempool.iter().filter(|t| t.tx.from == me);
             match (mine.next(), mine.next()) {
-                (Some(t), None) => matches!(&t.tx.kind, TxKind::L2(L2Tx::Claim { job_id }) if !matches!(n.chain.state.l2.get(job_id).map(|j| &j.status), Some(L2Status::Open))),
+                (Some(t), None) => matches!(&t.tx.kind, TxKind::L2(L2Tx::Claim { job_id }) if !n.chain.state.l2.get(job_id).map_or(false, |j| j.claimable_at(&n.chain.state.timing, height, now))),
                 _ => false,
             }
         };
@@ -2475,14 +2517,17 @@ fn worker_step(n: &mut Node, sk: &SigningKey) -> Option<Target> {
         let mut busy = l2jobs
             .iter()
             .filter(|(id, j)| match &j.status {
-                L2Status::Claimed { worker, .. } => *worker == me,
+                L2Status::Claimed { worker, .. } => *worker == me || has_pending(n, &me, |k| matches!(k, TxKind::L2(L2Tx::Claim { job_id }) if job_id == id)),
                 L2Status::Open => has_pending(n, &me, |k| matches!(k, TxKind::L2(L2Tx::Claim { job_id }) if job_id == id)),
                 _ => false,
             })
             .count();
         for (id, j) in l2jobs {
             match &j.status {
-                L2Status::Open if height <= j.deadline => {
+                // an open job, or a job whose worker did not publish within its lease (taken back, the first worker loses its bond)
+                L2Status::Open | L2Status::Claimed { .. }
+                    if j.claimable_at(&n.chain.state.timing, height, now) && !matches!(&j.status, L2Status::Claimed { worker, .. } if *worker == me) =>
+                {
                     let price_ok = w.ask.map_or(true, |a| a <= j.escrow_net);
                     if busy < max_jobs && price_ok && !has_pending(n, &me, |k| matches!(k, TxKind::L2(L2Tx::Claim { job_id }) if *job_id == id)) {
                         push_own_tx(n, sk, TxKind::L2(L2Tx::Claim { job_id: id }));

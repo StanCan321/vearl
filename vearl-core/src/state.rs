@@ -36,6 +36,13 @@ impl Default for Timing {
 }
 
 impl Timing {
+    /// How long a worker may keep a level-2 job without publishing its result: 15 times the service window, i.e. 30 minutes with the genesis
+    /// of the testnet (`serve_secs` = 120). After that any other worker may claim the job again (`L2Tx::Claim`), and the first one loses its bond.
+    /// Derived from `serve_secs` so that the genesis file, and therefore the genesis hash, do not change (tests shorten `serve_secs`).
+    pub fn claim_lease_secs(&self) -> u64 {
+        self.serve_secs.saturating_mul(15)
+    }
+
     pub fn challenge_open(&self, height: u64, ts: u64, at: u64, at_ts: u64) -> bool {
         !(height > at + CHALLENGE_WINDOW && ts >= at_ts + self.challenge_secs)
     }

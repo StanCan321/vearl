@@ -17,7 +17,7 @@
 //! vearl-cli prog-submit NODE WORKER KEY ESCROW_PER_GEMM DATA_SEED [cnn|transformer]   (CNN with a residual block, or transformer encoder block)
 //! vearl-cli prog-status NODE JOBID_HEX
 //! vearl-cli prog-finish NODE WORKER KEY JOBID_HEX DATA_SEED [cnn|transformer]   (verifies each operation: Accept or fraud proof)
-//! vearl-cli infer NODE WORKER KEY ESCROW_PER_GEMM MODEL.json FIRST LAST OUTPUT.i8 [IN_FLIGHT=4]   (BATCH inference / embeddings: one job per sample of the model,
+//! vearl-cli infer NODE WORKER[,WORKER...] KEY ESCROW_PER_GEMM MODEL.json FIRST LAST OUTPUT.i8 [IN_FLIGHT=4]   (BATCH inference / embeddings: one job per sample of the model,
 //!     weights sent ONCE to the worker registry, each job verified operation by operation before payment; int8 output [samples, classes])
 //! vearl-cli l2-submit NODE KEY ESCROW_NXS mc SAMPLES CHUNKS SEED        (level 2: Monte Carlo, estimation of pi)
 //! vearl-cli l2-submit NODE KEY ESCROW_NXS render WIDTH HEIGHT SPP SEED   (level 2: 3D rendering in 16x16 tiles)
@@ -610,7 +610,10 @@ fn run_cmd() {
             }
         }
         "infer" => {
-            let (worker, sk) = (&a[2], key(&a[3]));
+            // WORKER: one address, or several separated by commas: the data is deposited with each of them and the first that claims a job computes it
+            let workers: Vec<String> = a[2].split(',').map(|w| w.trim().to_string()).filter(|w| !w.is_empty()).collect();
+            assert!(!workers.is_empty(), "WORKER: one address, or several separated by commas");
+            let (worker, sk) = (&workers[0], key(&a[3]));
             let per = (a[4].parse::<f64>().unwrap() * COIN as f64) as u64;
             let m = vearl_core::model::load(std::path::Path::new(&a[5])).expect("model");
             assert_eq!(m.n, p.n, "the model is written for n = {} but the chain has n = {}", m.n, p.n);
@@ -651,18 +654,20 @@ fn run_cmd() {
                 }
                 roots_of.insert(idx, sr);
             }
-            let Msg::ModelHave { have } = request(worker, &Msg::HasModel { roots: uniq.clone() }).expect("worker") else { panic!("registry unavailable") };
             let block = |r: &Hash| -> Vec<i8> {
                 match block_of[r] {
                     (k, None) => base[k].clone(),
                     (k, Some(idx)) => vearl_core::model::b64_decode(&m.samples[idx].weights[&k], p.n * p.n).expect("weights"),
                 }
             };
-            let missing: Vec<Vec<i8>> = uniq.iter().zip(&have).filter(|(_, h)| !**h).map(|(r, _)| block(r)).collect();
-            println!("worker registry: {}/{} weight blocks already present, {} sent once for the {} batches", have.iter().filter(|h| **h).count(), uniq.len(), missing.len(), last + 1 - first);
-            for part in missing.chunks(per_msg) {
-                let r = request(worker, &Msg::PutModel { ws: part.to_vec() }).expect("worker");
-                assert!(matches!(r, Msg::Ack { ok: true, .. }), "weight deposit refused: {r:?}");
+            for worker in &workers {
+                let Msg::ModelHave { have } = request(worker, &Msg::HasModel { roots: uniq.clone() }).expect("worker") else { panic!("registry unavailable") };
+                let missing: Vec<Vec<i8>> = uniq.iter().zip(&have).filter(|(_, h)| !**h).map(|(r, _)| block(r)).collect();
+                println!("worker {worker} registry: {}/{} weight blocks already present, {} sent once for the {} batches", have.iter().filter(|h| **h).count(), uniq.len(), missing.len(), last + 1 - first);
+                for part in missing.chunks(per_msg) {
+                    let r = request(worker, &Msg::PutModel { ws: part.to_vec() }).expect("worker");
+                    assert!(matches!(r, Msg::Ack { ok: true, .. }), "weight deposit refused: {r:?}");
+                }
             }
             // 2) pipeline: up to `inflight` jobs in flight; each one is verified (Freivalds + recomputation) as soon as the worker has published its operations
             let mut queue: Vec<usize> = (first..=last).collect();
@@ -696,8 +701,10 @@ fn run_cmd() {
                         }
                     }
                     assert!(matches!(r, Msg::Ack { ok: true, .. }), "Submit refused: {r:?}");
-                    let r = request(worker, &Msg::PutProgRef { x0: x0.clone(), w_roots: w_roots.clone() }).expect("worker");
-                    assert!(matches!(r, Msg::Ack { ok: true, .. }), "input refused: {r:?}");
+                    for worker in &workers {
+                        let r = request(worker, &Msg::PutProgRef { x0: x0.clone(), w_roots: w_roots.clone() }).expect("worker");
+                        assert!(matches!(r, Msg::Ack { ok: true, .. }), "input refused by {worker}: {r:?}");
+                    }
                     escrow_total += per * gemms;
                     sent_x += 1;
                     flying.push((idx, id, x0, ops, std::time::Instant::now()));
@@ -733,6 +740,8 @@ fn run_cmd() {
                     let ws = m.sample_program(idx, &base).expect("sample").1;
                     let Msg::ProgInfo { roots, .. } = request(node, &Msg::GetProg(id)).expect("node") else { unreachable!() };
                     let net_us = std::sync::atomic::AtomicU64::new(0);
+                    // the worker that claimed this job (several may hold the data): the first that serves its first operation
+                    let serving: &String = workers.iter().find(|w| fetch_ops(w, id, &[0u8], p.n).is_some()).unwrap_or(&workers[0]);
                     // operations in groups of OPS_PER_REQ in one round trip (bounding boxes), groups in parallel; roots in parallel
                     const OPS_PER_REQ: usize = 16;
                     let groups = ops.len().div_ceil(OPS_PER_REQ);
@@ -740,7 +749,7 @@ fn run_cmd() {
                         let (lo, hi) = (g * OPS_PER_REQ, ((g + 1) * OPS_PER_REQ).min(ops.len()));
                         let t_net = std::time::Instant::now();
                         let want: Vec<u8> = (lo..hi).map(|o| o as u8).collect();
-                        let got = fetch_ops(worker, id, &want, p.n).ok_or_else(|| format!("operations {lo}..{hi} unavailable"));
+                        let got = fetch_ops(serving, id, &want, p.n).ok_or_else(|| format!("operations {lo}..{hi} unavailable"));
                         net_us.fetch_add(t_net.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
                         got
                     });
@@ -1154,7 +1163,7 @@ NODE is HOST:PORT of a node API.
   vearl-cli job-submit | job-status | job-finish | job-audit ...   matrix product jobs
   vearl-cli tiled-submit | tiled-run | tiled-status | tiled-finish ...   large products
   vearl-cli prog-submit | prog-status | prog-finish ...            tensor programs (CNN, transformer)
-  vearl-cli infer NODE WORKER KEY ESCROW MODEL.json FIRST LAST OUT.i8   batch inference with a verified model
+  vearl-cli infer NODE WORKER[,WORKER...] KEY ESCROW MODEL.json FIRST LAST OUT.i8   batch inference with a verified model (several workers share the jobs)
   vearl-cli l2-submit | l2-status | l2-finish ...                  Monte Carlo and 3D rendering jobs
   vearl-cli mlp-submit | mlp-status | mlp-finish ...               multi-layer inference
 

@@ -496,7 +496,8 @@ pub fn l2_id(client: &PubKey, nonce: u64, kernel: &Kernel, chunks: u32) -> JobId
 #[derive(Clone, Debug, PartialEq)]
 pub enum L2Status {
     Open,
-    Claimed { worker: PubKey, bond: u64 },
+    /// `at_ts`: timestamp of the block that carried the claim (start of the lease, `Timing::claim_lease_secs`)
+    Claimed { worker: PubKey, bond: u64, at_ts: u64 },
     Posted { worker: PubKey, bond: u64, root: Hash, at: u64, at_ts: u64 },
     Settled,
     Slashed,
@@ -518,6 +519,19 @@ pub struct L2Job {
 
 fn bad<T>(m: &str) -> Result<T, String> {
     Err(m.to_string())
+}
+
+impl L2Job {
+    /// A job can be claimed while it is open, and again when the lease of the worker that holds it has run out without a result (the worker
+    /// disappeared or is too slow): the job then goes back to the queue instead of waiting for its deadline.
+    pub fn claimable_at(&self, timing: &crate::state::Timing, height: u64, ts: u64) -> bool {
+        height <= self.deadline
+            && match &self.status {
+                L2Status::Open => true,
+                L2Status::Claimed { at_ts, .. } => ts >= at_ts.saturating_add(timing.claim_lease_secs()),
+                _ => false,
+            }
+    }
 }
 
 impl State {
@@ -569,20 +583,25 @@ impl State {
                 self.l2.insert(id, L2Job { client: *from, kernel: kernel.clone(), chunks: *chunks, escrow_net: escrow - burn, deadline: *deadline, status: L2Status::Open, fetches: vec![], fetch_held: 0 });
             }
             L2Tx::Claim { job_id } => {
-                let (net, status, deadline) = {
+                let (net, status, claimable) = {
                     let j = self.l2.get(job_id).ok_or("unknown job")?;
-                    (j.escrow_net, j.status.clone(), j.deadline)
+                    (j.escrow_net, j.status.clone(), j.claimable_at(&self.timing, height, ts))
                 };
-                if status != L2Status::Open || height > deadline {
+                if !claimable {
                     return bad("job not claimable");
                 }
                 let bond = bps(net, BOND_BPS);
                 self.debit(from, bond)?;
-                self.l2.get_mut(job_id).unwrap().status = L2Status::Claimed { worker: *from, bond };
+                // a job taken back from a worker whose lease ran out: that worker loses its bond (burned), the escrow stays with the job
+                if let L2Status::Claimed { worker, bond: old_bond, .. } = status {
+                    self.burned += old_bond;
+                    self.rep.entry(worker).or_default().expired += 1;
+                }
+                self.l2.get_mut(job_id).unwrap().status = L2Status::Claimed { worker: *from, bond, at_ts: ts };
             }
             L2Tx::Post { job_id, root } => {
                 let j = self.l2.get_mut(job_id).ok_or("unknown job")?;
-                let L2Status::Claimed { worker, bond } = j.status.clone() else { return bad("job is not in progress") };
+                let L2Status::Claimed { worker, bond, .. } = j.status.clone() else { return bad("job is not in progress") };
                 if worker != *from || height > j.deadline {
                     return bad("cannot post");
                 }
@@ -690,7 +709,7 @@ impl State {
                         self.credit(&client, net);
                         self.l2.get_mut(job_id).unwrap().status = L2Status::Expired;
                     }
-                    L2Status::Claimed { worker, bond } if height > deadline => {
+                    L2Status::Claimed { worker, bond, .. } if height > deadline => {
                         self.rep.entry(worker).or_default().expired += 1;
                         self.burned += bond;
                         self.credit(&client, net);

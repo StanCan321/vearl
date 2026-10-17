@@ -450,3 +450,108 @@ fn the_explorer_index_follows_the_life_of_a_job_and_survives_reorganisations() {
     assert_eq!(ix.jobs[&other.id].iter().map(|e| e.what).collect::<Vec<_>>(), ["submitted", "claimed", "posted"]);
     assert_eq!(ix.len(), other.c.blocks.len());
 }
+
+// ------------------------------------------------------------ a job whose worker disappeared goes back to the queue
+
+fn mine_at(c: &mut Chain, txs: Vec<SignedTx>, ts: u64) -> Result<(), String> {
+    let out = c.mine(&key(12), WorkClass::Native, None, txs, ts)?;
+    c.validate_and_apply(out.block)
+}
+
+fn claim_start(c: &Chain, id: &JobId) -> u64 {
+    match c.state.l2[id].status {
+        L2Status::Claimed { at_ts, .. } => at_ts,
+        ref s => panic!("not claimed: {s:?}"),
+    }
+}
+
+#[test]
+fn a_job_claimed_by_a_worker_that_disappeared_is_taken_back_after_the_lease() {
+    let mut c = new_chain();
+    let lease = c.state.timing.claim_lease_secs();
+    assert_eq!(lease, 15 * c.state.timing.serve_secs);
+    assert_eq!(Timing::default().claim_lease_secs(), 1_800, "30 minutes with the genesis of the testnet");
+    let kernel = mc(21);
+    let id = l2_id(&pubkey(&key(10)), c.state.nonce(&pubkey(&key(10))), &kernel, 4);
+    let submit = ltx(&c, 10, L2Tx::Submit { kernel: kernel.clone(), chunks: 4, escrow: 20 * COIN, deadline: 900 });
+    mine(&mut c, vec![submit]).unwrap();
+    let claim = ltx(&c, 11, L2Tx::Claim { job_id: id });
+    mine(&mut c, vec![claim]).unwrap();
+    let t0 = claim_start(&c, &id);
+    let net = 20 * COIN - bps(20 * COIN, BURN_BPS);
+    let bond = bps(net, BOND_BPS);
+
+    // while the lease runs, nobody can take the job away from its worker
+    let early = ltx(&c, 13, L2Tx::Claim { job_id: id });
+    assert!(mine(&mut c, vec![early]).is_err(), "a claimed job is not claimable at once");
+    let early = ltx(&c, 13, L2Tx::Claim { job_id: id });
+    assert!(mine_at(&mut c, vec![early], t0 + lease - 1).is_err(), "not one second before the end of the lease");
+    assert!(matches!(c.state.l2[&id].status, L2Status::Claimed { worker, .. } if worker == pubkey(&key(11))));
+
+    // the lease has run out: another worker takes the job, the first one loses its bond
+    let burned = c.state.burned;
+    let bal13 = c.state.balance(&pubkey(&key(13)));
+    let takeover = ltx(&c, 13, L2Tx::Claim { job_id: id });
+    mine_at(&mut c, vec![takeover], t0 + lease).unwrap();
+    assert!(matches!(c.state.l2[&id].status, L2Status::Claimed { worker, at_ts, .. } if worker == pubkey(&key(13)) && at_ts == t0 + lease));
+    assert_eq!(c.state.burned, burned + bond, "the bond of the worker that disappeared is burned");
+    assert_eq!(c.state.balance(&pubkey(&key(13))), bal13 - bond);
+    assert_eq!(c.state.reputation(&pubkey(&key(11))).expired, 1);
+    assert!(c.check_supply_invariant());
+
+    // the first worker can no longer publish; the new one can, and is paid
+    let late = ltx(&c, 11, L2Tx::Post { job_id: id, root: [7; 32] });
+    assert!(mine(&mut c, vec![late]).is_err(), "the former worker has lost the job");
+    let outs: Vec<Vec<u8>> = (0..4).map(|i| kernel.chunk(i)).collect();
+    let tree = chunk_tree(&outs);
+    let post = ltx(&c, 13, L2Tx::Post { job_id: id, root: tree.root() });
+    mine(&mut c, vec![post]).unwrap();
+    let accept = ltx(&c, 10, L2Tx::Accept { job_id: id });
+    mine(&mut c, vec![accept]).unwrap();
+    assert_eq!(c.state.l2[&id].status, L2Status::Settled);
+    assert_eq!(c.state.balance(&pubkey(&key(13))), bal13 + net, "the new worker gets the price and its bond back");
+    assert!(c.check_supply_invariant());
+}
+
+#[test]
+fn a_slow_worker_that_publishes_before_anybody_takes_over_keeps_its_job() {
+    let mut c = new_chain();
+    let lease = c.state.timing.claim_lease_secs();
+    let kernel = mc(22);
+    let id = l2_id(&pubkey(&key(10)), c.state.nonce(&pubkey(&key(10))), &kernel, 2);
+    let submit = ltx(&c, 10, L2Tx::Submit { kernel: kernel.clone(), chunks: 2, escrow: 10 * COIN, deadline: 900 });
+    mine(&mut c, vec![submit]).unwrap();
+    let claim = ltx(&c, 11, L2Tx::Claim { job_id: id });
+    mine(&mut c, vec![claim]).unwrap();
+    let t0 = claim_start(&c, &id);
+    let outs: Vec<Vec<u8>> = (0..2).map(|i| kernel.chunk(i)).collect();
+    let post = ltx(&c, 11, L2Tx::Post { job_id: id, root: chunk_tree(&outs).root() });
+    mine_at(&mut c, vec![post], t0 + lease + 5).unwrap();
+    assert!(matches!(c.state.l2[&id].status, L2Status::Posted { worker, .. } if worker == pubkey(&key(11))));
+    // a posted job is never claimable again, whatever the time
+    let steal = ltx(&c, 13, L2Tx::Claim { job_id: id });
+    assert!(mine_at(&mut c, vec![steal], t0 + 10 * lease).is_err());
+    assert!(c.check_supply_invariant());
+}
+
+#[test]
+fn a_job_past_its_deadline_is_not_taken_back_it_expires_and_the_client_is_refunded() {
+    let mut c = new_chain();
+    let lease = c.state.timing.claim_lease_secs();
+    let kernel = mc(23);
+    let id = l2_id(&pubkey(&key(10)), c.state.nonce(&pubkey(&key(10))), &kernel, 2);
+    let submit = ltx(&c, 10, L2Tx::Submit { kernel, chunks: 2, escrow: 10 * COIN, deadline: c.height() + 4 });
+    mine(&mut c, vec![submit]).unwrap();
+    let claim = ltx(&c, 11, L2Tx::Claim { job_id: id });
+    mine(&mut c, vec![claim]).unwrap();
+    let t0 = claim_start(&c, &id);
+    while c.height() <= c.state.l2[&id].deadline {
+        mine(&mut c, vec![]).unwrap();
+    }
+    let late = ltx(&c, 13, L2Tx::Claim { job_id: id });
+    assert!(mine_at(&mut c, vec![late], t0 + lease + 1).is_err(), "no new claim after the deadline");
+    let settle = ltx(&c, 13, L2Tx::Settle { job_id: id });
+    mine_at(&mut c, vec![settle], t0 + lease + 2).unwrap();
+    assert_eq!(c.state.l2[&id].status, L2Status::Expired);
+    assert!(c.check_supply_invariant());
+}

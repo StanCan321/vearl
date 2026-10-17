@@ -1231,3 +1231,142 @@ fn sync_works_when_replies_are_limited_by_size() {
     a.stop();
     b.stop();
 }
+
+/// A worker that claimed a public job and then went away must not hold it until the deadline: after the lease another worker takes it back
+/// (the first one loses its bond) and computes it. The lease is 15 x serve_secs; here serve_secs = 3.
+#[test]
+fn level2_a_job_abandoned_by_its_worker_is_taken_over_by_another_worker() {
+    use vearl_core::l2::L2Status;
+    let mut g = genesis();
+    g.timing.serve_secs = 3; // lease of 45 s on the chain clock
+    let spawn = |peers: Vec<String>, seed: u8, worker: Option<WorkerCfg>| {
+        spawn_node(NodeConfig { genesis: g.clone(), listen: "127.0.0.1:0".into(), peers, mine_key: Some(SigningKey::from_bytes(&[seed; 32])), use_gpu: false, log: false, worker, data_dir: None }).unwrap()
+    };
+    let miner = spawn(vec![], 102, None); // makes the blocks, takes no job
+    let client = SigningKey::from_bytes(&[100; 32]);
+    let ghost = SigningKey::from_bytes(&[102; 32]); // "worker" that claims and then disappears: a bare key, no node behind it
+    let kernel = Kernel::Render(demo_scene(128, 128, 2, [5; 32]));
+    let chunks = Kernel::forced_chunks(&kernel).unwrap();
+    let nonce = match request(&miner.addr, &Msg::GetAccount(pubkey(&client))).unwrap() {
+        Msg::Account { next_nonce, .. } => next_nonce,
+        m => panic!("{m:?}"),
+    };
+    let id = l2_id(&pubkey(&client), nonce, &kernel, chunks);
+    let submit = TxKind::L2(L2Tx::Submit { kernel, chunks, escrow: 10 * COIN, deadline: miner.height() + 5000 });
+    assert!(matches!(client_tx(&miner, &client, submit), Msg::Ack { ok: true, .. }));
+    wait("the job is on the chain", 60, || miner.shared.node.lock().unwrap().chain.state.l2.contains_key(&id));
+    assert!(matches!(client_tx(&miner, &ghost, TxKind::L2(L2Tx::Claim { job_id: id })), Msg::Ack { ok: true, .. }));
+    wait("the ghost holds the job", 60, || matches!(miner.shared.node.lock().unwrap().chain.state.l2.get(&id).map(|j| &j.status), Some(L2Status::Claimed { .. })));
+    let burned = miner.shared.node.lock().unwrap().chain.state.burned;
+    let (ghost_at, lease) = {
+        let n = miner.shared.node.lock().unwrap();
+        match n.chain.state.l2[&id].status {
+            L2Status::Claimed { at_ts, .. } => (at_ts, n.chain.state.timing.claim_lease_secs()),
+            ref s => panic!("{s:?}"),
+        }
+    };
+
+    // the real worker comes online: during the lease it leaves the job alone
+    let worker = spawn(vec![miner.addr.clone()], 101, Some(WorkerCfg::default()));
+    let worker_pk = pubkey(&SigningKey::from_bytes(&[101; 32]));
+    let ghost_pk = pubkey(&ghost);
+    wait("the worker is connected", 30, || worker.peer_count() >= 1);
+    // (the blocks of the test chain come in milliseconds but their timestamps advance one second at least, so the chain clock runs faster than
+    // the wall clock: the lease is read on the chain clock)
+    let started = Instant::now();
+    let mut watched = 0;
+    while started.elapsed() < Duration::from_secs(10) {
+        {
+            let n = miner.shared.node.lock().unwrap();
+            if n.chain.tip_ts() + 2 < ghost_at + lease {
+                assert!(
+                    matches!(n.chain.state.l2.get(&id).map(|j| &j.status), Some(L2Status::Claimed { worker, .. }) if *worker == ghost_pk),
+                    "the job is not taken away while the lease runs"
+                );
+                watched += 1;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(watched > 0, "the lease was observed while it ran");
+    // the lease runs out: the worker takes the job over and publishes the result
+    wait("the worker took the job over", 120, || {
+        matches!(miner.shared.node.lock().unwrap().chain.state.l2.get(&id).map(|j| &j.status), Some(L2Status::Claimed { worker, .. }) | Some(L2Status::Posted { worker, .. }) if *worker == worker_pk)
+    });
+    wait("the result is published", 120, || matches!(miner.shared.node.lock().unwrap().chain.state.l2.get(&id).map(|j| &j.status), Some(L2Status::Posted { worker, .. }) if *worker == worker_pk));
+    let n = miner.shared.node.lock().unwrap();
+    assert!(n.chain.state.burned > burned, "the bond of the worker that disappeared was burned");
+    assert_eq!(n.chain.state.reputation(&ghost_pk).expired, 1);
+    assert!(n.chain.check_supply_invariant());
+    drop(n);
+    worker.stop();
+    miner.stop();
+}
+
+/// The client deposits the data of a model with SEVERAL workers (`vearl-cli infer WORKER1,WORKER2`): the jobs spread over them, a worker
+/// never holds more jobs at once than `--max-jobs`, and every job still gets its result from the worker that claimed it.
+#[test]
+fn model_jobs_spread_over_the_workers_that_hold_their_data() {
+    use vearl_core::prog::ProgStatus;
+    let cfg = WorkerCfg { max_jobs: 2, ..Default::default() };
+    let w1 = node_with(vec![], Some(101), Some(cfg), None);
+    let w2 = node_with(vec![w1.addr.clone()], Some(102), Some(cfg), None);
+    let passive = node(vec![w1.addr.clone()], None);
+    wait("the three nodes see each other", 30, || w1.peer_count() >= 1 && w2.peer_count() >= 1 && passive.peer_count() >= 1);
+    for seed in [101u8, 102] {
+        let pk = pubkey(&SigningKey::from_bytes(&[seed; 32]));
+        wait("the worker can afford a bond", 60, || matches!(request(&passive.addr, &Msg::GetAccount(pk)), Ok(Msg::Account { balance, .. }) if balance >= 20 * COIN));
+    }
+    let n = WorkParams::TESTNET.n;
+    let client = SigningKey::from_bytes(&[100; 32]);
+    let (x0, ws, ops) = demo_program("cnn", n, 7).unwrap();
+    let x0_root = cols_tree(&x0, n).root();
+    let w_roots: Vec<Hash> = ws.iter().map(|w| rows_tree(w, n).root()).collect();
+    for w in [&w1, &w2] {
+        assert!(matches!(request(&w.addr, &Msg::PutProg { x0: x0.clone(), ws: ws.clone() }).unwrap(), Msg::Ack { ok: true, .. }));
+    }
+    let gemms = ops.iter().filter(|o| o.is_gemm()).count() as u64;
+    let mut ids = vec![];
+    // many small jobs: a worker that took two goes back to the queue only when they are done, so the other one gets its share
+    for _ in 0..24 {
+        let nonce = match request(&passive.addr, &Msg::GetAccount(pubkey(&client))).unwrap() {
+            Msg::Account { next_nonce, .. } => next_nonce,
+            m => panic!("{m:?}"),
+        };
+        ids.push(prog_id(&pubkey(&client), nonce, &x0_root, &w_roots, &ops));
+        let submit = TxKind::Prog(ProgTx::Submit { x0_root, w_roots: w_roots.clone(), ops: ops.clone(), escrow: 20 * COIN * gemms, deadline: passive.height() + 500 });
+        assert!(matches!(client_tx(&passive, &client, submit), Msg::Ack { ok: true, .. }));
+    }
+    let (mut most, mut workers) = (0usize, std::collections::HashSet::new());
+    wait("the jobs are complete", 120, || {
+        let node = passive.shared.node.lock().unwrap();
+        let mut per: std::collections::HashMap<PubKey, usize> = Default::default();
+        let mut done = 0;
+        for id in &ids {
+            match node.chain.state.progs.get(id).map(|j| &j.status) {
+                Some(ProgStatus::Working { worker, .. }) => {
+                    *per.entry(*worker).or_default() += 1;
+                    workers.insert(*worker);
+                }
+                Some(ProgStatus::Complete { worker, .. }) => {
+                    workers.insert(*worker);
+                    done += 1;
+                }
+                Some(ProgStatus::Open) | None => {}
+                Some(_) => done += 1,
+            }
+        }
+        most = most.max(per.values().copied().max().unwrap_or(0));
+        done == ids.len()
+    });
+    assert!(most <= 2, "a worker holds at most max-jobs jobs at once ({most})");
+    assert_eq!(workers.len(), 2, "the jobs spread over both workers");
+    // each result is served by the worker that computed it (the client asks them in turn, as `vearl-cli infer` does)
+    for id in &ids {
+        let served = [&w1, &w2].iter().filter(|w| matches!(request(&w.addr, &Msg::GetOp { job: *id, op: 0 }), Ok(Msg::OpData { .. }))).count();
+        assert_eq!(served, 1, "exactly one worker serves the result of a job");
+    }
+    for node in [&w1, &w2, &passive] {
+        node.stop();
+    }
+}
