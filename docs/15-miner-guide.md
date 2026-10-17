@@ -76,7 +76,7 @@ node --gpu --miner-wallet miner.json --worker \
 ```
 (a Quantus miner built from source: `cargo build -p miner-cli --release`, binary `quantus-miner`; the NVRTC library of CUDA 12.x must be next to it or on the library path for the CUDA engine.)
 
-- **You mine to your own address.** `--qtc-address` is the payout address of the operator (starts with `qz`, created with the official Quantus wallet). The pool pays you directly; Vearl never holds your funds. Default pool: quanpool.com (`--qtc-pool`, `--qtc-cert` to change it, `--qtc-args` for the miner's own options, by default `--cuda-gpu --gpu-devices 1 --cpu-workers 0`).
+- **You mine to your own address.** `--qtc-address` is the payout address of the operator (starts with `qz`, created with the official Quantus wallet). The pool pays you directly; Vearl never holds your funds. Default pool: quanpool.com (`--qtc-pool`, `--qtc-cert` to change it, `--qtc-args` for the miner's own options, by default `--cuda-gpu --cpu-workers 0`, which uses every CUDA GPU of the machine: see section 4 quater).
 - **Protection and audit of the fee** (what is locked, what is checked, what nobody can prevent): `docs/17-fee-protection.md`.
 - **Development fee: 10 % of the Quantus mining time** is spent mining to the Vearl development address `qzm7tR2aEJEdMFajwDspjiWefz2F4iDzsys32gE1DK8Dxc59P` (worker `vrl-fee-<id>`). The address and the percentage are constants of the program, there is no option to change them, and both are printed at every start. The fee is paid in slices of about 8 seconds so that the pool sees a steady stream of shares. **This is a convention of the official build, not a protocol rule**: the source is open, anyone can build a version without the fee or run another miner; a fork loses nothing but the support of the project. The fee address is used for the development of Vearl; this is a commitment of the project, not something the program or the Quantus chain enforces.
 - `--partner-share 80` (default) gives 80 % of every cycle to Quantus and 20 % to Vearl; `--partner-cycle 60` is the cycle length in seconds. With `--partner-share 0` the external miner never runs, with `100` Vearl never mines.
@@ -87,6 +87,16 @@ node --gpu --miner-wallet miner.json --worker \
 - Vearl does not read, verify or pay anything for the Quantus work: Quantus rewards come from the pool (1 % pool fee on quanpool.com at the time of writing), Vearl rewards from the Vearl blocks found during the Vearl windows. Do not count on QTC income: on 2026-10-06 an RTX 5060 Ti measured 230.7 MH/s with the CUDA path of the official miner, about 0.015 QTC (roughly 1.3 USD at the pool's displayed price) per day over a network of 28 TH/s; these figures change every day.
 - Both miners keep their memory on the card; check that the VRAM is enough. A pool may drop a miner that stays silent for too long: keep the cycle at 60 s or less.
 - Verified on a Linux server: the official miner connected to quanpool.com, submitted 183 shares in 10 minutes without a single rejection, and the pool credited them to the worker; the duty cycle and the 10 % fee meter are covered by tests in `src/dual.rs`.
+
+## 4 quater. Several GPUs (rigs)
+
+`vearl-miner`, the node and `vearl-poolminer --gpu` use **every NVIDIA GPU of compute capability 8.0 or newer** (Ampere and later) of the machine, with no setting. At start the node prints the list (`[node] GPU: 4 GPUs: #0 ..., #1 ...`).
+
+- **Vearl mining**: one worker thread per GPU, each with its own copy of the job data in its own memory. The search for a winning sigma is cut into batches handed out in turn, so a faster card simply does more of them and cards of different models can be mixed. A block found by any GPU is a normal block (the header does not say which card found it). In a pool, the GPUs share the nonce range of the job in interleaved batches.
+- **Quantus add-on**: the Quantus miner is started without `--gpu-devices`, so it starts one worker per CUDA GPU (up to rc16 the launcher forced `--gpu-devices 1`: only the first GPU of a rig mined, for Quantus and for Vearl).
+- **Use only some GPUs**: set the standard NVIDIA variable before starting, for example `CUDA_VISIBLE_DEVICES=0,2 ./vearl-miner` (Windows: `set CUDA_VISIBLE_DEVICES=0,2`). It applies to the node and to the Quantus miner alike. `VEARL_GPUS=0,2` selects the CUDA indices for Vearl mining only (the Quantus miner ignores it).
+- **Paid jobs** (rendering, inference, linear algebra) still run on one GPU (GPU 0 of the process): one job is one computation, and workers take several jobs with `--max-jobs`. Spreading a single job over several cards is not done.
+- **Not measured**: the scaling was tested with several workers on one GPU (same code path) and on a single RTX 4070 SUPER; it has not yet been measured on a real multi-GPU rig. Overclocking and power limits are not managed by the miner: use `nvidia-smi -pl` or the tools of your system.
 
 ## 4 ter. Mining in a pool
 

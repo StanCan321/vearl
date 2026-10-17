@@ -95,6 +95,65 @@ fn gpu_matches_cpu_at_wider_secure_params() {
     check(WorkParams { n: 512, tile: 16, rank: 63, fold_k: 64 }, 5);
 }
 
+/// Several GPUs share the search for a block (one thread per GPU, each taking its own batches of sigmas): the blocks they produce are
+/// accepted by the CPU validator, native and job blocks alike. With one physical GPU the test puts three workers on device 0, which
+/// exercises exactly the same code (threads, batches handed out in turn, the winner chosen among them).
+#[test]
+fn several_gpus_share_the_search_and_the_blocks_are_valid() {
+    use vearl_core::gpu::GpuPool;
+    let p = WorkParams::TESTNET;
+    let (alice, bob) = (SigningKey::from_bytes(&[12; 32]), SigningKey::from_bytes(&[13; 32]));
+    let alloc = [(pubkey(&alice), 1000 * COIN), (pubkey(&bob), 100 * COIN)];
+    // a harder target than the other tests (about 64 sigmas per block) so that the search takes several batches
+    let mut chain = Chain::genesis(p, &alloc, 1_000, u64::MAX >> 18);
+    let pool_for = |a: &[i8], b: &[i8]| GpuPool { jobs: (0..3).map(|_| GpuJob::new_on(0, a, b, &p).expect("gpu init")).collect() };
+    let mut cache: GpuCache = None;
+    let mut mine = |chain: &mut Chain, class: WorkClass, data: Option<&CommittedMatrices>, txs: Vec<SignedTx>| {
+        let ts = chain.tip_ts() + BLOCK_TIME;
+        let t = chain.template(class, data).unwrap();
+        if !matches!(&cache, Some((ra, rb, _)) if (*ra, *rb) == (t.cm.a_root(), t.cm.b_root())) {
+            cache = Some((t.cm.a_root(), t.cm.b_root(), pool_for(&t.cm.a, &t.cm.b)));
+        }
+        let before = SIGMA_DONE.load(std::sync::atomic::Ordering::Relaxed);
+        let out = mine_template(&t, &bob, txs, ts, None, true, &mut cache).unwrap();
+        assert!(SIGMA_DONE.load(std::sync::atomic::Ordering::Relaxed) > before, "the GPUs count their work");
+        out
+    };
+    for _ in 0..3 {
+        let out = mine(&mut chain, WorkClass::Native, None, vec![]);
+        chain.validate_and_apply(out.block).unwrap();
+    }
+    let mut rng = StdRng::seed_from_u64(98);
+    let (a, b) = (rand_mat(&mut rng, p.n), rand_mat(&mut rng, p.n));
+    let cm = CommittedMatrices::new(a.clone(), b.clone(), &p);
+    let id = job_id(&pubkey(&alice), 0, &cm.a_root(), &cm.b_root());
+    let submit = make_tx(&chain, &alice, 0, TxKind::SubmitJob { a_root: cm.a_root(), b_root: cm.b_root(), escrow: 10 * COIN, deadline: 100 });
+    let out = mine(&mut chain, WorkClass::Native, None, vec![submit]);
+    chain.validate_and_apply(out.block).unwrap();
+    let claim = make_tx(&chain, &bob, 0, TxKind::ClaimJob { job_id: id });
+    let out = mine(&mut chain, WorkClass::Native, None, vec![claim]);
+    chain.validate_and_apply(out.block).unwrap();
+    let out = mine(&mut chain, WorkClass::Job(id), Some(&cm), vec![]);
+    assert_eq!(out.c, plain_gemm(&a, &b, p.n), "several GPUs still produce the client's true A*B");
+    chain.validate_and_apply(out.block).unwrap();
+    assert!(chain.check_supply_invariant());
+}
+
+/// The cancellation of a search shared by several GPUs is honoured (a block from the network arrived).
+#[test]
+fn a_search_on_several_gpus_stops_when_cancelled() {
+    use vearl_core::gpu::GpuPool;
+    use std::sync::atomic::AtomicBool;
+    let p = WorkParams::TESTNET;
+    let bob = SigningKey::from_bytes(&[14; 32]);
+    let mut chain = Chain::genesis(p, &[(pubkey(&bob), 100 * COIN)], 1_000, 1); // target 1: never found
+    let t = chain.template(WorkClass::Native, None).unwrap();
+    let mut cache: GpuCache = Some((t.cm.a_root(), t.cm.b_root(), GpuPool { jobs: (0..2).map(|_| GpuJob::new_on(0, &t.cm.a, &t.cm.b, &p).unwrap()).collect() }));
+    let cancel = AtomicBool::new(true);
+    let r = mine_template(&t, &bob, vec![], chain.tip_ts() + BLOCK_TIME, Some(&cancel), true, &mut cache);
+    assert_eq!(r.err().as_deref(), Some("cancelled"));
+}
+
 #[test]
 fn gpu_batch_equals_sigma_by_sigma() {
     // the batch (noise derived on several threads, concatenated kernels) must give exactly the same jackpots

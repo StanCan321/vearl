@@ -351,6 +351,7 @@ __global__ void __launch_bounds__(256, 2) tile_kernel(const int8_t* __restrict__
 // ---------------- API C ----------------
 struct Ctx {
     int n, r, cap; // cap = number of sigmas of the batch for which the buffers are allocated
+    int dev;       // CUDA device that owns every buffer of this context (several GPUs: one context per GPU)
     int8_t *a, *b;                 // A and B^T (resident, common to the whole batch)
     int8_t *ap, *bt, *el, *er, *fl, *fr;
     int8_t *pla, *pra, *plb, *prb; // noise operands packed in 16x16 blocks, depth 64
@@ -380,32 +381,50 @@ static bool alloc_batch(Ctx* c, int s) {
     return true;
 }
 
-// Name and compute capability of GPU 0. Returns 0 if OK.
-extern "C" int vearl_gpu_device(char* name, int name_len, int* major, int* minor) {
+// Number of CUDA devices (0 if there is no driver or no GPU).
+extern "C" int vearl_gpu_count() {
+    int n = 0;
+    if (cudaGetDeviceCount(&n) != cudaSuccess) return 0;
+    return n;
+}
+
+// Name and compute capability of device `dev`. Returns 0 if OK.
+extern "C" int vearl_gpu_device_n(int dev, char* name, int name_len, int* major, int* minor) {
     cudaDeviceProp p;
-    if (cudaGetDeviceProperties(&p, 0) != cudaSuccess) return -1;
+    if (cudaGetDeviceProperties(&p, dev) != cudaSuccess) return -1;
     snprintf(name, name_len, "%s", p.name);
     *major = p.major;
     *minor = p.minor;
     return 0;
 }
 
+// Name and compute capability of GPU 0. Returns 0 if OK.
+extern "C" int vearl_gpu_device(char* name, int name_len, int* major, int* minor) {
+    return vearl_gpu_device_n(0, name, name_len, major, minor);
+}
+
+// Per-device one-time set-up (the dynamic shared memory attribute and the __constant__ tables are per device): the CURRENT device.
 static bool gpu_init() {
-    static bool attr = false;
-    if (!attr) {
+    static bool done[64] = {false};
+    int dev = 0;
+    if (cudaGetDevice(&dev) != cudaSuccess || dev < 0 || dev >= 64) return false;
+    if (!done[dev]) {
         cudaFuncSetAttribute(tile_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_BYTES);
         noise_key_kernel<<<1, 1>>>();
         if (cudaDeviceSynchronize() != cudaSuccess) return false;
-        attr = true;
+        done[dev] = true;
     }
     return true;
 }
 
-extern "C" void* vearl_gpu_new(const int8_t* a, const int8_t* b, int n, int rank) {
+// A and B resident on device `dev`. Every later call on the returned context makes `dev` the current device of the calling thread first,
+// so contexts of different GPUs can be driven from different threads at the same time.
+extern "C" void* vearl_gpu_new_on(int dev, const int8_t* a, const int8_t* b, int n, int rank) {
     if (n % 128 != 0 || rank < 1 || rank > 64) return nullptr; // CTA 128x128; noise depth <= 64
+    if (cudaSetDevice(dev) != cudaSuccess) return nullptr;
     if (!gpu_init()) return nullptr;
     Ctx* c = new Ctx();
-    c->n = n; c->r = rank; c->cap = 0;
+    c->n = n; c->r = rank; c->cap = 0; c->dev = dev;
     c->ap = c->bt = c->el = c->er = c->fl = c->fr = c->pla = c->pra = c->plb = c->prb = nullptr;
     c->jack = nullptr; c->hdrs = nullptr; c->c = nullptr; c->a = nullptr; c->b = nullptr;
     size_t nn = (size_t)n * n;
@@ -422,9 +441,14 @@ extern "C" void* vearl_gpu_new(const int8_t* a, const int8_t* b, int n, int rank
     return c;
 }
 
+extern "C" void* vearl_gpu_new(const int8_t* a, const int8_t* b, int n, int rank) {
+    return vearl_gpu_new_on(0, a, b, n, rank);
+}
+
 extern "C" void vearl_gpu_free(void* p) {
     Ctx* c = (Ctx*)p;
     if (!c) return;
+    cudaSetDevice(c->dev);
     cudaFree(c->a); cudaFree(c->b); cudaFree(c->c);
     free_batch(c);
     delete c;
@@ -436,6 +460,7 @@ extern "C" void vearl_gpu_free(void* p) {
 static int run_impl(Ctx* c, int s, const uint8_t* hdr48, const int8_t* el, const int8_t* er, const int8_t* fl,
                     const int8_t* fr, int fold_k, uint8_t* jackpots_out, int32_t* c_out, float* ms_out, bool gen_noise) {
     int n = c->n, r = c->r, tiles = n / 16;
+    CK(cudaSetDevice(c->dev));
     if (fold_k % 32 != 0 || n % fold_k != 0) return -2; // the kernel folds after steps of k=32
     if (s < 1 || s > 65535 || (c_out && s != 1)) return -3;
     if (!alloc_batch(c, s)) return -4;

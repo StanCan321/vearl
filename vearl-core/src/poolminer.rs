@@ -159,7 +159,7 @@ fn cpu_worker(live: Arc<Live>, tid: usize, nthreads: usize, stats: Arc<MinerStat
 }
 
 #[cfg(feature = "gpu")]
-fn gpu_worker(live: Arc<Live>, stats: Arc<MinerStats>, stop: Arc<AtomicBool>, tx: Sender<String>) {
+fn gpu_worker(live: Arc<Live>, stats: Arc<MinerStats>, stop: Arc<AtomicBool>, tx: Sender<String>, dev: usize, idx: u64, count: u64) {
     let mut cache: Option<(u64, WorkParams, crate::gpu::GpuJob)> = None;
     while live.alive.load(Ordering::SeqCst) && !stop.load(Ordering::SeqCst) {
         let Some((gen, job)) = live.current() else {
@@ -168,11 +168,11 @@ fn gpu_worker(live: Arc<Live>, stats: Arc<MinerStats>, stop: Arc<AtomicBool>, tx
         };
         if !matches!(&cache, Some((e, p, _)) if *e == job.epoch && *p == job.params) {
             let (a, b) = native_matrices(job.epoch, &job.params);
-            match crate::gpu::GpuJob::new(&a, &b, &job.params) {
+            match crate::gpu::GpuJob::new_on(dev, &a, &b, &job.params) {
                 Some(g) => cache = Some((job.epoch, job.params, g)),
                 None => {
                     *stats.last_error.lock().unwrap() = "gpu init failed".into();
-                    eprintln!("[poolminer] GPU initialisation failed");
+                    eprintln!("[poolminer] GPU #{dev}: initialisation failed");
                     thread::sleep(Duration::from_secs(2));
                     continue;
                 }
@@ -180,9 +180,10 @@ fn gpu_worker(live: Arc<Live>, stats: Arc<MinerStats>, stop: Arc<AtomicBool>, tx
         }
         let g = &cache.as_ref().unwrap().2;
         let tiles = job.params.tiles();
-        let mut counter = job.nonce_start;
+        // several GPUs share the nonce range in interleaved batches: GPU number `idx` of `count` takes batches idx, idx + count, ...
+        let bs = g.batch_size() as u64;
+        let mut counter = job.nonce_start.saturating_add(idx * bs);
         while live.gen.load(Ordering::SeqCst) == gen && live.alive.load(Ordering::SeqCst) && !stop.load(Ordering::SeqCst) {
-            let bs = g.batch_size() as u64;
             if counter.saturating_add(bs) > job.nonce_end {
                 thread::sleep(Duration::from_millis(100));
                 continue;
@@ -191,7 +192,7 @@ fn gpu_worker(live: Arc<Live>, stats: Arc<MinerStats>, stop: Arc<AtomicBool>, tx
             let res = match g.run_batch(&sigs) {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("[poolminer] GPU error {e}");
+                    eprintln!("[poolminer] GPU #{dev}: error {e}");
                     thread::sleep(Duration::from_secs(1));
                     break;
                 }
@@ -205,7 +206,7 @@ fn gpu_worker(live: Arc<Live>, stats: Arc<MinerStats>, stop: Arc<AtomicBool>, tx
                 }
             }
             stats.sigmas.fetch_add(bs, Ordering::Relaxed);
-            counter += bs;
+            counter += bs * count;
         }
     }
 }
@@ -262,12 +263,21 @@ fn session(cfg: &MinerConfig, stats: &Arc<MinerStats>, stop: &Arc<AtomicBool>) -
             let _ = writer.shutdown(std::net::Shutdown::Both);
         });
     }
-    let threads = if cfg.gpu { 1 } else { cfg.threads.max(1) };
+    // one worker per GPU (all the GPUs of capability >= 8.0, or those of VEARL_GPUS), or the CPU threads
+    #[cfg(feature = "gpu")]
+    let gpu_devs: Vec<usize> = if cfg.gpu { crate::gpu::mining_devices() } else { Vec::new() };
+    #[cfg(not(feature = "gpu"))]
+    let gpu_devs: Vec<usize> = Vec::new();
+    let threads = if cfg.gpu { gpu_devs.len().max(1) } else { cfg.threads.max(1) };
     for t in 0..threads {
         let (l, s, st, txc) = (live.clone(), stats.clone(), stop.clone(), tx.clone());
         if cfg.gpu {
             #[cfg(feature = "gpu")]
-            thread::spawn(move || gpu_worker(l, s, st, txc));
+            {
+                let dev = gpu_devs.get(t).copied().unwrap_or(0);
+                let count = threads as u64;
+                thread::spawn(move || gpu_worker(l, s, st, txc, dev, t as u64, count));
+            }
             #[cfg(not(feature = "gpu"))]
             {
                 let _ = (l, s, st, txc);

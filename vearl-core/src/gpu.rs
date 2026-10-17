@@ -4,11 +4,11 @@ use crate::crypto::Hash;
 use crate::work::*;
 use std::ffi::c_void;
 
-/// (name, major, minor) of GPU 0, or None if there is no usable CUDA GPU.
-pub fn device() -> Option<(String, i32, i32)> {
+/// (name, major, minor) of CUDA device `dev`, or None if it does not exist.
+pub fn device_n(dev: usize) -> Option<(String, i32, i32)> {
     let mut name = [0u8; 256];
     let (mut major, mut minor) = (0i32, 0i32);
-    let rc = unsafe { vearl_gpu_device(name.as_mut_ptr(), name.len() as i32, &mut major, &mut minor) };
+    let rc = unsafe { vearl_gpu_device_n(dev as i32, name.as_mut_ptr(), name.len() as i32, &mut major, &mut minor) };
     if rc != 0 {
         return None;
     }
@@ -16,18 +16,67 @@ pub fn device() -> Option<(String, i32, i32)> {
     Some((String::from_utf8_lossy(&name[..end]).into_owned(), major, minor))
 }
 
-/// The miner requires a GPU of capability >= 8.0 (Ampere and newer: cp.async, ldmatrix, mma.m16n8k32 int8).
-pub fn check_supported() -> Result<String, String> {
-    match device() {
-        None => Err("no usable CUDA GPU (NVIDIA driver and CUDA required)".into()),
-        Some((name, major, minor)) if major < 8 => Err(format!("{name} (compute capability {major}.{minor}) is not supported: an Ampere or newer GPU is required (compute capability >= 8.0)")),
-        Some((name, major, minor)) => Ok(format!("{name} (compute capability {major}.{minor})")),
+/// (name, major, minor) of GPU 0, or None if there is no usable CUDA GPU.
+pub fn device() -> Option<(String, i32, i32)> {
+    device_n(0)
+}
+
+/// Number of CUDA devices seen by this process (`CUDA_VISIBLE_DEVICES` applies).
+pub fn device_count() -> usize {
+    unsafe { vearl_gpu_count() }.max(0) as usize
+}
+
+/// Every CUDA device with its description, usable or not: (index, name, major, minor).
+pub fn devices() -> Vec<(usize, String, i32, i32)> {
+    (0..device_count()).filter_map(|d| device_n(d).map(|(n, a, b)| (d, n, a, b))).collect()
+}
+
+/// The CUDA devices the miner will use: all the GPUs of capability >= 8.0, or those listed in `VEARL_GPUS` (comma-separated CUDA
+/// indices, for example `0,2`; an index of a missing or unsupported GPU is ignored, with a message).
+pub fn mining_devices() -> Vec<usize> {
+    let all = devices();
+    let ok = |d: usize| all.iter().any(|(i, _, major, _)| *i == d && *major >= 8);
+    match std::env::var("VEARL_GPUS") {
+        Ok(list) if !list.trim().is_empty() => {
+            let mut out = Vec::new();
+            for tok in list.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+                match tok.parse::<usize>() {
+                    Ok(d) if ok(d) => out.push(d),
+                    _ => eprintln!("[gpu] VEARL_GPUS: \"{tok}\" is not a usable GPU (an index of an Ampere or newer GPU is required), ignored"),
+                }
+            }
+            out
+        }
+        _ => all.iter().filter(|(_, _, major, _)| *major >= 8).map(|(d, ..)| *d).collect(),
     }
 }
 
+/// The miner requires a GPU of capability >= 8.0 (Ampere and newer: cp.async, ldmatrix, mma.m16n8k32 int8). The text lists
+/// every GPU the miner will use.
+pub fn check_supported() -> Result<String, String> {
+    let all = devices();
+    if all.is_empty() {
+        return Err("no usable CUDA GPU (NVIDIA driver and CUDA required)".into());
+    }
+    let used = mining_devices();
+    if used.is_empty() {
+        let (_, name, major, minor) = &all[0];
+        return Err(format!("{name} (compute capability {major}.{minor}) is not supported: an Ampere or newer GPU is required (compute capability >= 8.0)"));
+    }
+    let describe = |d: &usize| {
+        let (_, name, major, minor) = all.iter().find(|(i, ..)| i == d).unwrap();
+        format!("{name} (compute capability {major}.{minor})")
+    };
+    if used.len() == 1 {
+        return Ok(describe(&used[0]));
+    }
+    Ok(format!("{} GPUs: {}", used.len(), used.iter().map(|d| format!("#{d} {}", describe(d))).collect::<Vec<_>>().join(", ")))
+}
+
 extern "C" {
-    fn vearl_gpu_device(name: *mut u8, name_len: i32, major: *mut i32, minor: *mut i32) -> i32;
-    fn vearl_gpu_new(a: *const i8, b: *const i8, n: i32, rank: i32) -> *mut c_void;
+    fn vearl_gpu_count() -> i32;
+    fn vearl_gpu_device_n(dev: i32, name: *mut u8, name_len: i32, major: *mut i32, minor: *mut i32) -> i32;
+    fn vearl_gpu_new_on(dev: i32, a: *const i8, b: *const i8, n: i32, rank: i32) -> *mut c_void;
     fn vearl_gpu_free(p: *mut c_void);
     fn vearl_gpu_run(
         p: *mut c_void,
@@ -70,10 +119,15 @@ pub struct GpuRun {
 }
 
 impl GpuJob {
-    /// Loads A and B (resident in VRAM for the whole duration of the job).
+    /// Loads A and B (resident in VRAM for the whole duration of the job) on GPU 0.
     pub fn new(a: &[i8], b: &[i8], p: &WorkParams) -> Option<Self> {
+        Self::new_on(0, a, b, p)
+    }
+
+    /// Same, on CUDA device `dev`. Every call on the returned job runs on that device, from whichever thread owns the job.
+    pub fn new_on(dev: usize, a: &[i8], b: &[i8], p: &WorkParams) -> Option<Self> {
         assert_eq!(p.tile, 16, "the GPU kernel is specialised for 16x16 tiles");
-        let ctx = unsafe { vearl_gpu_new(a.as_ptr(), b.as_ptr(), p.n as i32, p.rank as i32) };
+        let ctx = unsafe { vearl_gpu_new_on(dev as i32, a.as_ptr(), b.as_ptr(), p.n as i32, p.rank as i32) };
         (!ctx.is_null()).then_some(Self { ctx, p: *p })
     }
 
@@ -207,6 +261,27 @@ impl Drop for GpuJob {
 // `Chain`, itself protected by the node's Mutex; `mine_template` receives it by &mut/& from a single thread.
 // It is therefore NOT `Sync`, only `Send`.
 unsafe impl Send for GpuJob {}
+
+/// The same job (A and B resident) on every GPU the miner uses: one `GpuJob` per device. The search for a winning sigma is shared
+/// between them (`chain::mine_template`), each GPU taking its own batches.
+pub struct GpuPool {
+    pub jobs: Vec<GpuJob>,
+}
+
+impl GpuPool {
+    /// Loads A and B on each device of `mining_devices()`. A device that fails to initialise is skipped with a message; None if no
+    /// device works.
+    pub fn new(a: &[i8], b: &[i8], p: &WorkParams) -> Option<Self> {
+        let mut jobs = Vec::new();
+        for d in mining_devices() {
+            match GpuJob::new_on(d, a, b, p) {
+                Some(j) => jobs.push(j),
+                None => eprintln!("[gpu] GPU #{d} could not be initialised (out of memory or driver error): skipped"),
+            }
+        }
+        (!jobs.is_empty()).then_some(Self { jobs })
+    }
+}
 
 /// Only one exact GEMM at a time on the GPU (the buffers are allocated per call).
 static EXACT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

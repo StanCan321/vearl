@@ -64,7 +64,7 @@ pub fn reorg_accepted(local_work: u128, cand_work: u128, elapsed: u64, mess: boo
 
 /// GPU job (A,B resident in VRAM) reused from one block to the next as long as the commitments do not change.
 #[cfg(feature = "gpu")]
-pub type GpuCache = Option<(Hash, Hash, crate::gpu::GpuJob)>;
+pub type GpuCache = Option<(Hash, Hash, crate::gpu::GpuPool)>;
 #[cfg(not(feature = "gpu"))]
 pub type GpuCache = ();
 
@@ -652,13 +652,20 @@ pub fn mine_template(
     let miner = pubkey(sk);
     let root = tx_root(&txs);
 
+    // Winner of the search shared by several GPUs: (extra_nonce, jackpots of that sigma); None with one GPU or on the CPU.
+    #[cfg(feature = "gpu")]
+    let mut found: Option<(u64, Vec<Hash>)> = None;
     #[cfg(feature = "gpu")]
     let gpu: Option<&crate::gpu::GpuJob> = if use_gpu {
         let key = (cm.a_root(), cm.b_root());
         if !matches!(cache, Some((ra, rb, _)) if (*ra, *rb) == key) {
-            *cache = Some((key.0, key.1, crate::gpu::GpuJob::new(&cm.a, &cm.b, &p).ok_or("gpu init failed")?));
+            *cache = Some((key.0, key.1, crate::gpu::GpuPool::new(&cm.a, &cm.b, &p).ok_or("gpu init failed")?));
         }
-        cache.as_ref().map(|(_, _, g)| g)
+        let pool = &mut cache.as_mut().unwrap().2;
+        if pool.jobs.len() > 1 {
+            found = Some(search_gpus(&mut pool.jobs, &prev, &miner, class, &root, timestamp, target, cancel)?);
+        }
+        cache.as_ref().map(|(_, _, g)| &g.jobs[0])
     } else {
         None
     };
@@ -672,7 +679,11 @@ pub fn mine_template(
 
     #[cfg(feature = "gpu")]
     let mut queue: std::collections::VecDeque<Vec<Hash>> = Default::default(); // jackpots already computed per batch, in extra_nonce order
-    for extra_nonce in 0..u64::MAX {
+    #[cfg(feature = "gpu")]
+    let first_nonce = found.as_ref().map_or(0, |f| f.0);
+    #[cfg(not(feature = "gpu"))]
+    let first_nonce = 0u64;
+    for extra_nonce in first_nonce..u64::MAX {
         if cancel.map_or(false, |c| c.load(Ordering::Relaxed)) {
             return Err("cancelled".into());
         }
@@ -688,12 +699,17 @@ pub fn mine_template(
             #[cfg(feature = "gpu")]
             {
                 if let Some(g) = gpu {
-                    if queue.is_empty() {
-                        let sigs: Vec<Hash> = (0..g.batch_size() as u64).map(|d| sigma(&prev, &miner, class, extra_nonce.wrapping_add(d), &root, timestamp)).collect();
-                        queue = g.run_batch(&sigs).map_err(|e| format!("gpu error {e}"))?.into();
-                        SIGMA_DONE.fetch_add(sigs.len() as u64, Ordering::Relaxed);
+                    if let Some((_, jp)) = found.take() {
+                        // several GPUs: the winning sigma was found by `search_gpus`, its jackpots are already here
+                        (jp, None)
+                    } else {
+                        if queue.is_empty() {
+                            let sigs: Vec<Hash> = (0..g.batch_size() as u64).map(|d| sigma(&prev, &miner, class, extra_nonce.wrapping_add(d), &root, timestamp)).collect();
+                            queue = g.run_batch(&sigs).map_err(|e| format!("gpu error {e}"))?.into();
+                            SIGMA_DONE.fetch_add(sigs.len() as u64, Ordering::Relaxed);
+                        }
+                        (queue.pop_front().unwrap(), None)
                     }
-                    (queue.pop_front().unwrap(), None)
                 } else {
                     let (o, _) = run_noisy_gemm(&cm.a, &cm.b, &sg, &p);
                     (o.jackpots, Some(o.c_noised))
@@ -754,6 +770,64 @@ pub fn mine_template(
         }
     }
     Err("no solution found".into())
+}
+
+/// Search for a winning sigma on SEVERAL GPUs at once (one thread per GPU). The extra_nonce space is cut into batches of
+/// `batch_size()` consecutive values; each GPU takes the next free batch when it is done with its own, so a faster GPU simply does
+/// more of them. Any extra_nonce whose jackpot meets the target is a valid block (the header carries it), so the first winner found
+/// is returned (the lowest extra_nonce if two GPUs finish together). Errors of one GPU stop that GPU only; the search fails when
+/// none is left.
+#[cfg(feature = "gpu")]
+fn search_gpus(
+    jobs: &mut [crate::gpu::GpuJob],
+    prev: &Hash,
+    miner: &PubKey,
+    class: &WorkClass,
+    root: &Hash,
+    timestamp: u64,
+    target: u64,
+    cancel: Option<&AtomicBool>,
+) -> Result<(u64, Vec<Hash>), String> {
+    use std::sync::Mutex;
+    let bs = jobs[0].batch_size() as u64;
+    let next = AtomicU64::new(0);
+    let stop = AtomicBool::new(false);
+    let best: Mutex<Option<(u64, Vec<Hash>)>> = Mutex::new(None);
+    let errors: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    std::thread::scope(|sc| {
+        for (gi, job) in jobs.iter_mut().enumerate() {
+            let (next, stop, best, errors) = (&next, &stop, &best, &errors);
+            sc.spawn(move || {
+                while !stop.load(Ordering::Relaxed) && !cancel.map_or(false, |c| c.load(Ordering::Relaxed)) {
+                    let first = next.fetch_add(1, Ordering::Relaxed).saturating_mul(bs);
+                    let sigs: Vec<Hash> = (0..bs).map(|d| sigma(prev, miner, class, first.wrapping_add(d), root, timestamp)).collect();
+                    match job.run_batch(&sigs) {
+                        Ok(rows) => {
+                            SIGMA_DONE.fetch_add(sigs.len() as u64, Ordering::Relaxed);
+                            if let Some(i) = rows.iter().position(|row| row.iter().any(|jp| meets_target(jp, target))) {
+                                let mut b = best.lock().unwrap();
+                                if b.as_ref().map_or(true, |(n, _)| first + (i as u64) < *n) {
+                                    *b = Some((first + i as u64, rows[i].clone()));
+                                }
+                                stop.store(true, Ordering::Relaxed);
+                            }
+                        }
+                        Err(e) => {
+                            errors.lock().unwrap().push(format!("GPU #{gi}: error {e}"));
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+    });
+    if let Some(w) = best.into_inner().unwrap() {
+        return Ok(w);
+    }
+    if cancel.map_or(false, |c| c.load(Ordering::Relaxed)) {
+        return Err("cancelled".into());
+    }
+    Err(format!("gpu error: {}", errors.into_inner().unwrap().join("; ")))
 }
 
 /// Helper: builds a signed transaction with the account's current nonce.

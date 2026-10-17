@@ -231,7 +231,9 @@ fn main() {
     }
     if let (Some(m), Some(addr)) = (&qtc_miner, &qtc_address) {
         let id: String = vearl_core::crypto::pubkey(mine_sk.as_ref().expect("mining key")).iter().take(4).map(|b| format!("{b:02x}")).collect();
-        let fixed = if qtc_engine == "vulkan" { "--gpu-devices 1 --cpu-workers 0" } else { "--cuda-gpu --gpu-devices 1 --cpu-workers 0" };
+        // CUDA: no --gpu-devices, the Quantus miner then uses EVERY CUDA GPU of the machine (one worker per GPU; CUDA_VISIBLE_DEVICES
+        // restricts it, and it applies to this node too). Vulkan (fallback engine): one device, as before.
+        let fixed = if qtc_engine == "vulkan" { "--gpu-devices 1 --cpu-workers 0" } else { "--cuda-gpu --cpu-workers 0" };
         let args_line = qtc_args.clone().unwrap_or_else(|| fixed.to_string());
         let extra = vearl_core::dual::parse_cmd(&args_line);
         // 1. the fee constants of this program are intact, 2. the Quantus miner is exactly the one pinned in this build
