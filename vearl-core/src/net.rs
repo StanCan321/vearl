@@ -444,7 +444,7 @@ struct RelayPending {
 }
 
 /// Maximum number of weight blocks in a worker's registry (n = 1024: 1 MiB each).
-const MAX_MODEL_BLOCKS: usize = 512;
+const MAX_MODEL_BLOCKS: usize = 1024; // (Qwen3-Embedding-0.6B alone holds 528 blocks of 1 MiB)
 
 /// Maximum number of program data sets (input + weights) kept by a worker.
 const MAX_PROG_DATA: usize = 32;
@@ -1095,7 +1095,7 @@ fn peer_loop(sh: Arc<Shared>, stream: TcpStream, dialed: Option<String>) {
 /// File of the data deposited by clients with this worker (matrices, weights, inputs): without it, a worker that restarts
 /// loses the data of the jobs it has claimed and can no longer execute them (its bond would be lost at the deadline).
 const PUT_FILE: &str = "putdata.bin";
-const PUT_FILE_MAX: u64 = 512 << 20;
+const PUT_FILE_MAX: u64 = 2 << 30;
 
 fn persist_put(sh: &Arc<Shared>, m: &Msg) {
     let Some(dir) = sh.node.lock().unwrap().data_dir.clone() else { return };

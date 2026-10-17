@@ -44,26 +44,26 @@ def _act(z, shift, relu):
     return np.clip(v, 0 if relu else -64, 64).astype(np.int8)
 
 
-def _softmax(t, ln):
+def _softmax(t, ln, scale=0):
     out = np.zeros(t.shape, dtype=np.int64)
     if ln == 0:
         return out.astype(np.int8)
     x = t[:ln].astype(np.int64)
     m = x.max(axis=0)
-    e = np.array(EXP2, dtype=np.int64)[np.clip(m[None, :] - x, 0, 128)]
+    e = np.array(EXP2, dtype=np.int64)[np.clip((m[None, :] - x) << scale, 0, 128)]
     s = e.sum(axis=0)
     out[:ln] = (e * 64 + s[None, :] // 2) // s[None, :]
     return out.astype(np.int8)
 
 
-def _softmax_lo(t, ln):
+def _softmax_lo(t, ln, scale=0):
     # fine part: round(4096 p) - 64 round(64 p), same e and S as _softmax (in [-32, 32])
     out = np.zeros(t.shape, dtype=np.int64)
     if ln == 0:
         return out.astype(np.int8)
     x = t[:ln].astype(np.int64)
     m = x.max(axis=0)
-    e = np.array(EXP2, dtype=np.int64)[np.clip(m[None, :] - x, 0, 128)]
+    e = np.array(EXP2, dtype=np.int64)[np.clip((m[None, :] - x) << scale, 0, 128)]
     s = e.sum(axis=0)
     hi = (e * 64 + s[None, :] // 2) // s[None, :]
     fine = (e * 4096 + s[None, :] // 2) // s[None, :]
@@ -71,14 +71,14 @@ def _softmax_lo(t, ln):
     return out.astype(np.int8)
 
 
-def _causal_softmax(t, ln, l, fine):
+def _causal_softmax(t, ln, l, fine, scale=0):
     # CAUSAL softmax: column j = query q = j % l; only its first min(ln, q + 1) cells count (the others: 0);
-    # fine: fine part (like _softmax_lo), otherwise output of _softmax
+    # fine: fine part (like _softmax_lo), otherwise output of _softmax; scale: exponent step 2^scale (CausalSoftmaxS)
     eff = np.minimum(ln, np.arange(t.shape[1]) % max(l, 1) + 1)
     x = t.astype(np.int64)
     valid = np.arange(t.shape[0])[:, None] < eff[None, :]
     m = np.where(valid, x, -10 ** 9).max(axis=0)
-    e = np.where(valid, np.array(EXP2, dtype=np.int64)[np.clip(m[None, :] - x, 0, 128)], 0)
+    e = np.where(valid, np.array(EXP2, dtype=np.int64)[np.clip((m[None, :] - x) << scale, 0, 128)], 0)
     s = e.sum(axis=0)[None, :]
     hi = (e * 64 + s // 2) // s
     if not fine:
@@ -95,6 +95,21 @@ def _layernorm(t, ln):
     var = ((x - mu[None, :]) ** 2).sum(axis=0) // ln
     std = np.array([max(1, (math.isqrt(4 * (int(v) + 1)) + 1) // 2) for v in var], dtype=np.int64)
     out[:ln] = np.clip(((x - mu[None, :]) * 16 + (std // 2)[None, :]) // std[None, :], -64, 64)
+    return out.astype(np.int8)
+
+
+def _rmsnorm(t, ln, group, shift=0):
+    # RMS normalisation of each column, in groups of `group` rows over the first `ln` rows (LayerNorm without the mean):
+    # r = isqrt(256 sum(v^2) // group + 256) (= 16 sqrt(ms + 1), 4 fractional bits), out = clip((256 v + r // 2) // r, -64, 64); rows >= ln: 0
+    out = np.zeros(t.shape, dtype=np.int64)
+    g = min(group, ln)
+    if ln == 0 or g == 0:
+        return out.astype(np.int8)
+    for s in range(0, ln - g + 1, g):
+        x = t[s:s + g].astype(np.int64)
+        ms = (256 * (x * x).sum(axis=0)) // g
+        rms = np.array([math.isqrt(int(v) + 256) << shift for v in ms], dtype=np.int64)
+        out[s:s + g] = np.clip((x * 256 + (rms // 2)[None, :]) // rms[None, :], -64, 64)
     return out.astype(np.int8)
 
 
@@ -174,8 +189,18 @@ def eval_op(op, T, W):
         return None, _softmax_lo(T[p["x"]], p["len"])
     if kind == "LayerNorm":
         return None, _layernorm(T[p["x"]], p["len"])
+    if kind == "RmsNorm":
+        return None, _rmsnorm(T[p["x"]], p["len"], p["group"], p["shift"])
+    if kind == "MulT":
+        # element-wise product of two tensors: sat((a * b) >> shift), arithmetic shift (SwiGLU gate)
+        return None, np.clip((T[p["a"]].astype(np.int64) * T[p["b"]].astype(np.int64)) >> p["shift"], -64, 64).astype(np.int8)
+    if kind == "MulW":
+        # element-wise product of a tensor and a weight block: sat((x * W) >> shift) (rotary position embedding tables)
+        return None, np.clip((T[p["x"]].astype(np.int64) * W[p["w"]].astype(np.int64)) >> p["shift"], -64, 64).astype(np.int8)
     if kind == "CausalSoftmax":
         return None, _causal_softmax(T[p["x"]], p["len"], p["l"], p["fine"])
+    if kind == "CausalSoftmaxS":
+        return None, _causal_softmax(T[p["x"]], p["len"], p["l"], p["fine"], p["scale"])
     if kind == "Map":
         m = p["map"]
         x = T[p["x"]]
@@ -244,11 +269,25 @@ def rand_prog(rng):
     for k in range(rng.randint(3, 10)):
         t = lambda: rng.randint(0, len(ops))  # tensors 0..len(ops) exist before the next operation
         kind = rng.choice(["Gemm", "GemmAT", "Add", "Transpose", "Im2col", "Conv", "Shift", "Pool", "Flatten", "Softmax", "SoftmaxLo", "LayerNorm", "Bias", "Lut",
-                           "Mul", "HeadSpread", "HeadGather", "CausalSoftmax"])
-        if kind == "CausalSoftmax":
+                           "Mul", "HeadSpread", "HeadGather", "CausalSoftmax", "RmsNorm", "MulT", "MulW", "CausalSoftmaxS"])
+        if kind == "RmsNorm":
+            if ops:
+                ln = rng.choice([v for v in (1, 2, 7, 12, 32, 64, 100, 128) if v <= N])
+                gr = rng.choice([g for g in range(1, ln + 1) if ln % g == 0])
+                ops.append({"RmsNorm": {"x": max(1, t()), "len": ln, "group": gr, "shift": rng.randint(0, 4)}})
+        elif kind == "MulT":
+            ops.append({"MulT": {"a": t(), "b": t(), "shift": rng.randint(0, 12)}})
+        elif kind == "MulW":
+            ops.append({"MulW": {"x": t(), "w": rng.randrange(nw), "shift": rng.randint(0, 12)}})
+        elif kind == "CausalSoftmax":
             if ops:
                 ops.append({"CausalSoftmax": {"x": max(1, t()), "len": rng.choice([v for v in (1, 2, 7, 12, 64, 128) if v <= N]),
                                               "l": rng.choice([v for v in (1, 3, 16, 64, 100, N) if v <= N]), "fine": rng.random() < .5}})
+        elif kind == "CausalSoftmaxS":
+            if ops:
+                ops.append({"CausalSoftmaxS": {"x": max(1, t()), "len": rng.choice([v for v in (1, 2, 7, 12, 64, 128) if v <= N]),
+                                               "l": rng.choice([v for v in (1, 3, 16, 64, 100, N) if v <= N]), "fine": rng.random() < .5,
+                                               "scale": rng.randint(0, 4)}})
         elif kind == "Mul":
             ops.append({"Mul": {"x": t(), "w": rng.randrange(nw), "row": rng.choice([0, 1, 5, N - 1]), "shift": rng.randint(0, 12)}})
         elif kind in ("HeadSpread", "HeadGather"):

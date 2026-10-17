@@ -14,6 +14,7 @@
 //!   Softmax{x,len}       : INTEGER softmax of each column over its first `len` cells (fixed exp2 table), output in [0,64]
 //!   SoftmaxLo{x,len}     : FINE part of the same softmax: round(4096 p) - 64 round(64 p), in [-32,32]; with Softmax, p to within 1/4096
 //!   CausalSoftmax{x,len,l,fine} : CAUSAL softmax (or its fine part): column j = query q = j mod l, keys 0..=q only (language models)
+//!   CausalSoftmaxS{x,len,l,fine,scale} : the same with a COARSER exponent step: one unit of the score = 2^scale * ln2/8 nats (wide logits)
 //!   LayerNorm{x,len}     : INTEGER normalisation of each column over `len` cells (mean, integer standard deviation), output in [-64,64]
 //!   Lut{x,w,row}         : T[i][j] = W_w[row][clamp(T_x[i][j], -64, 63) + 64] : TABLE of 128 entries (one row of a weight block) applied to
 //!                           each cell: quantised GELU, SiLU, tanh, sigmoid... Same proof shape as Bias (input column, table row, output column).
@@ -101,7 +102,27 @@ pub enum Op {
     /// count, the following ones are 0. fine = false: output of Softmax (1/64); fine = true: fine part of SoftmaxLo (1/4096).
     /// Same fraud proof as Softmax (column).
     CausalSoftmax { x: u8, len: u16, l: u16, fine: bool },
+    /// RMS NORMALISATION of each column, in groups of `group` consecutive rows over the first `len` rows (`len` a multiple of `group`; group = len:
+    /// one normalisation of the whole column; group = head size: one per attention head, the QK-norm of the Qwen3 models). Like LayerNorm
+    /// WITHOUT the subtraction of the mean: r = isqrt(floor(256 sum(v^2) / group) + 256) (16 sqrt(ms + 1), 4 fractional bits), output = clamp(floor((256 v + r/2) / r), -64, 64).
+    /// Cells >= len: 0. Same fraud proof as LayerNorm (column).
+    RmsNorm { x: u8, len: u16, group: u16, shift: u8 },
+    /// ELEMENT-WISE product of two tensors: out[i][j] = sat((a[i][j] * b[i][j]) >> shift), arithmetic shift (the gate of a SwiGLU feed-forward network:
+    /// silu(gate) * up). Same fraud proof as Add (Elem: the two source columns and the output column).
+    MulT { a: u8, b: u8, shift: u8 },
+    /// ELEMENT-WISE product of a tensor and a WEIGHT block: out[i][j] = sat((x[i][j] * W[i][j]) >> shift), W = weight block `w` (the cos and sin tables
+    /// of the rotary position embedding). Fraud proof `MulW`: the source column j, ROW i of the weight, the output column j.
+    MulW { x: u8, w: u8, shift: u8 },
+    /// CAUSAL softmax with a COARSER EXPONENT STEP: like CausalSoftmax, but e_j = EXP2_TABLE[min(128, (max - v_j) << scale)], i.e. one unit of the
+    /// score is 2^scale * ln2/8 nats instead of ln2/8 (scale 0 is CausalSoftmax; scale <= 4). The attention logits of the Qwen3 models span more than
+    /// 20 nats relative to the sink token, the 8-bit score tensor of CausalSoftmax only 11 (+-64 units of 0.087 nat). Same fraud proof (column).
+    CausalSoftmaxS { x: u8, len: u16, l: u16, fine: bool, scale: u8 },
 }
+
+/// Largest exponent step shift of `CausalSoftmaxS`.
+pub const MAX_SOFTMAX_SCALE: u8 = 4;
+/// Largest output shift of `RmsNorm`.
+pub const MAX_RMS_SHIFT: u8 = 4;
 
 impl Op {
     /// Operation whose computation is a mined GEMM (Gemm or GemmAT).
@@ -110,12 +131,12 @@ impl Op {
     }
     /// Operation applied column by column (softmax, layer normalisation).
     pub fn is_col_op(&self) -> bool {
-        matches!(self, Op::Softmax { .. } | Op::SoftmaxLo { .. } | Op::LayerNorm { .. } | Op::CausalSoftmax { .. })
+        matches!(self, Op::Softmax { .. } | Op::SoftmaxLo { .. } | Op::LayerNorm { .. } | Op::CausalSoftmax { .. } | Op::CausalSoftmaxS { .. } | Op::RmsNorm { .. })
     }
     /// Tensor read by a per-column operation.
     pub fn col_input(&self) -> Option<u8> {
         match self {
-            Op::Softmax { x, .. } | Op::SoftmaxLo { x, .. } | Op::LayerNorm { x, .. } | Op::CausalSoftmax { x, .. } => Some(*x),
+            Op::Softmax { x, .. } | Op::SoftmaxLo { x, .. } | Op::LayerNorm { x, .. } | Op::CausalSoftmax { x, .. } | Op::CausalSoftmaxS { x, .. } | Op::RmsNorm { x, .. } => Some(*x),
             _ => None,
         }
     }
@@ -130,6 +151,10 @@ impl Op {
     /// Per-row multiplication (gamma): fraud proof of the Bias shape.
     pub fn is_mul(&self) -> bool {
         matches!(self, Op::Mul { .. })
+    }
+    /// Element-wise product with a weight block: fraud proof `MulW`.
+    pub fn is_mulw(&self) -> bool {
+        matches!(self, Op::MulW { .. })
     }
 }
 
@@ -154,6 +179,8 @@ pub enum ProgFraud {
     Bias { j: u32, in_col: Vec<i8>, in_path: Vec<Hash>, b_row: Vec<i8>, b_path: Vec<Hash>, out_col: Vec<i8>, out_path: Vec<Hash> },
     /// Lut: output column `j` is not the table applied to the input column.
     Lut { j: u32, in_col: Vec<i8>, in_path: Vec<Hash>, t_row: Vec<i8>, t_path: Vec<Hash>, out_col: Vec<i8>, out_path: Vec<Hash> },
+    /// MulW: the entry (i, j) of the output is not (x[i][j] * W[i][j]) >> shift; `w_row` = row `i` of the weight block, `in_col` / `out_col` = columns `j`.
+    MulW { i: u32, j: u32, in_col: Vec<i8>, in_path: Vec<Hash>, w_row: Vec<i8>, w_path: Vec<Hash>, out_col: Vec<i8>, out_path: Vec<Hash> },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -232,6 +259,11 @@ pub const EXP2_TABLE: [u32; 129] = [
 
 /// Integer softmax of a column: e_j = EXP2_TABLE[max - v_j], output = (64 e_j + S/2) / S in [0,64]; cells >= len: 0.
 pub fn softmax_col(col: &[i8], len: usize) -> Vec<i8> {
+    softmax_col_s(col, len, 0)
+}
+
+/// `softmax_col` with the exponent step 2^scale: e_j = EXP2_TABLE[min(128, (max - v_j) << scale)].
+pub fn softmax_col_s(col: &[i8], len: usize, scale: u8) -> Vec<i8> {
     let n = col.len();
     let len = len.min(n);
     let mut out = vec![0i8; n];
@@ -239,7 +271,7 @@ pub fn softmax_col(col: &[i8], len: usize) -> Vec<i8> {
         return out;
     }
     let m = col[..len].iter().map(|v| *v as i32).max().unwrap();
-    let e: Vec<u64> = col[..len].iter().map(|v| EXP2_TABLE[((m - *v as i32).clamp(0, 128)) as usize] as u64).collect();
+    let e: Vec<u64> = col[..len].iter().map(|v| EXP2_TABLE[(((m - *v as i32) << scale).clamp(0, 128)) as usize] as u64).collect();
     let s: u64 = e.iter().sum();
     for (j, ej) in e.iter().enumerate() {
         out[j] = ((ej * 64 + s / 2) / s) as i8;
@@ -250,6 +282,11 @@ pub fn softmax_col(col: &[i8], len: usize) -> Vec<i8> {
 /// Fine part of the integer softmax of a column: q4096_j - 64 q64_j with q_k = (k e_j + S/2) / S (same e_j, S as `softmax_col`);
 /// in [-32, 32]; cells >= len: 0.
 pub fn softmax_lo_col(col: &[i8], len: usize) -> Vec<i8> {
+    softmax_lo_col_s(col, len, 0)
+}
+
+/// `softmax_lo_col` with the exponent step 2^scale.
+pub fn softmax_lo_col_s(col: &[i8], len: usize, scale: u8) -> Vec<i8> {
     let n = col.len();
     let len = len.min(n);
     let mut out = vec![0i8; n];
@@ -257,7 +294,7 @@ pub fn softmax_lo_col(col: &[i8], len: usize) -> Vec<i8> {
         return out;
     }
     let m = col[..len].iter().map(|v| *v as i32).max().unwrap();
-    let e: Vec<u64> = col[..len].iter().map(|v| EXP2_TABLE[((m - *v as i32).clamp(0, 128)) as usize] as u64).collect();
+    let e: Vec<u64> = col[..len].iter().map(|v| EXP2_TABLE[(((m - *v as i32) << scale).clamp(0, 128)) as usize] as u64).collect();
     let s: u64 = e.iter().sum();
     for (j, ej) in e.iter().enumerate() {
         let hi = ((ej * 64 + s / 2) / s) as i64;
@@ -304,18 +341,56 @@ pub fn layernorm_col(col: &[i8], len: usize) -> Vec<i8> {
     out
 }
 
+/// Integer RMS normalisation of a column: for each group of `group` rows of the first `len` rows: r = isqrt(floor(256 sum(v^2) / group) + 256)
+/// (= 16 sqrt(ms + 1) with 4 fractional bits, at least 16), output = clamp(floor((256 v + r/2) / r), -64, 64) (= 16 v / rms); cells >= len: 0.
+/// (LayerNorm without the mean; the 4 fractional bits keep the amplitude exact to 1/(32 rms) when the input has a few LSB of rms.)
+pub fn rmsnorm_col(col: &[i8], len: usize, group: usize) -> Vec<i8> {
+    rmsnorm_col_s(col, len, group, 0)
+}
+
+/// `rmsnorm_col` with the output shift: output = clamp(floor((256 v + R/2) / R), -64, 64), R = r << shift, i.e. 16 v / (rms 2^shift): the output
+/// unit is 2^shift / 16 of the normalised value, the output range 4 * 2^shift sigma (the normalised queries and keys of the Qwen3 models reach 8 sigma).
+pub fn rmsnorm_col_s(col: &[i8], len: usize, group: usize, shift: u8) -> Vec<i8> {
+    let n = col.len();
+    let len = len.min(n);
+    let mut out = vec![0i8; n];
+    if len == 0 || group == 0 {
+        return out;
+    }
+    let g = group.min(len);
+    let mut start = 0;
+    while start + g <= len {
+        let sum: i64 = col[start..start + g].iter().map(|v| (*v as i64) * (*v as i64)).sum::<i64>();
+        let r = (isqrt((256 * sum / g as i64) as u64 + 256) as i64) << shift;
+        for j in start..start + g {
+            out[j] = (((col[j] as i64) * 256 + r / 2).div_euclid(r)).clamp(-64, 64) as i8;
+        }
+        start += g;
+    }
+    out
+}
+
 /// Complete output of column `j` of a softmax / normalisation operation from the input column.
 pub fn col_op(op: &Op, j: usize, in_col: &[i8]) -> Vec<i8> {
     match op {
         Op::Softmax { len, .. } => softmax_col(in_col, *len as usize),
         Op::SoftmaxLo { len, .. } => softmax_lo_col(in_col, *len as usize),
         Op::LayerNorm { len, .. } => layernorm_col(in_col, *len as usize),
+        Op::RmsNorm { len, group, shift, .. } => rmsnorm_col_s(in_col, *len as usize, *group as usize, *shift),
         Op::CausalSoftmax { len, l, fine, .. } => {
             let eff = (*len as usize).min(j % (*l).max(1) as usize + 1);
             if *fine {
                 softmax_lo_col(in_col, eff)
             } else {
                 softmax_col(in_col, eff)
+            }
+        }
+        Op::CausalSoftmaxS { len, l, fine, scale, .. } => {
+            let eff = (*len as usize).min(j % (*l).max(1) as usize + 1);
+            if *fine {
+                softmax_lo_col_s(in_col, eff, *scale)
+            } else {
+                softmax_col_s(in_col, eff, *scale)
             }
         }
         _ => vec![0; in_col.len()],
@@ -325,8 +400,9 @@ pub fn col_op(op: &Op, j: usize, in_col: &[i8]) -> Vec<i8> {
 /// Source cells (tensor, row, column) on which output (i, j) of a NON-Gemm operation depends. Empty => output 0.
 pub fn op_inputs(op: &Op, i: usize, j: usize, n: usize) -> Vec<(usize, usize, usize)> {
     match op {
-        Op::Gemm { .. } | Op::GemmAT { .. } | Op::Softmax { .. } | Op::SoftmaxLo { .. } | Op::LayerNorm { .. } | Op::CausalSoftmax { .. } | Op::Bias { .. } | Op::Lut { .. } | Op::Mul { .. } => vec![],
-        Op::Add { a, b, .. } => vec![(*a as usize, i, j), (*b as usize, i, j)],
+        Op::Gemm { .. } | Op::GemmAT { .. } | Op::Softmax { .. } | Op::SoftmaxLo { .. } | Op::LayerNorm { .. } | Op::CausalSoftmax { .. } | Op::CausalSoftmaxS { .. } | Op::Bias { .. }
+        | Op::Lut { .. } | Op::Mul { .. } | Op::RmsNorm { .. } | Op::MulW { .. } => vec![],
+        Op::Add { a, b, .. } | Op::MulT { a, b, .. } => vec![(*a as usize, i, j), (*b as usize, i, j)],
         Op::Map { x, map } => match map {
             MapSpec::Transpose => vec![(*x as usize, j, i)],
             MapSpec::Flatten { c, h, w, batch } => {
@@ -425,8 +501,10 @@ pub fn op_inputs(op: &Op, i: usize, j: usize, n: usize) -> Vec<(usize, usize, us
 /// Output value of a non-Gemm operation from the values of the source cells (in the order of `op_inputs`).
 pub fn op_eval(op: &Op, vals: &[i8]) -> i8 {
     match op {
-        Op::Gemm { .. } | Op::GemmAT { .. } | Op::Softmax { .. } | Op::SoftmaxLo { .. } | Op::LayerNorm { .. } | Op::CausalSoftmax { .. } | Op::Bias { .. } | Op::Lut { .. } | Op::Mul { .. } => 0,
+        Op::Gemm { .. } | Op::GemmAT { .. } | Op::Softmax { .. } | Op::SoftmaxLo { .. } | Op::LayerNorm { .. } | Op::CausalSoftmax { .. } | Op::CausalSoftmaxS { .. } | Op::Bias { .. }
+        | Op::Lut { .. } | Op::Mul { .. } | Op::RmsNorm { .. } | Op::MulW { .. } => 0,
         Op::Add { relu, .. } => sat(vals[0] as i32 + vals[1] as i32, *relu),
+        Op::MulT { shift, .. } => mul_apply(vals[0], vals[1], *shift),
         Op::Map { .. } => vals.first().copied().unwrap_or(0),
         Op::Pool { pool, .. } => match pool {
             PoolSpec::Avg { k, .. } => {
@@ -474,7 +552,7 @@ pub fn eval_op(op: &Op, tensors: &[Vec<i8>], weights: &[Vec<i8>], n: usize) -> (
             let out = z.iter().map(|&v| act_fn(v, *shift, *relu)).collect();
             (Some(z), out)
         }
-        Op::Softmax { x, .. } | Op::SoftmaxLo { x, .. } | Op::LayerNorm { x, .. } | Op::CausalSoftmax { x, .. } => {
+        Op::Softmax { x, .. } | Op::SoftmaxLo { x, .. } | Op::LayerNorm { x, .. } | Op::CausalSoftmax { x, .. } | Op::CausalSoftmaxS { x, .. } | Op::RmsNorm { x, .. } => {
             let tx = &tensors[*x as usize];
             let mut out = vec![0i8; n * n];
             for j in 0..n {
@@ -496,6 +574,14 @@ pub fn eval_op(op: &Op, tensors: &[Vec<i8>], weights: &[Vec<i8>], n: usize) -> (
         Op::Mul { x, w, row, shift } => {
             let (tx, grow) = (&tensors[*x as usize], &weights[*w as usize][*row as usize * n..(*row as usize + 1) * n]);
             (None, (0..n * n).map(|idx| mul_apply(tx[idx], grow[idx / n], *shift)).collect())
+        }
+        Op::MulW { x, w, shift } => {
+            let (tx, tw) = (&tensors[*x as usize], &weights[*w as usize]);
+            (None, (0..n * n).map(|idx| mul_apply(tx[idx], tw[idx], *shift)).collect())
+        }
+        Op::MulT { a, b, shift } => {
+            let (ta, tb) = (&tensors[*a as usize], &tensors[*b as usize]);
+            (None, (0..n * n).map(|idx| mul_apply(ta[idx], tb[idx], *shift)).collect())
         }
         _ => {
             let mut out = vec![0i8; n * n];
@@ -626,7 +712,15 @@ pub fn validate_ops(ops: &[Op], n_weights: usize, n: usize) -> Result<(), String
             Op::Gemm { w, x, shift, .. } => (*w as usize) < n_weights && ok_t(*x) && *shift <= crate::mlp::MAX_SHIFT,
             Op::GemmAT { a, x, shift, .. } => ok_t(*a) && ok_t(*x) && *shift <= crate::mlp::MAX_SHIFT,
             Op::Softmax { x, len } | Op::SoftmaxLo { x, len } | Op::LayerNorm { x, len } => ok_t(*x) && *x >= 1 && *len >= 1 && (*len as usize) <= n,
+            Op::RmsNorm { x, len, group, shift } => {
+                ok_t(*x) && *x >= 1 && *len >= 1 && (*len as usize) <= n && *group >= 1 && group <= len && *len % *group == 0 && *shift <= MAX_RMS_SHIFT
+            }
+            Op::MulT { a, b, shift } => ok_t(*a) && ok_t(*b) && *shift <= crate::mlp::MAX_SHIFT,
+            Op::MulW { x, w, shift } => ok_t(*x) && (*w as usize) < n_weights && *shift <= crate::mlp::MAX_SHIFT,
             Op::CausalSoftmax { x, len, l, .. } => ok_t(*x) && *x >= 1 && *len >= 1 && (*len as usize) <= n && *l >= 1 && (*l as usize) <= n,
+            Op::CausalSoftmaxS { x, len, l, scale, .. } => {
+                ok_t(*x) && *x >= 1 && *len >= 1 && (*len as usize) <= n && *l >= 1 && (*l as usize) <= n && *scale <= MAX_SOFTMAX_SCALE
+            }
             Op::Bias { x, w, row, .. } => ok_t(*x) && (*w as usize) < n_weights && (*row as usize) < n,
             Op::Lut { x, w, row } => ok_t(*x) && (*w as usize) < n_weights && (*row as usize) < n,
             Op::Mul { x, w, row, shift } => ok_t(*x) && (*w as usize) < n_weights && (*row as usize) < n && *shift <= crate::mlp::MAX_SHIFT,
@@ -934,7 +1028,7 @@ fn verify_prog_fraud(job: &ProgJob, op_idx: usize, kind: &ProgFraud, p: &WorkPar
             }
             Ok(())
         }
-        (ProgFraud::Elem { i, j, ins, out_col, out_path }, Op::Add { .. } | Op::Map { .. } | Op::Pool { .. }) => {
+        (ProgFraud::Elem { i, j, ins, out_col, out_path }, Op::Add { .. } | Op::MulT { .. } | Op::Map { .. } | Op::Pool { .. }) => {
             let (i, j) = (*i as usize, *j as usize);
             if i >= n || j >= n || out_col.len() != n {
                 return bad("malformed fraud proof");
@@ -962,7 +1056,7 @@ fn verify_prog_fraud(job: &ProgJob, op_idx: usize, kind: &ProgFraud, p: &WorkPar
             }
             Ok(())
         }
-        (ProgFraud::Col { j, in_col, in_path, out_col, out_path }, Op::Softmax { x, .. } | Op::SoftmaxLo { x, .. } | Op::LayerNorm { x, .. } | Op::CausalSoftmax { x, .. }) => {
+        (ProgFraud::Col { j, in_col, in_path, out_col, out_path }, Op::Softmax { x, .. } | Op::SoftmaxLo { x, .. } | Op::LayerNorm { x, .. } | Op::CausalSoftmax { x, .. } | Op::CausalSoftmaxS { x, .. } | Op::RmsNorm { x, .. }) => {
             let j = *j as usize;
             if j >= n || in_col.len() != n || out_col.len() != n {
                 return bad("malformed fraud proof");
@@ -1022,6 +1116,29 @@ fn verify_prog_fraud(job: &ProgJob, op_idx: usize, kind: &ProgFraud, p: &WorkPar
             let want: Vec<i8> = (0..n).map(|i| mul_apply(in_col[i], b_row[i], *shift)).collect();
             if want == *out_col {
                 return bad("column is correct: not a fraud");
+            }
+            Ok(())
+        }
+        (ProgFraud::MulW { i, j, in_col, in_path, w_row, w_path, out_col, out_path }, Op::MulW { x, w, shift }) => {
+            let (i, j) = (*i as usize, *j as usize);
+            if i >= n || j >= n || in_col.len() != n || w_row.len() != n || out_col.len() != n {
+                return bad("malformed fraud proof");
+            }
+            if w_row.iter().chain(in_col.iter()).any(|v| (*v as i32).abs() > VAL_MAX) {
+                return bad("values out of range");
+            }
+            let in_root = job.tensor_root(*x as usize).ok_or("input tensor not available")?;
+            if !verify_proof(&in_root, leaf_hash(j as u64, &i8_bytes(in_col)), j, in_path, p.depth()) {
+                return bad("bad input opening");
+            }
+            if !verify_proof(&job.w_roots[*w as usize], leaf_hash(i as u64, &i8_bytes(w_row)), i, w_path, p.depth()) {
+                return bad("bad weight opening");
+            }
+            if !verify_proof(&out_root, leaf_hash(j as u64, &i8_bytes(out_col)), j, out_path, p.depth()) {
+                return bad("bad output opening");
+            }
+            if out_col[i] == mul_apply(in_col[i], w_row[j], *shift) {
+                return bad("entry is correct: not a fraud");
             }
             Ok(())
         }
@@ -1141,6 +1258,26 @@ fn check_op(k: usize, op: &Op, ws: &[Vec<i8>], tens: &[Vec<i8>], zs: &[Option<Ve
                     ProgFraud::Bias { j: j as u32, in_col, in_path: cols_tree(tx, n).proof(j), b_row: grow.to_vec(), b_path: rows_tree(&ws[*w as usize], n).proof(*row as usize), out_col, out_path: out_tree.proof(j) },
                 ));
             }
+        }
+        return None;
+    }
+    if let Op::MulW { x, w, shift } = op {
+        let (tx, tw) = (&tens[*x as usize], &ws[*w as usize]);
+        if let Some(idx) = (0..n * n).find(|&e| out[e] != mul_apply(tx[e], tw[e], *shift)) {
+            let (i, j) = (idx / n, idx % n);
+            return Some((
+                k as u8,
+                ProgFraud::MulW {
+                    i: i as u32,
+                    j: j as u32,
+                    in_col: (0..n).map(|q| tx[q * n + j]).collect(),
+                    in_path: cols_tree(tx, n).proof(j),
+                    w_row: tw[i * n..(i + 1) * n].to_vec(),
+                    w_path: rows_tree(tw, n).proof(i),
+                    out_col: (0..n).map(|q| out[q * n + j]).collect(),
+                    out_path: out_tree.proof(j),
+                },
+            ));
         }
         return None;
     }
@@ -1470,6 +1607,70 @@ pub fn demo_causal_attention(n: usize, seed: u64) -> (Vec<i8>, Vec<Vec<i8>>, Vec
     (x0, ws, ops)
 }
 
+/// CAUSAL attention with a COARSER exponent step (`CausalSoftmaxS`, scale 2): the program of `demo_causal_attention` with the two softmax operations replaced.
+pub fn demo_causal_attention_scaled(n: usize, seed: u64) -> (Vec<i8>, Vec<Vec<i8>>, Vec<Op>) {
+    let (x0, ws, mut ops) = demo_causal_attention(n, seed);
+    for op in ops.iter_mut() {
+        if let Op::CausalSoftmax { x, len, l, fine } = *op {
+            *op = Op::CausalSoftmaxS { x, len, l, fine, scale: 2 };
+        }
+    }
+    (x0, ws, ops)
+}
+
+/// (x0, weights, operations) of a GATED feed-forward block with the operations of the Qwen3 models: 32 features x 16 tokens, projection,
+/// RMS normalisation in 2 groups of 16 rows (like a per-head QK-norm), gate and up projections (64 rows), silu table on the gate, element-wise
+/// product gate x up (SwiGLU, `MulT`), element-wise product with a weight table (the shape of a rotary position embedding table, `MulW`),
+/// down projection, residual addition and a final RMS normalisation of the whole column. Requires n >= 64.
+pub fn demo_gated(n: usize, seed: u64) -> (Vec<i8>, Vec<Vec<i8>>, Vec<Op>) {
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+    let mut rng = StdRng::seed_from_u64(seed);
+    let (d, l, ff) = (32usize, 16usize, 64usize);
+    let mut x0 = vec![0i8; n * n];
+    for r in 0..d {
+        for c in 0..l {
+            x0[r * n + c] = rng.gen_range(-20..=20) as i8;
+        }
+    }
+    let mut mk = |rows: usize, cols: usize| {
+        let mut w = vec![0i8; n * n];
+        for r in 0..rows {
+            for c in 0..cols {
+                w[r * n + c] = rng.gen_range(-6..=6) as i8;
+            }
+        }
+        w
+    };
+    let (w0, w1, w2, w5) = (mk(d, d), mk(ff, d), mk(ff, d), mk(d, ff));
+    // table of the silu activation on the gate: row 0 of weight 3, table[k] = round(16 silu((k - 64) / 16)), k = 0..=127
+    let mut silu = vec![0i8; n * n];
+    for k in 0..=127usize {
+        let v = ((k as f64) - 64.0) / 16.0;
+        silu[k] = ((16.0 * v / (1.0 + (-v).exp())).round()).clamp(-64.0, 64.0) as i8;
+    }
+    // weight 4: a table of 64 x 16 entries in [-64, 64] (cos / sin of a rotary embedding: scale 64)
+    let mut tab = vec![0i8; n * n];
+    for r in 0..ff {
+        for c in 0..l {
+            let a = (r as f64) * 0.37 + (c as f64) * 0.11;
+            tab[r * n + c] = (64.0 * a.cos()).round() as i8;
+        }
+    }
+    let ops = vec![
+        Op::Gemm { w: 0, x: 0, shift: 6, relu: false },                        // T1
+        Op::RmsNorm { x: 1, len: d as u16, group: 16, shift: 1 },              // T2: two groups of 16 rows
+        Op::Gemm { w: 1, x: 2, shift: 6, relu: false },                        // T3 gate
+        Op::Gemm { w: 2, x: 2, shift: 6, relu: false },                        // T4 up
+        Op::Lut { x: 3, w: 3, row: 0 },                                        // T5 silu(gate)
+        Op::MulT { a: 5, b: 4, shift: 6 },                                     // T6 silu(gate) * up
+        Op::MulW { x: 6, w: 4, shift: 6 },                                     // T7 times the table
+        Op::Gemm { w: 5, x: 7, shift: 6, relu: false },                        // T8 down projection
+        Op::Add { a: 1, b: 8, relu: false },                                   // T9 residual
+        Op::RmsNorm { x: 9, len: d as u16, group: d as u16, shift: 0 },        // T10 final normalisation
+    ];
+    (x0, vec![w0, w1, w2, silu, tab, w5], ops)
+}
+
 pub fn demo_program(name: &str, n: usize, seed: u64) -> Option<(Vec<i8>, Vec<Vec<i8>>, Vec<Op>)> {
     if let Some(path) = name.strip_prefix("model:") {
         // imported model (see model.rs); `seed` = index of the sample (batch of images) used as input
@@ -1488,6 +1689,8 @@ pub fn demo_program(name: &str, n: usize, seed: u64) -> Option<(Vec<i8>, Vec<Vec
         "heads" if n >= 64 => Some(demo_heads(n, seed)),
         "fineattn" if n >= 64 => Some(demo_fine_attention(n, seed)),
         "causalattn" if n >= 64 => Some(demo_causal_attention(n, seed)),
+        "gated" if n >= 64 => Some(demo_gated(n, seed)),
+        "causalscaled" if n >= 64 => Some(demo_causal_attention_scaled(n, seed)),
         _ => None,
     }
 }

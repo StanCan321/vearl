@@ -584,7 +584,7 @@ fn run_cmd() {
             }
             match find_fraud_proof(&ops, &ws, &tens, &zs, p.n) {
                 Some((op, kind)) => {
-                    println!("operation {op} WRONG ({}) -> fraud proof", match &kind { ProgFraud::Gemm { .. } => "GEMM", ProgFraud::Act { .. } => "activation", ProgFraud::Elem { .. } => "element-wise operation", ProgFraud::Col { .. } => "softmax / normalisation", ProgFraud::Bias { .. } => "bias", ProgFraud::Lut { .. } => "activation table" });
+                    println!("operation {op} WRONG ({}) -> fraud proof", match &kind { ProgFraud::Gemm { .. } => "GEMM", ProgFraud::Act { .. } => "activation", ProgFraud::Elem { .. } => "element-wise operation", ProgFraud::Col { .. } => "softmax / normalisation", ProgFraud::Bias { .. } => "bias", ProgFraud::Lut { .. } => "activation table", ProgFraud::MulW { .. } => "product with a table" });
                     println!("Fraud: {:?}", send(node, &sk, TxKind::Prog(ProgTx::Fraud { job_id: id, op, kind })));
                 }
                 None => {

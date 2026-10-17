@@ -86,10 +86,14 @@ class Pool:
             act = np.clip(self.zs[k] >> p["shift"], 0 if p["relu"] else -64, 64)
             ga = np.argwhere(act != T[k + 1])
             out["Act"] = [tuple(map(int, c)) for c in ga[:3]]
-        elif kind in ("Softmax", "SoftmaxLo", "LayerNorm", "CausalSoftmax"):
+        elif kind in ("Softmax", "SoftmaxLo", "LayerNorm", "CausalSoftmax", "CausalSoftmaxS", "RmsNorm"):
             _, ref = R.eval_op(op, T, self.ws)
             cols = np.nonzero((ref != T[k + 1]).any(axis=0))[0]
             out["Col"] = [(0, int(c)) for c in cols[:3]]
+        elif kind == "MulW":
+            _, ref = R.eval_op(op, T, self.ws)
+            g = np.argwhere(ref != T[k + 1])
+            out["MulW"] = [tuple(map(int, c)) for c in g[:3]]
         elif kind in ("Bias", "Lut", "Mul"):
             _, ref = R.eval_op(op, T, self.ws)
             cols = np.nonzero((ref != T[k + 1]).any(axis=0))[0]
@@ -127,6 +131,10 @@ class Pool:
         if kind == "Col":
             return {"Col": dict(j=j, in_col=[int(v) for v in T[p["x"]][:, j]], in_path=pr(self.cols(p["x"]), j), out_col=[int(v) for v in T[k + 1][:, j]],
                                 out_path=pr(self.cols(k + 1), j))}
+        if kind == "MulW":
+            bt = self.ws[p["w"]]
+            return {"MulW": dict(i=i, j=j, in_col=[int(v) for v in T[p["x"]][:, j]], in_path=pr(self.cols(p["x"]), j), w_row=[int(v) for v in bt[i]],
+                                 w_path=pr(self.rows(("w", p["w"]), bt), i), out_col=[int(v) for v in T[k + 1][:, j]], out_path=pr(self.cols(k + 1), j))}
         ins = []
         for (t, si, sj) in P.op_inputs(op, i, j):
             ins.append({"tensor": t, "col": sj, "vals": [int(v) for v in T[t][:, sj]], "path": pr(self.cols(t), sj)})
@@ -155,7 +163,7 @@ G2["alloc"] = [{"key": C.pub_hex(s), "amount": 10_000 * COIN} for s in range(1, 
 st = P.ProgChain({"genesis": G2, "prog_data": []})
 st.bind = False
 pool_of = {}      # id du job -> Pool
-KINDS_P = ["Gemm", "Act", "Elem", "Col", "Bias", "Lut"]
+KINDS_P = ["Gemm", "Act", "Elem", "Col", "Bias", "Lut", "MulW"]
 
 
 def garbage():
@@ -271,7 +279,7 @@ def gen(height):
         k = rng.choice(bad_ops)
     k = min(k, len(p.tens) - 2)
     ops_kind = next(iter(p.ops[k]))
-    kinds_ok = {"Gemm": ["Gemm", "Act"], "GemmAT": ["Gemm", "Act"], "Softmax": ["Col"], "SoftmaxLo": ["Col"], "CausalSoftmax": ["Col"], "LayerNorm": ["Col"], "Bias": ["Bias"], "Lut": ["Lut"], "Mul": ["Bias"]}.get(ops_kind, ["Elem"])
+    kinds_ok = {"Gemm": ["Gemm", "Act"], "GemmAT": ["Gemm", "Act"], "Softmax": ["Col"], "SoftmaxLo": ["Col"], "CausalSoftmax": ["Col"], "CausalSoftmaxS": ["Col"], "LayerNorm": ["Col"], "RmsNorm": ["Col"], "Bias": ["Bias"], "Lut": ["Lut"], "Mul": ["Bias"], "MulW": ["MulW"]}.get(ops_kind, ["Elem"])
     kind = rng.choice(kinds_ok if rng.random() < 0.9 else KINDS_P)
     mm = p.mismatch(k).get(kind, [])
     if mm and rng.random() < 0.85:

@@ -884,6 +884,7 @@ fn run_prog_full(worker: &NodeHandle, passive: &NodeHandle, name: &str, seed: u6
                 ProgFraud::Col { .. } => "col",
                 ProgFraud::Bias { .. } => "bias",
                 ProgFraud::Lut { .. } => "lut",
+                ProgFraud::MulW { .. } => "mulw",
             };
             assert!(matches!(client_tx(passive, &client, TxKind::Prog(ProgTx::Fraud { job_id: id, op, kind })), Msg::Ack { ok: true, .. }));
             format!("{label}@{op}")

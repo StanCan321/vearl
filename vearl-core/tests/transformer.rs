@@ -271,6 +271,7 @@ fn every_kind_of_wrong_transformer_operation_is_proven_and_slashed() {
             ProgFraud::Col { .. } => "col",
             ProgFraud::Bias { .. } => "bias",
             ProgFraud::Lut { .. } => "lut",
+            ProgFraud::MulW { .. } => "mulw",
         };
         assert_eq!(got, want, "cas {i}");
         let alice0 = r.c.state.balance(&pubkey(&key(10)));

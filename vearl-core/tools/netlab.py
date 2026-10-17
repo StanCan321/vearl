@@ -40,9 +40,9 @@ def addr(seed):
     return bech32m("vrl", bytes.fromhex(C.pub_hex(seed)))
 
 
-def run(*args, timeout=60):
+def run(*args, timeout=60, stdout_only=False):
     r = subprocess.run([f"{B}/{args[0]}"] + list(args[1:]), capture_output=True, text=True, timeout=timeout)
-    return (r.stdout + r.stderr).strip()
+    return r.stdout.strip() if stdout_only else (r.stdout + r.stderr).strip()
 
 
 class Lab:
@@ -52,7 +52,7 @@ class Lab:
         alloc = []
         for s in funded:
             alloc += ["--alloc", f"{addr(s)}=200000"]
-        g = run("vearl-genesis", "--network", "lab", "--faucet", addr(faucet_seed), "--retarget", retarget, "--target-divisor", str(divisor), *alloc)
+        g = run("vearl-genesis", "--network", "lab", "--faucet", addr(faucet_seed), "--retarget", retarget, "--target-divisor", str(divisor), *alloc, stdout_only=True)
         gj = json.loads(g)
         gj["timing"] = {"challenge_secs": window, "serve_secs": 15}
         gj["params"]["n"] = n   # width of the chain (multiple of 128, up to 1024)

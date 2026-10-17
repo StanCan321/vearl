@@ -54,7 +54,7 @@ fn prog_vectors_are_frozen_and_python_authored_programs_are_accepted() {
     let v = Command::new(env!("CARGO_BIN_EXE_vearl-prog-vectors")).args(["verify", "tests/vectors/prog-v1.ext.json"]).output().unwrap();
     let txt = String::from_utf8_lossy(&v.stdout).to_string();
     assert!(v.status.success(), "{txt}");
-    assert!(txt.contains("483 blocks accepted") && txt.contains("Slashed") && txt.contains("Settled"), "{txt}");
+    assert!(txt.contains("616 blocks accepted") && txt.contains("Slashed") && txt.contains("Settled"), "{txt}");
 }
 
 #[test]

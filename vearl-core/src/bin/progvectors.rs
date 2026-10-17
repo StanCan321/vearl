@@ -315,6 +315,13 @@ fn main() {
         ("fine attention: wrong fine part (SoftmaxLo)", "fineattn", Tamper::Col(6), Finish::Fraud { early: false }),
         ("causal attention (CausalSoftmax high + fine), accepted", "causalattn", Tamper::None, Finish::Accept),
         ("causal attention: wrong causal softmax", "causalattn", Tamper::Col(5), Finish::Fraud { early: false }),
+        ("causal attention with a coarser exponent step (CausalSoftmaxS, scale 2), accepted", "causalscaled", Tamper::None, Finish::Accept),
+        ("causal attention with a coarser exponent step: wrong softmax", "causalscaled", Tamper::Col(5), Finish::Fraud { early: false }),
+        ("gated block (RMS norm, silu table, product of two tensors, product with a table), accepted", "gated", Tamper::None, Finish::Accept),
+        ("gated block: wrong grouped RMS normalisation", "gated", Tamper::Col(1), Finish::Fraud { early: false }),
+        ("gated block: wrong product of two tensors", "gated", Tamper::Elem(5), Finish::Fraud { early: false }),
+        ("gated block: wrong product with a table", "gated", Tamper::Elem(6), Finish::Fraud { early: false }),
+        ("gated block: wrong final RMS normalisation", "gated", Tamper::Col(9), Finish::Fraud { early: false }),
         ("cnn: column demanded then served, accepted", "cnn", Tamper::None, Finish::FetchServe),
         ("cnn: column demanded, not served: worker penalised", "cnn", Tamper::None, Finish::Unserved),
     ];

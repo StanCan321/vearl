@@ -17,6 +17,8 @@ import market_ref as M
 
 N = 128
 MAX_OPS, MAX_WEIGHTS, MAX_SHIFT = 240, 64, 24
+MAX_SOFTMAX_SCALE = 4
+MAX_RMS_SHIFT = 4
 
 
 class Invalid(Exception):
@@ -76,6 +78,14 @@ def enc_op(op):
         return u32(10) + b("x") + u16(p["len"])
     if k == "CausalSoftmax":
         return u32(11) + b("x") + u16(p["len"]) + u16(p["l"]) + u8(int(p["fine"]))
+    if k == "CausalSoftmaxS":
+        return u32(15) + b("x") + u16(p["len"]) + u16(p["l"]) + u8(int(p["fine"])) + b("scale")
+    if k == "RmsNorm":
+        return u32(12) + b("x") + u16(p["len"]) + u16(p["group"]) + b("shift")
+    if k == "MulT":
+        return u32(13) + b("a") + b("b") + b("shift")
+    if k == "MulW":
+        return u32(14) + b("x") + b("w") + b("shift")
     raise ValueError(op)
 
 
@@ -97,6 +107,9 @@ def enc_fraud(f):
                 + vec(p["out_col"], lambda v: i8b([v])) + path("out_path"))
     if k == "Lut":
         return (u32(5) + u32(p["j"]) + vec(p["in_col"], lambda v: i8b([v])) + path("in_path") + vec(p["t_row"], lambda v: i8b([v])) + path("t_path")
+                + vec(p["out_col"], lambda v: i8b([v])) + path("out_path"))
+    if k == "MulW":
+        return (u32(6) + u32(p["i"]) + u32(p["j"]) + vec(p["in_col"], lambda v: i8b([v])) + path("in_path") + vec(p["w_row"], lambda v: i8b([v])) + path("w_path")
                 + vec(p["out_col"], lambda v: i8b([v])) + path("out_path"))
     raise ValueError(k)
 
@@ -165,6 +178,14 @@ def validate_ops(ops, n_weights, n=N):
             ok = ok_t(p["x"]) and p["x"] >= 1 and p["len"] >= 1 and p["len"] <= n
         elif kind == "CausalSoftmax":
             ok = ok_t(p["x"]) and p["x"] >= 1 and p["len"] >= 1 and p["len"] <= n and p["l"] >= 1 and p["l"] <= n
+        elif kind == "CausalSoftmaxS":
+            ok = ok_t(p["x"]) and p["x"] >= 1 and p["len"] >= 1 and p["len"] <= n and p["l"] >= 1 and p["l"] <= n and p["scale"] <= MAX_SOFTMAX_SCALE
+        elif kind == "RmsNorm":
+            ok = ok_t(p["x"]) and p["x"] >= 1 and p["len"] >= 1 and p["len"] <= n and p["group"] >= 1 and p["group"] <= p["len"] and p["len"] % p["group"] == 0 and p["shift"] <= MAX_RMS_SHIFT
+        elif kind == "MulT":
+            ok = ok_t(p["a"]) and ok_t(p["b"]) and p["shift"] <= MAX_SHIFT
+        elif kind == "MulW":
+            ok = ok_t(p["x"]) and p["w"] < n_weights and p["shift"] <= MAX_SHIFT
         elif kind == "Add":
             ok = ok_t(p["a"]) and ok_t(p["b"])
         elif kind in ("Bias", "Lut"):
@@ -203,7 +224,7 @@ def validate_ops(ops, n_weights, n=N):
 def op_inputs(op, i, j, n=N):
     """Source cells (tensor, row, column) of the output (i, j) of an Add / Map / Pool operation; empty list => output 0."""
     ((kind, p),) = op.items()
-    if kind == "Add":
+    if kind in ("Add", "MulT"):
         return [(p["a"], i, j), (p["b"], i, j)]
     if kind == "Map":
         m = p["map"]
@@ -279,6 +300,8 @@ def op_eval(op, vals):
     ((kind, p),) = op.items()
     if kind == "Add":
         return int(np.clip(vals[0] + vals[1], 0 if p["relu"] else -64, 64))
+    if kind == "MulT":
+        return int(np.clip((vals[0] * vals[1]) >> p["shift"], -64, 64))
     if kind == "Map":
         return vals[0] if vals else 0
     if kind == "Pool":
@@ -300,6 +323,12 @@ def col_op(op, col, j):
         eff = min(p["len"], j % p["l"] + 1)
         f = R._softmax_lo if p["fine"] else R._softmax
         return [int(v) for v in f(a, eff).reshape(-1)]
+    if kind == "CausalSoftmaxS":
+        eff = min(p["len"], j % p["l"] + 1)
+        f = R._softmax_lo if p["fine"] else R._softmax
+        return [int(v) for v in f(a, eff, p["scale"]).reshape(-1)]
+    if kind == "RmsNorm":
+        return [int(v) for v in R._rmsnorm(a, p["len"], p["group"], p["shift"]).reshape(-1)]
     f = {"Softmax": R._softmax, "SoftmaxLo": R._softmax_lo, "LayerNorm": R._layernorm}[kind]
     return [int(v) for v in f(a, p["len"]).reshape(-1)]
 
@@ -609,7 +638,7 @@ class ProgChain:
                 raise Invalid("invalid opening of the output")
             if p["out_col"][i] == act(p["z_row"][jj], op_p["shift"], op_p["relu"]):
                 raise Invalid("correct activation: not a fraud")
-        elif kind == "Elem" and okind in ("Add", "Map", "Pool"):
+        elif kind == "Elem" and okind in ("Add", "MulT", "Map", "Pool"):
             i, jj = p["i"], p["j"]
             if i >= n or jj >= n or len(p["out_col"]) != n:
                 raise Invalid("malformed proof")
@@ -630,7 +659,7 @@ class ProgChain:
                 raise Invalid("invalid opening of the output")
             if p["out_col"][i] == op_eval(op, vals):
                 raise Invalid("correct entry: not a fraud")
-        elif kind == "Col" and okind in ("Softmax", "SoftmaxLo", "LayerNorm", "CausalSoftmax"):
+        elif kind == "Col" and okind in ("Softmax", "SoftmaxLo", "LayerNorm", "CausalSoftmax", "CausalSoftmaxS", "RmsNorm"):
             jj = p["j"]
             if jj >= n or len(p["in_col"]) != n or len(p["out_col"]) != n:
                 raise Invalid("malformed proof")
@@ -643,6 +672,23 @@ class ProgChain:
                 raise Invalid("invalid opening of the output")
             if col_op(op, p["in_col"], jj) == p["out_col"]:
                 raise Invalid("correct column: not a fraud")
+        elif kind == "MulW" and okind == "MulW":
+            i, jj = p["i"], p["j"]
+            if i >= n or jj >= n or len(p["in_col"]) != n or len(p["w_row"]) != n or len(p["out_col"]) != n:
+                raise Invalid("malformed proof")
+            if any(abs(v) > 64 for v in p["w_row"] + p["in_col"]):
+                raise Invalid("values out of bounds")
+            in_root = self.tensor_root(j, op_p["x"])
+            if in_root is None:
+                raise Invalid("input tensor unavailable")
+            if not vp(in_root, S.leaf_hash(jj, i8b(p["in_col"])), jj, p["in_path"], d):
+                raise Invalid("invalid opening of the input")
+            if not vp(j["w_roots"][op_p["w"]], S.leaf_hash(i, i8b(p["w_row"])), i, p["w_path"], d):
+                raise Invalid("invalid opening of the weight row")
+            if not vp(out_root, S.leaf_hash(jj, i8b(p["out_col"])), jj, p["out_path"], d):
+                raise Invalid("invalid opening of the output")
+            if p["out_col"][i] == int(np.clip((p["in_col"][i] * p["w_row"][jj]) >> op_p["shift"], -64, 64)):
+                raise Invalid("correct entry: not a fraud")
         elif kind == "Lut" and okind == "Lut":
             jj = p["j"]
             if jj >= n or len(p["in_col"]) != n or len(p["t_row"]) != n or len(p["out_col"]) != n:
