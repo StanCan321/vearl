@@ -42,6 +42,7 @@
       <li><a href="/explorer/">Explorer</a></li>
       <li><a href="/compute/">Compute</a></li>
       <li><a href="/whitepaper">Whitepaper</a></li>
+      <li><a href="/team/">Team</a></li>
     </ul>
     <a class="status-pill" href="#status"><span class="dot"></span>Closed testnet</a>
     <button class="burger" id="burger" aria-label="Open menu" aria-expanded="false" aria-controls="menu"><span></span><span></span><span></span></button>
@@ -147,7 +148,7 @@
         <div class="eyebrow"><span class="n">02</span>Workloads</div>
         <h2>Running on the testnet <span class="serif">today.</span></h2>
       </div>
-      <p>Every figure below was measured on the testnet, on a single NVIDIA A10 GPU, with each result checked before payment. Nothing here is a projection.</p>
+      <p>Every figure below was measured on the testnet, on a single NVIDIA A10 GPU, with each result checked before payment (the 0.6-billion-parameter model: on a CPU worker of a local chain). Nothing here is a projection.</p>
     </div>
     <table class="table reveal d1">
       <thead><tr><th>Workload</th><th>Model</th><th>Size</th><th>Measured</th></tr></thead>
@@ -183,25 +184,31 @@
           <td class="r" data-k="Measured"><b>88.6%</b> top-1 accuracy, 32 images in 41 s</td>
         </tr>
         <tr>
-          <td class="w"><span class="idx">F</span>Matrix multiplication</td>
+          <td class="w"><span class="idx">F</span>Large text embeddings</td>
+          <td data-k="Model">Qwen3-Embedding-0.6B, 28 layers, 0.6 billion parameters</td>
+          <td class="m" data-k="Size">2,195 ops · 10 chained jobs</td>
+          <td class="r" data-k="Measured">≈ 50 s per text on a CPU worker (local chain), outputs <b>bit-identical</b> to an independent reference engine; cosine 0.77 with the original model, same-topic nearest neighbour 85% (original: 90%)</td>
+        </tr>
+        <tr>
+          <td class="w"><span class="idx">G</span>Matrix multiplication</td>
           <td data-k="Model">Tiled int8 GEMM</td>
           <td class="m" data-k="Size">8192 × 8192 × 8192</td>
           <td class="r" data-k="Measured"><b>1.1 trillion</b> operations, verified end to end in about 11 s</td>
         </tr>
         <tr>
-          <td class="w"><span class="idx">G</span>Handwritten digits</td>
+          <td class="w"><span class="idx">H</span>Handwritten digits</td>
           <td data-k="Model">MLP and CNN on MNIST</td>
           <td class="m" data-k="Size">10,000 test images</td>
           <td class="r" data-k="Measured"><b>98.1%</b> top-1 accuracy in int8</td>
         </tr>
         <tr>
-          <td class="w"><span class="idx">H</span>Bulk embeddings</td>
+          <td class="w"><span class="idx">I</span>Bulk embeddings</td>
           <td data-k="Model">Distilled text encoder</td>
           <td class="m" data-k="Size">20,480 texts</td>
           <td class="r" data-k="Measured">Outputs <b>bit-identical</b> to an independent reference engine</td>
         </tr>
         <tr>
-          <td class="w"><span class="idx">I</span>Your own model</td>
+          <td class="w"><span class="idx">J</span>Your own model</td>
           <td data-k="Model">PyTorch or ONNX import</td>
           <td class="m" data-k="Size">240 ops per job, chainable</td>
           <td class="r" data-k="Measured">Convolutions, attention, LayerNorm, softmax, GELU, residual blocks</td>
@@ -280,7 +287,7 @@
     <div class="stats reveal d1">
       <div class="stat"><div class="v">171</div><p>automated tests, all passing</p></div>
       <div class="stat"><div class="v">17/17</div><p>independent checks in the internal audit suite</p></div>
-      <div class="stat"><div class="v">483</div><p>conformance blocks shared between implementations</p></div>
+      <div class="stat"><div class="v">616</div><p>conformance blocks shared between implementations</p></div>
       <div class="stat"><div class="v zero">0</div><p>external audits so far</p></div>
     </div>
     <ol class="road reveal d2">
@@ -324,7 +331,7 @@
       </details>
       <details>
         <summary>Can it run large language models?<span class="pm"></span></summary>
-        <div class="a"><p>Small ones, not large ones. The testnet runs a 33-million-parameter language model (TinyStories) that writes short stories word by word, every step verified before payment, and a 110-million-parameter text encoder. A job holds up to 240 operations on 1024 × 1024 tensors and jobs chain together, which reaches models of roughly a hundred million parameters. Models with billions of parameters are out of reach today, and text is limited to 64 tokens.</p></div>
+        <div class="a"><p>Small ones, not large ones. The testnet runs a 33-million-parameter language model (TinyStories) that writes short stories word by word, every step verified before payment, a 110-million-parameter text encoder and, in ten chained jobs, a 0.6-billion-parameter text-embedding model (Qwen3-Embedding-0.6B). A job holds up to 240 operations on 1024 × 1024 tensors and jobs chain together, which reaches models of up to about 0.6 billion parameters today. Models with several billions of parameters are out of reach for now, and text is limited to 64 tokens (127 for the large embedding model).</p></div>
       </details>
       <details>
         <summary>Has the code been audited?<span class="pm"></span></summary>
@@ -345,7 +352,7 @@
       <a class="btn" href="/whitepaper">Read the whitepaper</a>
       <a class="btn" href="/participate/">How to take part</a>
       <a class="btn" href="#faq">Read the FAQ</a>
-      <a class="btn" href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Join the Discord</a>
+      <a class="btn" href="https://discord.gg/vearl" target="_blank" rel="noopener">Join the Discord</a>
       <a class="btn" href="https://github.com/vearl-verified-compute/vearl" target="_blank" rel="noopener">View the source on GitHub</a>
       <a class="btn" href="https://x.com/vearl_org" target="_blank" rel="noopener">Follow on X</a>
     </div>
@@ -367,7 +374,7 @@
       </div>
       <div>
         <h3>Project</h3>
-        <ul><li><a href="#security">Security</a></li><li><a href="#status">Status</a></li><li><a href="#faq">FAQ</a></li><li><a href="/credits">Photo credits</a></li><li><a href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Discord</a></li><li><a href="https://x.com/vearl_org" target="_blank" rel="noopener">X</a></li><li><a href="/participate/">Participate</a></li><li><a href="/leaderboard/">Leaderboard</a></li><li><a href="https://github.com/vearl-verified-compute/vearl" target="_blank" rel="noopener">GitHub</a></li><li><span class="mail" data-u="contact" data-d="vearl.org" data-label="Contact">contact [at] vearl.org</span></li></ul>
+        <ul><li><a href="#security">Security</a></li><li><a href="#status">Status</a></li><li><a href="#faq">FAQ</a></li><li><a href="/team/">Team</a></li><li><a href="/credits">Photo credits</a></li><li><a href="https://discord.gg/vearl" target="_blank" rel="noopener">Discord</a></li><li><a href="https://x.com/vearl_org" target="_blank" rel="noopener">X</a></li><li><a href="/participate/">Participate</a></li><li><a href="/leaderboard/">Leaderboard</a></li><li><a href="https://github.com/vearl-verified-compute/vearl" target="_blank" rel="noopener">GitHub</a></li><li><span class="mail" data-u="contact" data-d="vearl.org" data-label="Contact">contact [at] vearl.org</span></li></ul>
       </div>
     </div>
     <div class="footer-bottom">

@@ -83,7 +83,7 @@
   function cap(s) { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); }
   function a(href, text, cls, title) { return h('a', { href: href, class: cls || 'lnk', title: title || null }, text); }
 
-  var KIND_ORDER = ['render3', 'render2', 'render', 'pi', 'digits', 'matmul', 'gpt', 'vit'];
+  var KIND_ORDER = ['render3', 'render2', 'render', 'pi', 'digits', 'matmul', 'gpt', 'vit', 'embed'];
   function isPath(k) { return k === 'render3' || k === 'render2' || k === 'render'; }   /* the three renderers share one engine (path tracing on the GPU) */
   var R3_PASS_SPP = 32; /* samples per pixel in one pass: the quality is a multiple of it */
   var R3_RATE = { watch: 2.0e6, cocktail: 0.95e6, mini: 2.0e6 }; /* samples per second measured on the project's RTX 4070 SUPER */
@@ -92,9 +92,15 @@
   function r3secs(P) { return Math.max(1, Math.round(P.size * r3h(P) * P.quality / (R3_RATE[P.scene] || 1e6))); }
   function minsec(s) { return s < 90 ? s + ' s' : Math.round(s / 60 * 10) / 10 + ' min'; }
   function sceneLabel(k, s) { var K = S.info && S.info.kinds[k], L = K && K.params.scene && K.params.scene.labels; return (L && L[s]) || cap(s); }
-  function isMl(kind) { return kind === 'gpt' || kind === 'vit'; }
+  function isMl(kind) { return kind === 'gpt' || kind === 'vit' || kind === 'embed'; }
   function isExact(kind) { return kind === 'digits' || kind === 'matmul' || isMl(kind); }
   var EXAMPLE_PROMPTS = ['Once upon a time, there was a little cat', 'One day, a girl named Lily found a shiny red ball', 'The old dragon was very sad because'];
+  var EXAMPLE_TEXT_SETS = [
+    ['The striker scored twice in the final.', 'Her goals won the championship for the team.', 'The new processor is faster and uses less power.'],
+    ['Shares fell sharply as oil prices rose.', 'Investors worried about inflation and interest rates.', 'The goalkeeper saved a penalty in the shootout.'],
+    ['How do I reset my password?', 'I forgot my login and cannot sign in.', 'What is the capital of France?']
+  ];
+  function textLines(v) { return (Array.isArray(v) ? v : String(v || '').split('\n')).map(function (t) { return String(t).replace(/\s+/g, ' ').trim(); }).filter(function (t) { return t; }); }
   var PHOTO_SIDE = 224;
   function photoToDataUrl(img) {
     /* centre-crop to a square and shrink to 224 × 224, in the browser: only a small JPEG leaves the page */
@@ -117,6 +123,7 @@
     var p = j.params || {};
     if (j.kind === 'gpt') return p.prompt ? '“' + short(p.prompt, 34, 0).replace('…', '') + (p.prompt.length > 34 ? '…' : '') + '” · ' + p.words + ' words' : 'story';
     if (j.kind === 'vit') return 'one photo · 224 × 224 · 1,000 classes';
+    if (j.kind === 'embed') return (p.texts ? p.texts.length : '?') + ' text' + (p.texts && p.texts.length > 1 ? 's' : '') + ' · 1,024 dimensions · 10 chained jobs';
     if (j.kind === 'digits') return '2 handwritten digits · sample ' + (p.sample + 1) + ' of 12';
     if (j.kind === 'matmul') return p.size + ' × ' + p.size + ' matrices · ' + num(j.chunks) + ' block products';
     if (j.kind === 'pi') return num(p.samples * p.chunks) + ' random points · ' + p.chunks + ' chunks';
@@ -249,6 +256,11 @@
         previewBox.replaceChildren(h('div', { class: 'preview-box' }, h('div', { class: 'story-prev' }, h('span', { class: 'sp-prompt', text: F.prompt || '…' }), h('span', { class: 'sp-new', text: ' … ' + F.words + ' more word' + (F.words > 1 ? 's' : '') + ', chosen one at a time' })),
           h('p', { class: 'cap', text: 'The model continues your sentence. For every word, two jobs run on the network and are checked before the miner is paid.' })));
         rows = [['Model', 'TinyStories-33M, 4 layers'], ['Words to write', String(F.words)], ['Verified jobs', num(2 * F.words)], ['Checked', 'every operation, exactly'], ['Escrow locked by the service', 'testnet tokens'], ['Cost to you', 'Free'], ['Typical wait', 'about ' + Math.max(1, Math.round(F.words * 25 / 60)) + ' min']];
+      } else if (F.kind === 'embed') {
+        var tl = textLines(F.texts);
+        previewBox.replaceChildren(h('div', { class: 'preview-box' }, tl.length ? h('ol', { class: 'emb-prev' }, tl.map(function (t) { return h('li', { text: t }); })) : h('p', { class: 'mute', text: 'Write one to four sentences on the left.' }),
+          h('p', { class: 'cap', text: 'Each sentence becomes a list of 1,024 numbers. You will get the table of similarities between your sentences: the closer two meanings, the closer to 1.' })));
+        rows = [['Model', 'Qwen3-Embedding-0.6B, 28 layers'], ['Texts', String(tl.length)], ['Verified jobs', '10, chained (all texts together)'], ['Operations checked', '≈ 2,200, exactly'], ['Escrow locked by the service', 'testnet tokens'], ['Cost to you', 'Free'], ['Typical wait', 'a few minutes']];
       } else if (F.kind === 'vit') {
         previewBox.replaceChildren(h('div', { class: 'preview-box' }, F.photo ? h('img', { class: 'photo-prev', src: F.photo.url, alt: 'The photo you picked, cropped to a square' }) : h('p', { class: 'mute', text: 'Pick a photo on the left.' }),
           h('p', { class: 'cap', text: 'Your photo is cropped to a square and shrunk to 224 × 224 in your browser. Only that small picture is sent, and it is deleted as soon as it has been read.' })));
@@ -322,6 +334,19 @@
         }));
         fields.push(h('div', { class: 'field' }, h('label', { for: 'f-prompt' }, 'Start of the story'), ta, ex, h('div', { class: 'hint', text: 'English works best: the model only knows children’s stories. Up to 200 characters; a story holds 64 words at most, prompt included.' })));
         fields.push(range('Words to write', 'words', P.words, function (v) { return v + (v > 1 ? ' words' : ' word'); }));
+        paramsBox.replaceChildren.apply(paramsBox, fields);
+        return;
+      }
+      if (F.kind === 'embed') {
+        var te = h('textarea', { id: 'f-texts', rows: '5', maxlength: String(4 * 141), 'aria-label': 'Sentences, one per line' });
+        te.value = textLines(F.texts).join('\n');
+        te.addEventListener('input', function () { F.texts = te.value.split('\n'); drawPreview(); });
+        var exs = h('div', { class: 'sizes', role: 'group', 'aria-label': 'Example sets' }, EXAMPLE_TEXT_SETS.map(function (set, i) {
+          var b = h('button', { class: 'chip', type: 'button' }, ['Sport and tech', 'Markets and sport', 'Questions'][i]);
+          b.addEventListener('click', function () { F.texts = set.slice(); te.value = set.join('\n'); drawPreview(); });
+          return b;
+        }));
+        fields.push(h('div', { class: 'field' }, h('label', { for: 'f-texts' }, 'Your sentences (one per line)'), te, exs, h('div', { class: 'hint', text: 'One to four sentences, 140 characters each at most. The model understands many languages. Each text is cut to 127 word pieces.' })));
         paramsBox.replaceChildren.apply(paramsBox, fields);
         return;
       }
@@ -412,12 +437,14 @@
       if (PRE) return;
       err.classList.remove('show');
       if (F.kind === 'vit' && !F.photo) { err.textContent = 'Pick a photo first.'; err.classList.add('show'); return; }
+      if (F.kind === 'embed') { var tt = textLines(F.texts); if (!tt.length || tt.length > 4 || tt.some(function (t) { return t.length > 140; })) { err.textContent = 'Write one to four sentences of at most 140 characters.'; err.classList.add('show'); return; } }
       if (F.kind === 'gpt' && !String(F.prompt || '').trim()) { err.textContent = 'Write the beginning of the story first.'; err.classList.add('show'); return; }
       submit.disabled = true; submit.textContent = 'Sending…';
       var body = { kind: F.kind, seed: parseInt(F.seed || '0', 10) || 0 };
       if (F.kind === 'pi') { body.samples = F.samples; body.chunks = F.chunks; }
       else if (F.kind === 'gpt') { body = { kind: 'gpt', prompt: F.prompt, words: F.words }; }
       else if (F.kind === 'vit') { body = { kind: 'vit', image: F.photo.url }; }
+      else if (F.kind === 'embed') { body = { kind: 'embed', texts: textLines(F.texts) }; }
       else if (F.kind === 'digits') { body = { kind: 'digits', sample: F.sample }; }
       else if (F.kind === 'matmul') { body.blocks = F.blocks; }
       else if (isPath(F.kind)) { body.scene = F.scene; body.size = F.size; body.shape = F.shape; body.quality = F.quality; }
@@ -508,7 +535,7 @@
     if (isMl(j.kind)) {
       var mnotes = (j.progress || []).slice(-4);
       return h('div', { class: 'waiting' }, j.kind === 'vit' && S.photos && S.photos[j.ref] ? h('img', { class: 'photo-prev', src: S.photos[j.ref], alt: 'Your photo' }) : null,
-        h('div', { text: j.status === 'queued' ? 'Waiting in line: the GPU worker takes one text or photo job at a time.' : j.kind === 'gpt' ? 'The model is writing. Each word is two jobs that must be verified before the next word can start.' : 'The network is looking at your photo. Two chained jobs, every operation verified.' }),
+        h('div', { text: j.status === 'queued' ? 'Waiting in line: the GPU worker takes one text or photo job at a time.' : j.kind === 'embed' ? 'The network is reading your sentences. Ten chained jobs must each be verified before the next one can start; this takes a few minutes.' : j.kind === 'gpt' ? 'The model is writing. Each word is two jobs that must be verified before the next word can start.' : 'The network is looking at your photo. Two chained jobs, every operation verified.' }),
         mnotes.length ? h('ul', { class: 'prog' }, mnotes.map(function (n) { return h('li', { text: n }); })) : null);
     }
     if (isExact(j.kind)) {
@@ -527,6 +554,24 @@
       return h('div', null, h('div', { class: 'story' }, h('span', { class: 'sp-prompt', text: tr.text.slice(0, cut) }), h('span', { class: 'sp-new', text: tr.text.slice(cut) }), live ? h('span', { class: 'caret', 'aria-hidden': 'true' }) : null),
         h('div', { class: 'panel-body pad' }, h('p', { class: 'mute', text: tr.words + ' of ' + tr.wanted + ' words · ' + (tr.words ? (tr.seconds / tr.words).toFixed(1) : '0') + ' s per word. Each word was chosen from 50,257 integer scores after two verified jobs. The model is small and only knows children’s stories: expect simple, sometimes odd sentences.' }),
           j.status === 'done' ? h('div', { class: 'actions' }, runAgain(j)) : null));
+    }
+    if (j.status === 'done' && j.result && j.result.type === 'embedding') {
+      var er = j.result, n = er.texts.length, best = null;
+      for (var x = 0; x < n; x++) for (var y = x + 1; y < n; y++) if (!best || er.similarity[x][y] > best[0]) best = [er.similarity[x][y], x, y];
+      var tbl = h('table', { class: 'mtab simtab' }, h('thead', null, h('tr', null, [h('th', { text: '' })].concat(er.texts.map(function (t, i) { return h('th', { title: t, text: String(i + 1) }); })))),
+        h('tbody', null, er.similarity.map(function (row, i) {
+          return h('tr', null, [h('th', { title: er.texts[i], text: String(i + 1) })].concat(row.map(function (v, k) {
+            var td = h('td', { text: v.toFixed(2) });
+            td.style.background = 'rgba(94,234,212,' + (Math.max(0, Math.min(1, v)) * 0.55).toFixed(2) + ')';
+            if (i === k) td.style.opacity = '0.55';
+            return td;
+          })));
+        })));
+      return h('div', null, h('ol', { class: 'emb-prev emb-res' }, er.texts.map(function (t) { return h('li', { text: t }); })),
+        h('div', { class: 'xtable-scroll' }, tbl),
+        h('div', { class: 'panel-body pad' }, best ? h('p', { class: 'ink', text: 'Closest pair: ' + (best[1] + 1) + ' and ' + (best[2] + 1) + ' (similarity ' + best[0].toFixed(2) + ').' }) : null,
+          h('p', { class: 'mute', text: 'Each text became ' + er.dim + ' numbers; the table shows their cosine similarity (1 = same meaning, near 0 = unrelated). First values of text 1: ' + er.head[0].join(', ') + '. The numbers are an 8-bit approximation of the original model (cosine about 0.77 with it): good for finding texts on the same topic, not an exact copy. What is verified is that the miner ran every operation exactly. Took ' + er.seconds + ' s.' }),
+          h('div', { class: 'actions' }, runAgain(j))));
     }
     if (j.status === 'done' && j.result && j.result.type === 'photo') {
       var pr = j.result;
@@ -597,7 +642,7 @@
       else if (j.status === 'done') wrap.appendChild(h('div', { class: 'notice ok', text: isExact(j.kind) ? 'Checked exactly and accepted: every operation matched the miner’s commitment.' : 'Audited and accepted. ' + (j.audit ? j.audit.checked + ' of ' + j.audit.of + ' chunks were recomputed and matched the miner’s commitment.' : '') }));
       var p = j.params, rows = [
         ['Job', withCopyRef(j.ref)], ['Type', kindTitle(j.kind)],
-        j.kind === 'gpt' ? ['Story', p.prompt ? p.prompt + ' (+ ' + p.words + ' words)' : null] : j.kind === 'vit' ? ['Photo', 'one image, 224 × 224 (deleted after reading)'] : j.kind === 'digits' ? ['Digits', 'pair ' + (p.sample + 1) + ' of 12 (test images)'] : j.kind === 'matmul' ? ['Matrices', p.size + ' × ' + p.size] : isPath(j.kind) ? ['Scene', sceneLabel('render3', p.scene) + ', ' + p.size + ' × ' + (p.height || p.size) + ' px, ' + p.quality + ' samples per pixel'] : [j.kind === 'pi' ? 'Random points' : 'Image', j.kind === 'pi' ? num(p.samples * p.chunks) + ' (' + p.samples + ' per chunk)' : p.size + ' × ' + p.size + ' px, ' + p.spp + ' samples per pixel'],
+        j.kind === 'gpt' ? ['Story', p.prompt ? p.prompt + ' (+ ' + p.words + ' words)' : null] : j.kind === 'vit' ? ['Photo', 'one image, 224 × 224 (deleted after reading)'] : j.kind === 'embed' ? ['Texts', p.texts ? p.texts.length + ' (' + short(p.texts.join(' | '), 60, 0) + ')' : null] : j.kind === 'digits' ? ['Digits', 'pair ' + (p.sample + 1) + ' of 12 (test images)'] : j.kind === 'matmul' ? ['Matrices', p.size + ' × ' + p.size] : isPath(j.kind) ? ['Scene', sceneLabel('render3', p.scene) + ', ' + p.size + ' × ' + (p.height || p.size) + ' px, ' + p.quality + ' samples per pixel'] : [j.kind === 'pi' ? 'Random points' : 'Image', j.kind === 'pi' ? num(p.samples * p.chunks) + ' (' + p.samples + ' per chunk)' : p.size + ' × ' + p.size + ' px, ' + p.spp + ' samples per pixel'],
         isMl(j.kind) ? null : [isExact(j.kind) ? 'Block products / batches' : 'Chunks', num(j.chunks)], ['Seed', p.seed != null ? String(p.seed) : null],
         ['Created', since ? utc(since) + '  ·  ' + ago(since) : null],
         ['Progress', j.progress && j.progress.length ? j.progress[j.progress.length - 1] : null],

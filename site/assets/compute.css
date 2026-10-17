@@ -176,3 +176,12 @@
 .topk .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); }
 .topk li:not(.first) .bar i { background: var(--lav); opacity: .7; }
 .topk .pc { font: 500 12px var(--mono); text-align: right; }
+
+/* text embeddings: the sentences and the table of similarities */
+.emb-prev { list-style: none; counter-reset: e; display: grid; gap: 10px; padding: 18px 20px; margin: 0; }
+.emb-prev li { counter-increment: e; position: relative; padding-left: 34px; font: 400 16px/1.5 var(--serif); color: var(--ink-2); overflow-wrap: anywhere; }
+.emb-prev li::before { content: counter(e); position: absolute; left: 0; top: 1px; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); font: 600 12px/20px var(--mono); text-align: center; color: var(--mute); }
+.emb-res { border-bottom: 1px solid var(--line); }
+.simtab { margin: 18px 20px; }
+.simtab th { font: 600 12px var(--mono); color: var(--mute); padding: 6px 12px; text-align: center; }
+.simtab td { text-align: center; color: var(--ink); min-width: 56px; }

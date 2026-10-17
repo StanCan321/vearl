@@ -485,13 +485,14 @@ wins    if  first 8 bytes of jackpot, read big-endian,  &lt;  target</code></div
 <!-- ================================================================ 07 -->
 <section id="workloads">
   <h2><span class="num">07 · Verified AI workloads</span>What runs today, <span class="serif">with the numbers.</span></h2>
-  <p>Every figure below was measured on the testnet on a single NVIDIA A10 GPU, on chains with <em>n</em> = 1024, with every operation of every job verified before payment. Outputs were compared with an independent reference engine that shares no code with the node.</p>
+  <p>Every figure below was measured on the testnet on a single NVIDIA A10 GPU (except the 0.6-billion-parameter model: a CPU worker of a local chain), on chains with <em>n</em> = 1024, with every operation of every job verified before payment. Outputs were compared with an independent reference engine that shares no code with the node.</p>
   <div class="tbl-wrap"><table class="tbl">
     <thead><tr><th>Workload</th><th>Model</th><th>Size</th><th>Measured</th></tr></thead>
     <tbody>
       <tr><td>Text generation</td><td>TinyStories-33M, 4 layers, 50,257-word vocabulary [15]</td><td>2 jobs per word (154 + 153 ops)</td><td>Eight stories in parallel, 320 words in 730 s (18 s per step). The next word equals the original model's in 92.9 % of positions; perplexity 2.42 against 2.37. Logits bit-identical to the reference engine, 8 of 8.</td></tr>
       <tr><td>Photo recognition</td><td>DeiT-Tiny vision transformer, 224 × 224, 1,000 classes [13]</td><td>386 ops, 2 chained jobs</td><td>About 1.7 s per photo. Top-1 over 1,000 classes: 70.6 % on Imagenette photos not seen in training (original: 78.2 %). 8 of 8 bit-identical.</td></tr>
       <tr><td>Text embeddings</td><td>BGE-base, 12 layers, 110 million parameters [14]</td><td>492 ops, 3 chained jobs</td><td>About 3.3 s per text. STS-B Spearman 0.836 against 0.864 for the original (96.7 %). 8 of 8 bit-identical.</td></tr>
+      <tr><td>Large text embeddings</td><td>Qwen3-Embedding-0.6B, 28 layers, 0.6 billion parameters</td><td>2,195 ops, 10 chained jobs</td><td>About 50 s per text on a CPU worker. Cosine 0.77 with the floating-point model; same-topic nearest neighbour 85 % against 90 % for the original (48 sentences). 8 of 8 bit-identical to the reference engine. Needs four operations added to the program format (RMS normalisation, product of two tensors, product with a table, causal softmax with a coarser exponent step) and a fixed first token that carries the attention sink.</td></tr>
       <tr><td>Fast embeddings</td><td>all-MiniLM-L6-v2, 6 layers [16]</td><td>195 ops, 61 GEMMs</td><td>About 1.0 s per text; cosine 0.92 with the original.</td></tr>
       <tr><td>Image classification</td><td>ResNet-20, CIFAR-10 [17]</td><td>76 ops, 22 GEMMs</td><td>88.6 % top-1; 32 images verified in 41 s.</td></tr>
       <tr><td>Linear algebra</td><td>Tiled int8 product</td><td>8192 × 8192 × 8192</td><td>About 1.1 trillion operations verified in about 11 s.</td></tr>
@@ -502,7 +503,7 @@ wins    if  first 8 bytes of jackpot, read big-endian,  &lt;  target</code></div
   <ul>
     <li><strong>Integer models lose accuracy.</strong> DeiT-Tiny is about 8 points under its floating-point original. The language model is slightly worse than the original but writes coherent stories. Models whose activations have very large outliers fail outright: a simulated 8-bit trial on GPT-2 (124 M parameters), without training and after our best exact transformations, gave a perplexity of 1,345 against 99, which is why the language model on the testnet is small and trained on simple text.</li>
     <li><strong>Language-model exactness.</strong> The chain's words follow the original model word for word over 68 of 320 generated words, then diverge. That is expected with greedy decoding when two models differ slightly, and the stories remain coherent. What is exact is the <em>computation</em> of each step, not agreement with the floating-point original.</li>
-    <li><strong>Limits.</strong> Text is capped at 64 tokens. There is no key-value cache, so each step recomputes the whole text. A job has 240 operations, which reaches models of roughly a hundred million parameters, not billions.</li>
+    <li><strong>Limits.</strong> Text is capped at 64 tokens. There is no key-value cache, so each step recomputes the whole text. A job has 240 operations; jobs chain, which reaches models of up to about 0.6 billion parameters today (ten chained jobs for Qwen3-Embedding-0.6B), not several billions. That model is capped at 127 tokens.</li>
     <li><strong>Verification is slower than running locally.</strong> These times include transfer and cryptographic commitment. When client and worker share a machine, local computation is faster. The value of the chain is verified work done by others, not speed.</li>
   </ul>
 </section>
@@ -643,7 +644,7 @@ wins    if  first 8 bytes of jackpot, read big-endian,  &lt;  target</code></div
   <div class="cards">
     <div><div class="v mint">171</div><p>automated tests, all passing</p></div>
     <div><div class="v mint">17 / 17</div><p>independent checks in the internal audit suite</p></div>
-    <div><div class="v mint">483</div><p>conformance blocks shared by Rust and Python</p></div>
+    <div><div class="v mint">616</div><p>conformance blocks shared by Rust and Python</p></div>
     <div><div class="v">0</div><p>external audits</p></div>
   </div>
   <h3><span class="n">12.1</span>Independent implementations</h3>
@@ -792,7 +793,7 @@ wins    if  first 8 bytes of jackpot, read big-endian,  &lt;  target</code></div
       </div>
       <div>
         <h3>Project</h3>
-        <ul><li><a href="/#security">Security</a></li><li><a href="/#status">Status</a></li><li><a href="/#faq">FAQ</a></li><li><a href="/credits">Photo credits</a></li><li><a href="https://discord.gg/jya8meKnvM" target="_blank" rel="noopener">Discord</a></li><li><a href="https://x.com/vearl_org" target="_blank" rel="noopener">X</a></li><li><a href="/participate/">Participate</a></li><li><a href="/leaderboard/">Leaderboard</a></li><li><a href="https://github.com/vearl-verified-compute/vearl" target="_blank" rel="noopener">GitHub</a></li><li><span class="mail" data-u="contact" data-d="vearl.org" data-label="Contact">contact [at] vearl.org</span></li></ul>
+        <ul><li><a href="/#security">Security</a></li><li><a href="/#status">Status</a></li><li><a href="/#faq">FAQ</a></li><li><a href="/credits">Photo credits</a></li><li><a href="https://discord.gg/vearl" target="_blank" rel="noopener">Discord</a></li><li><a href="https://x.com/vearl_org" target="_blank" rel="noopener">X</a></li><li><a href="/participate/">Participate</a></li><li><a href="/leaderboard/">Leaderboard</a></li><li><a href="https://github.com/vearl-verified-compute/vearl" target="_blank" rel="noopener">GitHub</a></li><li><span class="mail" data-u="contact" data-d="vearl.org" data-label="Contact">contact [at] vearl.org</span></li></ul>
       </div>
     </div>
     <div class="footer-bottom">
