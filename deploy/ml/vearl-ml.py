@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Vearl ML service: verified text generation (TinyStories-33M) and verified photo recognition (DeiT-Tiny) for the compute website.
+"""Vearl ML service: verified text generation (TinyStories-33M), verified photo recognition (DeiT-Tiny) and verified text embeddings
+(Qwen3-Embedding-0.6B) for the compute website.
 
 It runs on the machine that has the GPU worker, the two quantized model files and the Python clients of vearl-core/tools (numpy and the
 `transformers` tokenizer / label list are needed). The job gateway on the web server forwards the two ML kinds to it through an ssh tunnel;
@@ -8,9 +9,11 @@ it never talks to a browser directly. One job at a time (the service account's t
   - a story: the prompt is cut in tokens, then for each new word TWO verified jobs run on the chain (the body of the network, then the
     head that scores the 50,257 words); the client picks the word with the highest integer score and repeats;
   - a photo: two chained verified jobs (layers 0-5, then layers 6-11 and the classifier); the photo is deleted as soon as it is read.
+  - embeddings: up to 4 short texts go together through the TEN chained verified jobs of Qwen3-Embedding-0.6B (tools/qwen3_client.py); the
+    visitor gets the table of cosine similarities between his texts. The workers of this chain must run rc17 or later and hold the model.
 
     python vearl-ml.py --tools vearl-core/tools --cli vearl-cli --node 127.0.0.1:19120 --worker 127.0.0.1:19120 --key seed:4 \\
-        --gpt /path/gpt-qat.json --vit /path/vit-qat.json --listen 127.0.0.1:18602
+        --gpt /path/gpt-qat.json --vit /path/vit-qat.json --embed /path/qwen3-embedding-0.6b-int8.json.xz --listen 127.0.0.1:18602
 """
 import argparse
 import base64
@@ -30,6 +33,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MAX_BODY = 200_000
 MAX_PHOTO = 150_000
+MAX_TEXTS = 4
+MAX_TEXT_LEN = 140
+EXAMPLE_TEXTS = ["The striker scored twice in the final.", "Her goals won the championship for the team.", "The new processor is faster and uses less power."]
 KINDS = {
     "gpt": {
         "title": "Text generation",
@@ -47,6 +53,14 @@ KINDS = {
         "output": "photo",
         "family": "ml",
     },
+    "embed": {
+        "title": "Text embeddings",
+        "short": "Qwen3-Embedding-0.6B · 0.6 billion parameters",
+        "summary": "A language model of 0.6 billion parameters turns each of your sentences into 1,024 numbers; sentences that mean the same get close numbers. Ten chained jobs per series, every operation verified; you get the table of similarities.",
+        "params": {"texts": {"min_items": 1, "max_items": MAX_TEXTS, "max_length": MAX_TEXT_LEN, "default": EXAMPLE_TEXTS}},
+        "output": "embedding",
+        "family": "ml",
+    },
 }
 
 
@@ -60,7 +74,7 @@ class Service:
         self.order = []
         self.lock = threading.Lock()
         self.q = queue.Queue()
-        self.gpt = self.vit = None
+        self.gpt = self.vit = self.embed = None
         t0 = time.time()
         if a.gpt:
             import gpt_client
@@ -70,10 +84,14 @@ class Service:
             import vit_client
             self.vit = vit_client.VitClient(a.vit, a.node, a.worker, key=a.key, escrow_per_gemm=a.escrow, cli=a.cli)
             print(f"photo model loaded ({time.time() - t0:.0f} s)", flush=True)
+        if a.embed:
+            import qwen3_client
+            self.embed = qwen3_client.Qwen3EmbedClient(a.embed, a.node, a.worker, key=a.key, escrow_per_gemm=a.escrow, cli=a.cli)
+            print(f"embedding model loaded ({time.time() - t0:.0f} s)", flush=True)
         threading.Thread(target=self.loop, daemon=True).start()
 
     def kinds(self):
-        return {k: v for k, v in KINDS.items() if (k == "gpt" and self.gpt) or (k == "vit" and self.vit)}
+        return {k: v for k, v in KINDS.items() if (k == "gpt" and self.gpt) or (k == "vit" and self.vit) or (k == "embed" and self.embed)}
 
     # -- requests
     def create(self, body):
@@ -94,6 +112,18 @@ class Service:
                 raise ValueError("'words' must be a whole number between 1 and 30.")
             j["params"] = {"kind": kind, "prompt": prompt, "words": words}
             j["_in"] = (prompt, words)
+        elif kind == "embed":
+            texts = body.get("texts")
+            if not isinstance(texts, list) or not 1 <= len(texts) <= MAX_TEXTS or not all(isinstance(t, str) for t in texts):
+                raise ValueError("Send between 1 and %d texts." % MAX_TEXTS)
+            clean = []
+            for t in texts:
+                t = re.sub(r"\s+", " ", "".join(ch if ch.isprintable() else " " for ch in t)).strip()
+                if not 1 <= len(t) <= MAX_TEXT_LEN:
+                    raise ValueError("Each text must be between 1 and %d characters." % MAX_TEXT_LEN)
+                clean.append(t)
+            j["params"] = {"kind": kind, "texts": clean}
+            j["_in"] = clean
         else:
             raw = body.get("image", "")
             m = re.fullmatch(r"data:image/(jpeg|png);base64,([A-Za-z0-9+/=\s]+)", raw if isinstance(raw, str) else "")
@@ -140,7 +170,7 @@ class Service:
                 continue
             try:
                 self.set(j, "running")
-                (self.run_gpt if j["kind"] == "gpt" else self.run_vit)(j)
+                {"gpt": self.run_gpt, "vit": self.run_vit, "embed": self.run_embed}[j["kind"]](j)
             except Exception as ex:  # a failed job must never stop the service
                 print("job", ref, "failed:", repr(ex), file=sys.stderr, flush=True)
                 self.set(j, "failed", message="The job did not complete: " + (str(ex).splitlines()[0][:160] if str(ex) else "internal error"))
@@ -164,6 +194,17 @@ class Service:
             if nxt == c.eos or len(seq) >= c.L:
                 break
         self.set(j, "done", message="Every word was verified before the miner was paid.")
+
+    def run_embed(self, j):
+        c, np = self.embed, self.np
+        texts = j["_in"]
+        t0 = time.time()
+        self.note(j, "%d text%s cut in tokens; ten chained jobs will run, all texts together." % (len(texts), "s" if len(texts) > 1 else ""))
+        E = c.embed(texts, progress=lambda k, n: self.note(j, "Chained job %d of %d verified operation by operation." % (k, n)))
+        S = E @ E.T
+        res = {"type": "embedding", "texts": texts, "dim": int(E.shape[1]), "similarity": [[round(float(v), 3) for v in row] for row in S],
+               "head": [[round(float(v), 4) for v in row[:8]] for row in E], "seconds": round(time.time() - t0, 1)}
+        self.set(j, "done", result=res, message="Every operation of the ten jobs was verified before the miner was paid.")
 
     def run_vit(self, j):
         c, np = self.vit, self.np
@@ -247,12 +288,13 @@ def main():
     ap.add_argument("--key", default="seed:4")
     ap.add_argument("--gpt", help="quantized text model (qat_gpt.py output)")
     ap.add_argument("--vit", help="quantized photo model (qat_vit.py output)")
+    ap.add_argument("--embed", help="Qwen3-Embedding-0.6B model file (tools/quantize_qwen3.py output, optionally .xz)")
     ap.add_argument("--escrow", type=float, default=1.0, help="VRL per operation product (>= 1)")
     ap.add_argument("--max-queue", dest="max_queue", type=int, default=6)
     ap.add_argument("--listen", default="127.0.0.1:18602")
     a = ap.parse_args()
-    if not (a.gpt or a.vit):
-        sys.exit("give at least one of --gpt / --vit")
+    if not (a.gpt or a.vit or a.embed):
+        sys.exit("give at least one of --gpt / --vit / --embed")
     host, port = a.listen.rsplit(":", 1)
     svc = Service(a)
     srv = ThreadingHTTPServer((host, int(port)), make_handler(svc))

@@ -111,6 +111,8 @@ CATALOG = [
      "measure": "Writes stories word by word: 8 stories in parallel, ≈ 18 s per word, 92.9% same next word as the original model", "available": False},
     {"id": "vit", "title": "Photo recognition", "model": "DeiT-Tiny vision transformer, 224 × 224 photos, 1,000 ImageNet classes", "size": "386 ops · 2 chained jobs",
      "measure": "≈ 1.7 s per photo, 70.6% top-1 on photos never seen in training (original model: 78.2%)", "available": False},
+    {"id": "embed", "title": "Text embeddings", "model": "Qwen3-Embedding-0.6B, 28 layers, 0.6 billion parameters, 1,024 dimensions", "size": "2,195 ops · 10 chained jobs",
+     "measure": "Verified operation by operation, outputs bit-identical to an independent engine; cosine 0.77 with the floating-point model, topic search 85% (original 90%)", "available": False},
     {"id": "bge", "title": "Semantic search embeddings", "model": "BGE-base, 12 layers, 110 million parameters", "size": "492 ops · 3 chained jobs",
      "measure": "≈ 3.3 s per text, 96.7% of the original model's score on STS-B (0.836 vs 0.864)", "available": False},
     {"id": "minilm", "title": "Fast sentence embeddings", "model": "all-MiniLM-L6-v2, 6 layers, 12 attention heads", "size": "195 ops · 61 GEMMs",

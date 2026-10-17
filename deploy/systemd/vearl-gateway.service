@@ -10,10 +10,12 @@ Group=vearlgw
 LoadCredential=service-password:/etc/vearl-gateway/service-password
 Environment=VEARL_WALLET_PASSWORD_FILE=/run/credentials/vearl-gateway.service/service-password
 # --worker 127.0.0.1:19110 = the project's GPU worker, reached through the reverse ssh tunnel of deploy/pc-worker/public-worker-tunnel.bat;
+# --ml = the ML service (deploy/ml/vearl-ml.py: text generation, photo recognition, Qwen3 text embeddings) that runs next to the project's GPU worker, reached
+# through an ssh reverse tunnel (-R 18602:127.0.0.1:18602); without it those kinds are simply not offered.
 # the other candidates for the audit are the reachable peers the seed knows (copied to /run/vearl-gateway-peers by vearl-gateway-peers.timer).
 ExecStart=/usr/bin/python3 /opt/vearl-gateway-public/vearl-gateway.py --cli /opt/vearl-gateway-public/vearl-cli --node 127.0.0.1:9000 \
   --worker 127.0.0.1:19110 --public --key wallet:/etc/vearl-gateway/service-wallet.json --data /var/lib/vearl-gateway-public \
-  --listen 127.0.0.1:18610 --peers-file /run/vearl-gateway-peers/peers.txt --escrow 2 --audit 4 --per-hour 6 --per-visitor-active 2 --max-active 12
+  --listen 127.0.0.1:18610 --peers-file /run/vearl-gateway-peers/peers.txt --escrow 2 --audit 4 --per-hour 6 --per-visitor-active 2 --max-active 12 \n  --ml http://127.0.0.1:18602
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

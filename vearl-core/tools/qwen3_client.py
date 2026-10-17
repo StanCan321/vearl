@@ -77,14 +77,16 @@ class Qwen3EmbedClient:
                 raise RuntimeError(f"job {job}: inference refused or fraud detected:\n" + log[-1500:])
             return np.fromfile(op, dtype=np.int8).reshape(len(x0s), self.L, self.D)          # (texts, columns = tokens, rows = features)
 
-    def embed_int(self, texts):
-        """(integer state of the last token (D,) per text, float embeddings)."""
+    def embed_int(self, texts, progress=None):
+        """(integer state of the last token (D,) per text, float embeddings). progress(k, n): called when chained job k of n has been verified."""
         ids = [Q.ids_of(self.tk, t, self.cfg) for t in texts]
         lens = [len(t) for t in ids]
         xs = [Q.enc_input(self.P, self.cfg, t, self.plan["s0"]) for t in ids]
         nj = len(self.m["jobs"])
         for j in range(nj):
             out = self._series(j, xs, lens, j == nj - 1)
+            if progress:
+                progress(j + 1, nj)
             if j == nj - 1:
                 last = np.stack([out[k, lens[k] - 1].astype(np.int64) for k in range(len(texts))])
                 return last, np.stack([Q.finish(self.P, self.cfg, v * self.plan["s_out"]) for v in last])
@@ -94,8 +96,8 @@ class Qwen3EmbedClient:
                 t[:self.D, :self.L] = out[k].T.astype(np.int64)
                 xs.append(t)
 
-    def embed(self, texts):
-        return self.embed_int(texts)[1]
+    def embed(self, texts, progress=None):
+        return self.embed_int(texts, progress)[1]
 
     def expected(self, text):
         """(integer last-token state, float embedding) by the INDEPENDENT reference engine, without a network."""
