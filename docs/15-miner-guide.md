@@ -98,6 +98,10 @@ node --gpu --miner-wallet miner.json --worker \
 - **Paid jobs** (rendering, inference, linear algebra) still run on one GPU (GPU 0 of the process): one job is one computation, and workers take several jobs with `--max-jobs`. Spreading a single job over several cards is not done.
 - **Not measured**: the scaling was tested with several workers on one GPU (same code path) and on a single RTX 4070 SUPER; it has not yet been measured on a real multi-GPU rig. Overclocking and power limits are not managed by the miner: use `nvidia-smi -pl` or the tools of your system.
 
+## 4 quinquies. HiveOS
+
+`deploy/hiveos/` builds a HiveOS custom-miner package (`python deploy/hiveos/make_package.py --release-dir DIR --version V`, DIR = the extracted Linux release; result `vearl-hiveos-V.tar.gz`, one folder `vearl/` with the same programs as the release plus `h-manifest.conf`, `h-config.sh`, `h-run.sh`, `h-stats.sh`, `setup.sh` and `README-HIVEOS.txt`). Flight sheet: Miner = Custom, name `vearl`, Installation URL = the archive (attached to the releases). The wallet is created once on the rig with `setup.sh` (the 24 words are shown once); wallet, settings and chain data live in `/hive-config/vearl`, so an update of the package keeps them. The extra config arguments take `gpus=0,1,3`, `max_jobs=N` and, with the Quantus add-on copied into the package folder, `quantus_address=qz...`. HiveOS shows the speed in MH/s (1 MH/s = one million tiles per second, the figure of the `[miner]` line); the miner reports one total, shown split equally between the GPUs. Status: the scripts were tested on a plain Linux machine with a simulated Hive environment, not yet on a real HiveOS rig.
+
 ## 4 ter. Mining in a pool
 
 A pool lets several miners search together and share the rewards in proportion to their work (PPLNS, pool fee 1 % by default). You only need a payout address; no private key goes to the pool.
