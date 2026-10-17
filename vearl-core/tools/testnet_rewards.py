@@ -41,7 +41,7 @@ DEFAULTS = {
     "useful_mult": 1.5,       # a block that carried paid work counts more than a block of native work
     "min_active_days": 3,     # distinct 24-hour windows with at least one block
     "min_share": 0.00005,     # of all the points (0.005 %): no dust
-    "pool_pct": 5.0,          # informational: percentage of the mainnet supply set aside by the team (docs/19)
+    "pool_pct": 0.7,          # informational: percentage of the maximum mainnet supply set aside for THIS testnet, the first of five (docs/19 section 1: 0.7 / 1.05 / 1.4 / 1.75 / 2.1 %)
 }
 
 
