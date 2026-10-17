@@ -666,7 +666,7 @@ fn rewards(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>) {
             });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                t::copy_button(ui, "reg-lines", &format!("{}\n{}\n{}", l.address, l.message, l.signature));
+                t::copy_button(ui, "reg-lines", &format!("address:   {}\nmessage:   {}\nsignature: {}", l.address, l.message, l.signature));
                 ui.label(RichText::new(format!("Copy the three lines to e-mail them yourself to {}", vearl_core::regmail::RECIPIENT)).font(t::sans(12.5)).color(t::MUTE));
             });
         });

@@ -72,6 +72,49 @@ def body_text(raw):
         return None
 
 
+# The three lines WITHOUT their labels, as the Copy button of the wallet window gave them up to rc16.1 (people send them by hand when their
+# network blocks the automatic e-mail): recognised by their shape. The signature is still verified, so nothing is gained by forging them.
+ADDRESS_LINE = re.compile(r"^vrl1[a-z0-9]+$")
+SIGNATURE_LINE = re.compile(r"^[0-9a-fA-F]{64,}$")
+MESSAGE_START = "Vearl testnet rewards registration."
+
+
+def unwrap_message(text):
+    """Mail programs (Gmail, phones) cut the long message line into several lines: put them back together with a space, up to the end
+    of the message (`docs/19.`). Only the message line is touched."""
+    lines = text.splitlines()
+    out, i = [], 0
+    while i < len(lines):
+        t = lines[i].strip()
+        starts = re.match(r"^(message:[ \t]*)?" + re.escape(MESSAGE_START), t, re.I)
+        if starts and not t.endswith("docs/19."):
+            j = i + 1
+            while j < len(lines) and j <= i + 4 and not t.endswith("docs/19."):
+                t = t + " " + lines[j].strip()
+                j += 1
+            if t.endswith("docs/19."):
+                out.append(t)
+                i = j
+                continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out)
+
+
+def unlabelled_lines(text):
+    """address / message / signature found by their shape among the lines of a mail that has no labels."""
+    found = {}
+    for line in text.splitlines():
+        t = line.strip()
+        if "address" not in found and ADDRESS_LINE.match(t):
+            found["address"] = t
+        elif "message" not in found and t.startswith(MESSAGE_START):
+            found["message"] = t
+        elif "signature" not in found and SIGNATURE_LINE.match(t):
+            found["signature"] = t
+    return found
+
+
 def parse_registration(raw):
     """(address, message, signature) from the raw mail, or (None, reason)."""
     if len(raw) > MAX_BYTES:
@@ -79,11 +122,15 @@ def parse_registration(raw):
     text = body_text(raw)
     if text is None:
         return None, "no text body"
+    text = unwrap_message(text)
     fields = {}
     for line in text.splitlines():
         m = LABEL.match(line.strip())
         if m and m.group(1).lower() not in fields:
             fields[m.group(1).lower()] = m.group(2)
+    if not all(k in fields for k in ("address", "message", "signature")):
+        for k, v in unlabelled_lines(text).items():
+            fields.setdefault(k, v)
     if not all(k in fields for k in ("address", "message", "signature")):
         return None, "the three lines address / message / signature are not all there"
     return (fields["address"], fields["message"], fields["signature"]), None

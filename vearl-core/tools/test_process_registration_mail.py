@@ -23,6 +23,12 @@ def mail(address, message, signature, subject="Vearl testnet registration", send
             f"MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{body}").encode()
 
 
+def unlabelled_mail(address, message, signature, greeting="", sender="someone@example.com"):
+    """What a person sends by hand after pressing Copy in the wallet window of rc16.1 and before (three lines, no labels)."""
+    return (f"From: {sender}\r\nTo: register@vearl.org\r\nSubject: Vearl registration\r\nDate: Fri, 23 Oct 2026 16:05:00 +0000\r\n"
+            f"MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{greeting}{address}\r\n{message}\r\n{signature}\r\n").encode()
+
+
 class Box:
     """A throw-away Maildir, state folder and public folder."""
 
@@ -70,6 +76,30 @@ class ProcessTests(unittest.TestCase):
         r = b.run()
         self.assertEqual((r["added"], r["dropped"], r["total"]), (0, 5, 0))
         self.assertEqual(b.read(b.public, "registered.json")["addresses"], [])
+
+    def test_the_three_lines_sent_by_hand_without_labels_are_accepted(self):
+        b = Box()
+        b.put(unlabelled_mail(ADDR1, MSG1, SIG1))
+        b.put(unlabelled_mail(ADDR2, MSG2, SIG2, greeting="Hello team,\r\n\r\n"))     # a greeting before the lines does no harm
+        r = b.run()
+        self.assertEqual((r["added"], r["dropped"], r["total"]), (2, 0, 2))
+        self.assertEqual(sorted(b.read(b.public, "registered.json")["addresses"]), sorted([ADDR1, ADDR2]))
+
+    def test_a_message_cut_into_several_lines_by_the_mail_program_is_put_back_together(self):
+        b = Box()
+        wrapped = MSG1.replace(" Address: ", " Address:\r\n").replace(". Contact: ", ". Contact:\r\n")
+        self.assertGreater(wrapped.count("\r\n"), 1)
+        b.put(unlabelled_mail(ADDR1, wrapped, SIG1))                                  # Gmail style, no labels
+        b.put(mail(ADDR2, MSG2.replace(" Address: ", " Address:\r\n"), SIG2))          # with labels
+        r = b.run()
+        self.assertEqual((r["added"], r["dropped"], r["total"]), (2, 0, 2))
+
+    def test_unlabelled_lines_do_not_let_a_forged_signature_through(self):
+        b = Box()
+        b.put(unlabelled_mail(ADDR1, MSG1, SIG2))                                  # the signature of another key
+        b.put(unlabelled_mail(ADDR1, MSG2, SIG1))                                  # a message that names another address
+        r = b.run()
+        self.assertEqual((r["added"], r["dropped"]), (0, 2))
 
     def test_malformed_large_and_empty_mails_are_dropped(self):
         b = Box()
