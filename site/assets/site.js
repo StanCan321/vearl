@@ -1,4 +1,4 @@
-/* Vearl, site behaviour: navigation, reveals, ticker, ASCII pearl, Freivalds console, closing ripples. */
+/* Vearl, site behaviour: navigation, reveals, ticker, ASCII pearl, Freivalds console. */
 (() => {
   'use strict';
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -542,34 +542,5 @@
   if ('IntersectionObserver' in window) {
     const so = new IntersectionObserver((es) => es.forEach((e) => e.target.classList.toggle('on', e.isIntersecting)), { rootMargin: '-35% 0px -45% 0px' });
     document.querySelectorAll('#steps li').forEach((li) => so.observe(li));
-  }
-
-  /* ---------------------------------------------------------------- closing ripples */
-  const dc = $('#drops'), dx = dc.getContext('2d');
-  let drops = [], DW = 0, DH = 0, dOn = false, dRun = false;
-  function dsize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    DW = dc.clientWidth; DH = dc.clientHeight; dc.width = DW * dpr; dc.height = DH * dpr; dx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
-  function dframe() {
-    dx.clearRect(0, 0, DW, DH);
-    if (Math.random() < 0.03 && drops.length < 7) drops.push({ x: Math.random() * DW, y: Math.random() * DH, r: 0, h: Math.random() });
-    drops = drops.filter((d) => d.r < 260);
-    for (const d of drops) {
-      d.r += 0.9;
-      const a = Math.max(0, 1 - d.r / 260);
-      for (let k = 0; k < 3; k++) {
-        const rr = d.r - k * 22; if (rr <= 0) continue;
-        const c = palette[Math.floor(((d.h + k * 0.15) % 1) * HUES)];
-        dx.strokeStyle = `rgba(${c[0]},${c[1]},${c[2]},${a * (0.5 - k * 0.14)})`;
-        dx.lineWidth = 1; dx.beginPath(); dx.arc(d.x, d.y, rr, 0, Math.PI * 2); dx.stroke();
-      }
-    }
-    if (dOn) requestAnimationFrame(dframe); else dRun = false;
-  }
-  window.addEventListener('resize', dsize);
-  dsize();
-  if (!reduce && 'IntersectionObserver' in window) {
-    new IntersectionObserver((e) => { dOn = e[0].isIntersecting; if (dOn && !dRun) { dRun = true; requestAnimationFrame(dframe); } }).observe(dc);
   }
 })();
