@@ -29,7 +29,7 @@ set -u
 : "${SERVICE_WALLET:=/etc/vearl-gateway/service-wallet.json}"
 : "${GW_LOCAL:=127.0.0.1:18610}"
 : "${SITE_HOST:=vearl.org}"
-: "${NOTIFY_TO:=contact@vearl.org}"             # empty = no e-mail
+: "${NOTIFY_TO=contact@vearl.org}"              # empty = no e-mail (no colon: an empty value is kept, not replaced by the default)
 : "${RETRY_AFTER:=300}"                         # seconds between two tries of a stage that failed 3 times
 : "${PRELAUNCH_CHECKS:=1}"                      # 1 = e-mail a full check an hour before the launch
 
