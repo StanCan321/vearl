@@ -115,6 +115,16 @@ def unlabelled_lines(text):
     return found
 
 
+# Some webmails (Yahoo, some phones) glue the three labelled lines into ONE line: `address: vrl1... message: Vearl testnet ... docs/19. signature: HEX`.
+FLAT = re.compile(r"address:\s*(vrl1[a-z0-9]+)\s*message:\s*(" + re.escape(MESSAGE_START) + r".*?docs/19\.)\s*signature:\s*([0-9a-fA-F]{64,})", re.I)
+
+
+def flat_fields(text):
+    """address / message / signature from a mail whose lines were glued together (any whitespace, including no-break spaces, counts as one space)."""
+    m = FLAT.search(re.sub(r"\s+", " ", text))
+    return dict(zip(("address", "message", "signature"), m.groups())) if m else {}
+
+
 def parse_registration(raw):
     """(address, message, signature) from the raw mail, or (None, reason)."""
     if len(raw) > MAX_BYTES:
@@ -131,6 +141,8 @@ def parse_registration(raw):
     if not all(k in fields for k in ("address", "message", "signature")):
         for k, v in unlabelled_lines(text).items():
             fields.setdefault(k, v)
+    if not all(k in fields for k in ("address", "message", "signature")):
+        fields = flat_fields(text) or fields
     if not all(k in fields for k in ("address", "message", "signature")):
         return None, "the three lines address / message / signature are not all there"
     return (fields["address"], fields["message"], fields["signature"]), None

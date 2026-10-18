@@ -94,6 +94,20 @@ class ProcessTests(unittest.TestCase):
         r = b.run()
         self.assertEqual((r["added"], r["dropped"], r["total"]), (2, 0, 2))
 
+    def test_labelled_lines_glued_into_one_line_by_a_webmail_are_accepted(self):
+        b = Box()
+        nb = " "
+        # Yahoo style: the line breaks are lost, only the labels are left (no-break spaces after them)
+        glued = f"address:{nb} {nb} {ADDR1}message:{nb} {nb} {MSG1}signature: {SIG1}"
+        head = "From: someone@yahoo.com\r\nTo: register@vearl.org\r\nSubject: Vearl testnet registration\r\nDate: Fri, 23 Oct 2026 16:05:00 +0000\r\n"
+        raw = (head + "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n" + glued + "\r\n").encode()
+        b.put(raw)
+        b.put(raw.replace(SIG1.encode(), SIG2.encode()))                                # forged: still refused
+        b.put(raw.replace(b"signature: " + SIG1.encode(), b"signature:"))               # signature missing: still dropped
+        r = b.run()
+        self.assertEqual((r["added"], r["dropped"], r["total"]), (1, 2, 1))
+        self.assertEqual(b.read(b.public, "registered.json")["addresses"], [ADDR1])
+
     def test_unlabelled_lines_do_not_let_a_forged_signature_through(self):
         b = Box()
         b.put(unlabelled_mail(ADDR1, MSG1, SIG2))                                  # the signature of another key
