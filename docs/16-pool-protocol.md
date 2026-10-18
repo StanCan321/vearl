@@ -132,7 +132,9 @@ the target of each worker was. The target of every worker is adjusted to about o
 
 - first adjustment after 10 s without a share, otherwise every `retarget_secs` (default 30 s), or earlier after 30 shares;
 - factor bounded to 4 per step, no change inside the 0.8-1.25 band;
-- never harder than the network target (a block must also be a share);
+- never harder than the network target (a block must also be a share). The credit follows the same rule: a share is credited at the hardest target
+  it meets but never harder than the network target of ITS job (the network target eases from block to block, and the pool still holds the session
+  target of the previous job for 30 s);
 - the initial target comes from `sigma_rate` (or a small default) and converges in a few steps.
 
 ## 6. Accounting: PPLNS
@@ -143,7 +145,8 @@ the target of each worker was. The target of every worker is adjusted to about o
   across the window in proportion to weight. The split is frozen at that moment and is exact (the remainder of the integer division goes to the largest
   holder; nothing is created or lost).
 - The block is `pending` until it is `confirmations` blocks deep (default 30, i.e. 300 s of blocks of 10 s; it was 10 with 30-s blocks) and still on the best chain; then each credit is added to the miners'
-  balances. A block displaced by a reorganisation becomes `orphaned` and credits nothing.
+  balances. A block displaced by a reorganisation becomes `orphaned` and credits nothing; it is removed from the points documents that are not
+  published yet, and a document lists, when it is closed, only the blocks that are still on the main chain (or too recent to be decided).
 - The finder gets no bonus: the reward is by work only.
 
 ## 7. Payouts
@@ -286,10 +289,11 @@ so the pool has already committed to the list when it learns which shares will b
 | check | what it catches | result |
 |---|---|---|
 | signature, pool, genesis, arithmetic of each document | a document edited after signing, forged, or of another pool or network; totals that do not add up | unusable (suspect) / fraud |
-| the blocks listed are pool blocks of the chain (same height, hash and timestamp), listed once | a block that does not exist; a block listed twice or in an epoch it cannot belong to | fraud |
+| the blocks listed against the chain (same height, hash and timestamp), listed once | a block listed twice or in an epoch it cannot belong to; a block far above the top of the chain (more than 1000 heights): `phantom_block` | fraud |
+| a listed block that is not on the chain | an **orphan**: another block won the height. It earns nothing (the points are computed from the blocks of the chain) and is not a finding (`orphaned_block`, informational). More than a third of at least 8 listed blocks off the chain: a fork, or blocks never found (`many_orphans`) | ok / suspect |
 | every block of the pool on the chain is listed in some ledger once the deadline (24 h) has passed | a block hidden from the ledger; an unpublished epoch | fraud |
 | Merkle path of the drawn shares to the signed root; with the complete list: the root, the weight of every miner, no share counted twice | a list changed after signing; weights that are not the sum of the shares | fraud |
-| recomputation of the drawn shares (the jackpot of the tile, `work::tile_jackpot`) against the target they are credited at | shares nobody computed (made-up miners); a share credited at a harder target than it reached | fraud |
+| recomputation of the drawn shares (the jackpot of the tile, `work::tile_jackpot`) against the target they are credited at | shares nobody computed (made-up miners); a share credited at a harder target than it reached. (A target harder than the network target of the job is not a finding as long as the jackpot reaches it.) | fraud |
 | receipts held by the miners against the signed ledger | a miner credited less than the pool signed; a receipt for an epoch that was never published | fraud |
 | `prev` chain of the documents | a document replaced after the next one committed to it; missing documents | suspect |
 | claimed work against the blocks found (Poisson test per day, `p < 1e-9`) | work invented without the blocks that would come with it; blocks without the work that explains them | suspect |

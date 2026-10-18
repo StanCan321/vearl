@@ -888,6 +888,11 @@ impl Pool {
                 }
                 _ if len > *h => {
                     g.ledger.blocks[i].status = BlockStatus::Orphaned;
+                    // it lost the race: it must not be listed in the points documents that are still open (a published one cannot change, the audit
+                    // treats a listed orphan as an orphan and not as fraud)
+                    for er in g.ledger.epochs.values_mut() {
+                        er.blocks.retain(|(bh, bhash, _)| !(*bh == *h && *bhash == *hash));
+                    }
                     g.dirty = true;
                     if self.cfg.log {
                         eprintln!("[pool] block {h} ORPHANED (reorganisation): no reward credited");
@@ -1327,6 +1332,9 @@ impl Pool {
             }
             return Err(err(E_LOW_DIFF, "share above the share target (jackpot not low enough)"));
         };
+        // never harder than the network target of the job (a block must also be a share): after a difficulty drop the session target of the previous
+        // job is still held for a while, and a share that meets it would otherwise be credited at a target harder than its own job's
+        let credited = credited.max(job.tpl.target);
         let w = share_weight(credited);
         let need = (share_weight(job.tpl.target) as f64 * self.cfg.pplns_n) as u128;
         {
@@ -1588,7 +1596,12 @@ impl Pool {
             let g = self.inner.lock().unwrap();
             (g.ledger.epochs.get(&e).cloned(), g.ledger.last_doc)
         };
-        let Some(rec) = rec else { return };
+        let Some(mut rec) = rec else { return };
+        {
+            // only the blocks that are still on the main chain (same height and hash), or too recent to be decided, are listed
+            let n = self.sh.node.lock().unwrap();
+            rec.blocks.retain(|(bh, bhash, _)| n.chain.blocks.get(*bh as usize).map_or(true, |b| b.header.hash() == *bhash));
+        }
         self.send_receipts(e); // final figures, before the epoch disappears
         let prev_hash = prev.map(|(_, h)| h).unwrap_or(ZERO_HASH);
         let data = EpochData { epoch: e, epoch_secs: self.cfg.points_epoch_secs.max(1), fee_bps: self.cfg.fee_bps, blocks: &rec.blocks, jobs: &rec.jobs, records: &rec.records };

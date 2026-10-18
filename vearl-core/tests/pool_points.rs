@@ -297,6 +297,43 @@ fn an_honest_pool_passes_and_every_way_of_cheating_is_caught() {
     let rep = audit_pool(&cfg, &with_epoch(busy, records[&busy].clone(), Some(phantom)));
     assert!(rep.has("phantom_block"), "{:?}", codes(&rep));
 
+    // ---- 4 bis. an ORPHAN is not fraud: the chain holds another miner's block at the height of a block the pool found (it lost the race)
+    let somebody = address_of(&pubkey(&SigningKey::from_bytes(&[55; 32])));
+    let chain_copy = |orphan: &dyn Fn(&ChainBlock) -> bool| -> Vec<ChainBlock> {
+        input.chain.as_ref().unwrap().iter().map(|b| ChainBlock { height: b.height, timestamp: b.timestamp, miner: if orphan(b) { somebody.clone() } else { b.miner.clone() }, hash: b.hash.clone() }).collect()
+    };
+    let h0 = honest_blocks[0].0;
+    let mut one = with_epoch(busy, records[&busy].clone(), None);
+    one.chain = Some(chain_copy(&|b: &ChainBlock| b.height == h0));
+    let rep = audit_pool(&cfg, &one);
+    assert!(rep.has("orphaned_block") && !rep.has("phantom_block"), "{:?}", rep.findings.iter().map(|f| (f.code, f.severity.name())).collect::<Vec<_>>());
+    assert!(rep.verdict < Severity::Fraud && !codes(&rep).contains(&"hidden_block"), "{:?}", codes(&rep));
+    // ... but a pool whose blocks are mostly NOT on the chain is looked at by a person (suspect, never fraud by itself)
+    let listed: usize = es.iter().map(|e| input.docs[e]["blocks"].as_array().map_or(0, |b| b.len())).sum();
+    let mut all = with_epoch(busy, records[&busy].clone(), None);
+    all.chain = Some(chain_copy(&|b: &ChainBlock| b.miner == address_of(&r.pool.pk)));
+    let rep = audit_pool(&cfg, &all);
+    assert!(!rep.has("phantom_block"), "{:?}", codes(&rep));
+    assert!(listed >= 8, "the test chain lists enough blocks ({listed}) to exercise the orphan ratio");
+    {
+        assert!(rep.has("many_orphans") && rep.verdict == Severity::Suspect, "{:?}", rep.findings.iter().map(|f| (f.code, f.severity.name())).collect::<Vec<_>>());
+    }
+
+    // ---- 4 ter. a share credited at a target HARDER than its job's network target (the target eased while the pool still held the session target of
+    // the previous job) is real work: it verifies, because the jackpot reaches the target it was credited at; a lie is still caught by the recomputation
+    {
+        let rec = records[&busy][0].clone();
+        let j = &input.docs[&busy]["jobs"][rec.job as usize];
+        let mut job = JobRec { prev: unhex32(j["prev"].as_str().unwrap()).unwrap(), height: j["height"].as_u64().unwrap(), timestamp: j["timestamp"].as_u64().unwrap(), tx_root: unhex32(j["tx_root"].as_str().unwrap()).unwrap(), target: parse_u64hex(j["target"].as_str().unwrap()).unwrap(), native_epoch: j["native_epoch"].as_u64().unwrap() };
+        job.target = u64::MAX; // the network target is now far easier than the target the share was credited at
+        assert!(rec.target < job.target);
+        let mut cache = ShareCache::new(10);
+        assert_eq!(verify_share(&rec, &job, &r.pool.pk, &genesis().params, &mut cache), Ok(()));
+        let mut lie = rec.clone();
+        lie.target = 1; // a target the jackpot cannot reach
+        assert!(verify_share(&lie, &job, &r.pool.pk, &genesis().params, &mut cache).is_err());
+    }
+
     // ---- 5. a miner credited less than the pool signed: the pool contradicts itself
     let victim = r.miners[0].2.clone();
     let victim_key = parse_address_for_test(&victim);

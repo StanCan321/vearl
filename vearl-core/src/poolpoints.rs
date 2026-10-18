@@ -228,6 +228,9 @@ impl ShareCache {
     }
 }
 
+/// A listed block this many heights above the top of the chain the auditor holds is a phantom (a copy of the chain can lag by minutes, not by this much).
+pub const MAX_CHAIN_LAG: u64 = 1000;
+
 /// Error of `verify_share` when the audit has used up its budget of matrix builds (the audit reports it as a suspicion, not as fraud).
 pub const BUDGET_EXCEEDED: &str = "audit budget exceeded";
 
@@ -236,9 +239,10 @@ pub fn verify_share(rec: &ShareRec, job: &JobRec, pool_key: &PubKey, p: &WorkPar
     if job.native_epoch != job.height / EPOCH_LEN {
         return Err("job: native epoch does not match its height".into());
     }
-    if rec.target < job.target {
-        return Err("credited target harder than the network target".into());
-    }
+    // A share credited at a target HARDER than its job's network target is not a finding: the network target of a job can get easier while the
+    // pool still holds the session target of the previous job (it keeps it for 30 s), and the recomputation below proves that the jackpot
+    // really reaches the target the share was credited at, which is all that its weight needs. (Older audits called it fraud: an honest pool
+    // was excluded after a difficulty drop.)
     let sg = sigma(&job.prev, pool_key, &WorkClass::Native, rec.extra_nonce, &job.tx_root, job.timestamp);
     if !cache.map.contains_key(&job.native_epoch) {
         if cache.builds >= cache.max_builds {
@@ -537,6 +541,8 @@ pub fn audit_pool(cfg: &AuditCfg, inp: &AuditInput) -> AuditReport {
         // A block is documented in the epoch in which the pool FOUND it; its header timestamp is the age of the job it was found with, so it
         // may precede the epoch by up to MAX_JOB_AGE seconds (old job) or follow it by as much (the chain accepts timestamps slightly ahead of time).
         let mut seen: HashSet<u64> = HashSet::new();
+        let tip = chain.iter().map(|b| b.height).max().unwrap_or(0);
+        let (mut listed, mut orphans) = (0usize, 0usize);
         for (e, d) in &good {
             let (start, end) = (u_field(d, "start").unwrap(), u_field(d, "end").unwrap());
             for (h, hash, ts) in &doc_blocks(d).unwrap() {
@@ -546,15 +552,25 @@ pub fn audit_pool(cfg: &AuditCfg, inp: &AuditInput) -> AuditReport {
                 if *ts >= end + MAX_JOB_AGE || *ts + MAX_JOB_AGE < start {
                     add(Some(*e), Severity::Fraud, "block_outside_epoch", format!("block {h} has timestamp {ts}, which cannot belong to the epoch window {start}..{end}"));
                 }
-                match mine.iter().find(|b| b.height == *h) {
-                    None => add(Some(*e), Severity::Fraud, "phantom_block", format!("block {h} is listed but is not a block of this pool on the chain")),
+                listed += 1;
+                // The pool lists every block it FOUND. A block that lost the race to another block of the same height (an orphan: normal on a chain with
+                // blocks every 10 s) is not on the chain, and earns nothing: the points are computed from the blocks of the CHAIN. It is not a finding
+                // (only a high share of orphans is, below). A block far above the top of the chain we hold cannot be explained by a lagging copy of it.
+                match chain.iter().find(|b| b.height == *h) {
+                    Some(b) if b.miner == pool_addr && b.timestamp == *ts && b.hash.as_ref().map_or(true, |x| x == hash) => {}
                     Some(b) => {
-                        if b.timestamp != *ts || b.hash.as_ref().map_or(false, |x| x != hash) {
-                            add(Some(*e), Severity::Fraud, "phantom_block", format!("block {h}: timestamp or hash differ from the chain"));
-                        }
+                        orphans += 1;
+                        let who = if b.miner == pool_addr { "another block of this pool" } else { "a block of another miner" };
+                        add(Some(*e), Severity::Info, "orphaned_block", format!("block {h} is listed but the chain holds {who} at that height: it lost the race and earns nothing"));
                     }
+                    None if *h > tip + MAX_CHAIN_LAG => add(Some(*e), Severity::Fraud, "phantom_block", format!("block {h} is listed but the chain we hold stops at {tip}: it cannot be that far ahead")),
+                    None => add(Some(*e), Severity::Info, "block_not_on_chain_yet", format!("block {h} is listed but is above the chain we hold ({tip}): it may be a block of the last minutes")),
                 }
             }
+        }
+        // a pool whose blocks are mostly not on the chain either mines on a fork or lists blocks it never found: a person looks at it
+        if listed >= 8 && orphans * 3 > listed {
+            add(None, Severity::Suspect, "many_orphans", format!("{orphans} of the {listed} blocks the pool lists are not on the chain (more than a third)"));
         }
         // every block of the pool on the chain must be listed in some document; the pool has until the deadline to publish the epoch it was found in
         for b in mine {
