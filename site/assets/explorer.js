@@ -5,7 +5,7 @@
 
   var API = (document.querySelector('meta[name="vearl-api"]') || {}).content || '/api';
   var app = document.getElementById('app');
-  var BLOCK_TARGET_S = 30;
+  var BLOCK_TARGET_S = 10;                  // blocks every 10 s (ASERT target)
 
   /* ------------------------------------------------------------------ small DOM helpers */
   function h(tag, props) {

@@ -15,7 +15,8 @@ Environment=VEARL_WALLET_PASSWORD_FILE=/run/credentials/vearl-gateway.service/se
 # the other candidates for the audit are the reachable peers the seed knows (copied to /run/vearl-gateway-peers by vearl-gateway-peers.timer).
 ExecStart=/usr/bin/python3 /opt/vearl-gateway-public/vearl-gateway.py --cli /opt/vearl-gateway-public/vearl-cli --node 127.0.0.1:9000 \
   --worker 127.0.0.1:19110 --public --key wallet:/etc/vearl-gateway/service-wallet.json --data /var/lib/vearl-gateway-public \
-  --listen 127.0.0.1:18610 --peers-file /run/vearl-gateway-peers/peers.txt --escrow 2 --audit 4 --per-hour 6 --per-visitor-active 2 --max-active 12 \n  --ml http://127.0.0.1:18602
+  --listen 127.0.0.1:18610 --peers-file /run/vearl-gateway-peers/peers.txt --escrow 2 --audit 4 --per-hour 6 --per-visitor-active 2 --max-active 12 \
+  --ml http://127.0.0.1:18602
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

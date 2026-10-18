@@ -1,0 +1,9 @@
+[Unit]
+Description=Vearl launch: puts the explorer, the job creation and the faucet on line when the testnet starts
+After=network-online.target vearl-node.service nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/vearl/launch/vearl-launch.sh
+TimeoutStartSec=600
+Nice=5

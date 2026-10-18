@@ -1,0 +1,11 @@
+[Unit]
+Description=Vearl launch: every minute, and exactly at the launch time (2026-10-23 16:00:00 UTC)
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=60s
+OnCalendar=2026-10-23 16:00:00 UTC
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
