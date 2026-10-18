@@ -1362,6 +1362,11 @@ fn model_jobs_spread_over_the_workers_that_hold_their_data() {
     });
     assert!(most <= 2, "a worker holds at most max-jobs jobs at once ({most})");
     assert_eq!(workers.len(), 2, "the jobs spread over both workers");
+    // both workers mine, so a claim can live on a branch that is reorganised away: wait until the three nodes follow the same chain, and give the
+    // workers a turn to drop the run of a job that another worker finally holds
+    let tip = |h: &NodeHandle| h.shared.node.lock().unwrap().chain.tip_hash();
+    wait("the three nodes follow the same chain", 60, || tip(&w1) == tip(&passive) && tip(&w2) == tip(&passive));
+    std::thread::sleep(Duration::from_millis(1500));
     // each result is served by the worker that computed it (the client asks them in turn, as `vearl-cli infer` does)
     for id in &ids {
         let served = [&w1, &w2].iter().filter(|w| matches!(request(&w.addr, &Msg::GetOp { job: *id, op: 0 }), Ok(Msg::OpData { .. }))).count();

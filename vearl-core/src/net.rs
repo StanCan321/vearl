@@ -2359,6 +2359,23 @@ fn worker_step(n: &mut Node, sk: &SigningKey) -> Option<Target> {
         n.prog_computing.remove(&id);
         n.prog_runs.insert(id, run);
     }
+    // a run of a job that this worker no longer holds is dropped: its claim lived on a chain branch that was reorganised away (the job is open again
+    // or another worker holds it), and serving the data would make two workers answer for the same job
+    {
+        let stale: Vec<JobId> = n
+            .prog_runs
+            .keys()
+            .filter(|id| match n.chain.state.progs.get(*id).map(|j| &j.status) {
+                Some(ProgStatus::Open) => true,
+                Some(ProgStatus::Working { worker, .. }) | Some(ProgStatus::Complete { worker, .. }) => *worker != me,
+                _ => false,
+            })
+            .copied()
+            .collect();
+        for id in stale {
+            n.prog_runs.remove(&id);
+        }
+    }
     // claims that lost the race (another worker took the job first) will never go through and would block every later transaction of this
     // worker (nonces) until the eviction of stuck transactions: when everything from the first lost claim on is a claim, drop it all at once,
     // the jobs still open are claimed again with fresh nonces at the next turn
