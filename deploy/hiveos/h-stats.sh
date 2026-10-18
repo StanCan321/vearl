@@ -11,10 +11,21 @@ khs=0
 stats=""
 _pid="$(pgrep -f 'vearl-miner --home' | head -n 1)"
 if [[ -n "$_pid" ]]; then
-  _line="$(tail -n 300 "$VEARL_DATA/miner.log" 2>/dev/null | grep -F '[miner]' | tail -n 1)"
-  _mtiles="$(sed -n 's/.*(\([0-9.]*\) M tiles\/s).*/\1/p' <<< "$_line")"
-  _blocks="$(sed -n 's/.*blocks found=\([0-9]*\).*/\1/p' <<< "$_line")"
-  _mtiles="${_mtiles:-0}"; _blocks="${_blocks:-0}"
+  _line="$(tail -n 300 "$VEARL_DATA/miner.log" 2>/dev/null | grep -E -e '\[miner\]' -e '\[poolminer\] [0-9.]+ sigma/s' | tail -n 1)"
+  _acc=0; _rej=0
+  if [[ "$_line" == *"[poolminer]"* ]]; then
+    # pool mode: "[poolminer] 123.4 sigma/s; shares accepted A refused R; blocks B; ..."; one sigma is a whole noised product = 4096 tiles
+    # (n=1024, tile 16 of the current network parameters), which is the unit of the solo status line
+    _sig="$(sed -n 's/.*\[poolminer\] \([0-9.]*\) sigma\/s.*/\1/p' <<< "$_line")"
+    _mtiles="$(awk -v s="${_sig:-0}" 'BEGIN { printf "%.4f", s * 4096 / 1000000 }')"
+    _acc="$(sed -n 's/.*shares accepted \([0-9]*\).*/\1/p' <<< "$_line")"
+    _rej="$(sed -n 's/.*refused \([0-9]*\).*/\1/p' <<< "$_line")"
+    _blocks="$_acc"
+  else
+    _mtiles="$(sed -n 's/.*(\([0-9.]*\) M tiles\/s).*/\1/p' <<< "$_line")"
+    _blocks="$(sed -n 's/.*blocks found=\([0-9]*\).*/\1/p' <<< "$_line")"
+  fi
+  _mtiles="${_mtiles:-0}"; _blocks="${_blocks:-0}"; _acc="${_acc:-0}"; _rej="${_rej:-0}"
   _up="$(ps -o etimes= -p "$_pid" 2>/dev/null | tr -d ' ')"; _up="${_up:-0}"
 
   # the GPUs: bus number, temperature, fan, and whether they mine (compute capability 8.0 or newer)
@@ -42,6 +53,6 @@ if [[ -n "$_pid" ]]; then
   done
   khs="$(awk -v t="$_mtiles" 'BEGIN { printf "%.2f", t * 1000 }')"
   _j() { local IFS=','; echo "[$*]"; }
-  stats="$(printf '{"hs":%s,"hs_units":"mhs","temp":%s,"fan":%s,"uptime":%s,"ver":"%s","ar":[%s,0],"algo":"vearl","bus_numbers":%s}' \
-    "$(_j "${_hs[@]}")" "$(_j "${_temp[@]}")" "$(_j "${_fan[@]}")" "$_up" "$CUSTOM_VERSION" "$_blocks" "$(_j "${_bus[@]}")")"
+  stats="$(printf '{"hs":%s,"hs_units":"mhs","temp":%s,"fan":%s,"uptime":%s,"ver":"%s","ar":[%s,%s],"algo":"vearl","bus_numbers":%s}' \
+    "$(_j "${_hs[@]}")" "$(_j "${_temp[@]}")" "$(_j "${_fan[@]}")" "$_up" "$CUSTOM_VERSION" "$_blocks" "$_rej" "$(_j "${_bus[@]}")")"
 fi

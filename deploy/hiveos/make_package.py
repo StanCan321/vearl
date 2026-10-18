@@ -4,7 +4,7 @@
     python deploy/hiveos/make_package.py --release-dir DIR --version 0.1.0-rc16.2 [--out dist]
 
 DIR is the folder of the LINUX release (the extracted vearl-<version>-linux-x86_64.tar.gz): the package takes from it vearl-miner, node,
-vearl-wallet, vearl-cli, network.json and genesis.json (the same programs as the release, byte for byte) and adds the Hive scripts of this
+vearl-poolminer, vearl-wallet, vearl-cli, network.json and genesis.json (the same programs as the release, byte for byte) and adds the Hive scripts of this
 folder. Result: OUT/vearl-hiveos-<version>.tar.gz containing one folder `vearl/` (HiveOS unpacks it into /hive/miners/custom/), and
 OUT/vearl-hiveos-<version>.tar.gz.sha256.
 """
@@ -17,7 +17,7 @@ import tarfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = ["h-manifest.conf", "h-config.sh", "h-run.sh", "h-stats.sh", "common.sh", "setup.sh", "README-HIVEOS.txt"]
-PROGRAMS = ["vearl-miner", "node", "vearl-wallet", "vearl-cli"]
+PROGRAMS = ["vearl-miner", "vearl-poolminer", "node", "vearl-wallet", "vearl-cli"]
 DATA = ["network.json", "genesis.json"]
 EXEC = {"h-config.sh", "h-run.sh", "h-stats.sh", "setup.sh", *PROGRAMS}
 

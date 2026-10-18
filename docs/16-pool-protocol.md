@@ -188,6 +188,18 @@ vearl-poolminer --pool pool.example.org:3333 --address vrl1yourpayoutaddress --w
 vearl-poolminer --pool pool.example.org:3333 --address vrl1yourpayoutaddress --threads 8               # CPU
 ```
 
+The ordinary way for a miner to use a pool is the launcher of the release, which offers both ways of mining (the wizard asks at the first start):
+
+```
+vearl-miner pool                  # pool mode: the pool named in network.json ("pool", pool.vearl.org:3333 for the testnet); remembered
+vearl-miner solo                  # solo mode: the node mines alone (needs a wallet file); remembered
+vearl-miner --mode pool --pool pool.example.org:3333 --address vrl1yourpayoutaddress --worker-name rig1    # one run, no settings file (HiveOS, scripts)
+```
+
+In pool mode the launcher starts `vearl-poolminer` (GPU when one is usable, otherwise CPU) and no node: only the payout address is needed, no wallet
+password. Its status line is shown and appended to `miner.log`, the signed receipts go to `pool-receipts.jsonl`. Paid compute jobs and the
+Quantus add-on belong to solo mode. The worker name defaults to the computer name (the wizard asks, because the pool shows it).
+
 The worker reconnects by itself (1 s doubled up to 30 s). It prints its rate, accepted/rejected shares and blocks every 10 s.
 
 ## 11. Security notes and limits (read before running a public pool)

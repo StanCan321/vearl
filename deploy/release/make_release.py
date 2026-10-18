@@ -49,18 +49,23 @@ START HERE
 
 What the miner does
 -------------------
- * It mines Vearl blocks with your GPU and computes the paid jobs that clients submit to the network (AI inference, rendering, linear
-   algebra). It mines Vearl only: no other program runs on your machine.
+ * The first time, it asks HOW you want to mine, and you can change your mind at any time ("vearl-miner pool" / "vearl-miner solo"):
+     POOL (recommended) ... you join the official pool ({pool}). Many miners share the work and what you earn arrives in small
+                            regular payouts; the pool keeps a small fee (shown on its website). You only need your Vearl ADDRESS: no node
+                            runs on your machine and your wallet password is not needed. No paid jobs and no Quantus in this mode.
+     SOLO ................ your machine runs a full Vearl node and mines alone: you keep 100 % of the blocks you find and you also
+                            compute the paid jobs that clients submit to the network (AI inference, rendering, linear algebra).
+ * It mines Vearl only (the optional Quantus add-on aside): no other program runs on your machine.
  * You need an NVIDIA GPU of the Ampere generation or newer (RTX 30xx, 40xx, 50xx, A-series, L-series, H100...) and the NVIDIA driver
    ({driver}). Without a GPU the miner runs on the CPU, slowly.
  * The first start downloads the chain from the seed node and can take a few minutes. A status line is printed every 10 seconds
    and a copy of the log (with date and time) is kept in miner.log.
- * Optional: the separate "quantus-addon" download lets the same miner also mine Quantus (QTC) with your GPU. It is off unless you
+ * Optional, solo mode only: the separate "quantus-addon" download lets the same miner also mine Quantus (QTC) with your GPU. It is off unless you
    install it AND answer yes in the assistant. Its README (QUANTUS-ADDON.txt) explains what it does, including the development fee.
 
 Your wallet
 -----------
-The assistant creates a wallet.json protected by a password and shows you 24 recovery words ONCE: write them on paper. Whoever has
+In solo mode (and in pool mode if you choose to create one) the assistant creates a wallet.json protected by a password and shows you 24 recovery words ONCE: write them on paper. (In pool mode you can also just type an address you already have.) Whoever has
 the words has the funds, and without them a lost password or a lost file cannot be recovered. Do not put them in a file, a photo
 or a message, and never give them to anybody (nobody from the project will ever ask for them).
 
@@ -90,6 +95,8 @@ Files in this folder
  vearl-pool{exe}, vearl-poolminer{exe}, vearl-pool-audit{exe}   for pool operators / mining in a pool / checking what a pool published (docs/16)
  network.json, genesis.json   the network (do not edit: every miner must use the same files)
  miner.json, wallet.json, data/, miner.log   created on first start (your settings, wallet, chain, log)
+ pool-receipts.jsonl     pool mode: the signed receipts of the pool (proof of your work, see docs/16)
+ start-pool / start-solo   shortcuts: start in that mode (and remember it)
 
 Advanced: {advanced}
 
@@ -168,6 +175,32 @@ def licenses(dirpath):
     return out
 
 
+START_POOL_BAT = r"""@echo off
+rem Starts the Vearl miner in POOL mode (and remembers the choice).
+cd /d "%~dp0"
+vearl-miner.exe pool %*
+if errorlevel 1 pause
+"""
+
+START_SOLO_BAT = r"""@echo off
+rem Starts the Vearl miner in SOLO mode (and remembers the choice).
+cd /d "%~dp0"
+vearl-miner.exe solo %*
+if errorlevel 1 pause
+"""
+
+START_POOL_SH = """#!/bin/sh
+# Starts the Vearl miner in POOL mode (and remembers the choice).
+cd "$(dirname "$0")"
+exec ./vearl-miner pool "$@"
+"""
+
+START_SOLO_SH = """#!/bin/sh
+# Starts the Vearl miner in SOLO mode (and remembers the choice).
+cd "$(dirname "$0")"
+exec ./vearl-miner solo "$@"
+"""
+
 START_BAT = r"""@echo off
 rem Starts the Vearl miner. First time: an assistant creates your Vearl wallet.
 cd /d "%~dp0"
@@ -222,6 +255,7 @@ def main():
     ap.add_argument("--genesis")
     ap.add_argument("--peer", action="append", default=[], help="HOST:PORT@PUBLIC_KEY of a seed node, written into network.json (repeat for several: e.g. the domain name, then the IP)")
     ap.add_argument("--network", default="vearl-testnet-1")
+    ap.add_argument("--pool", default="pool.vearl.org:3333", help="HOST:PORT of the official pool, written into network.json (vearl-miner pool mode)")
     ap.add_argument("--licenses", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "licenses"))
     ap.add_argument("--out", default="dist")
     a = ap.parse_args()
@@ -230,19 +264,19 @@ def main():
     sums = []
     gen = open(a.genesis, "rb").read() if a.genesis else None
     peer = a.peer[0] if a.peer else "SEED_HOST:9000@SEED_PUBLIC_KEY"
-    network = {"name": a.network, "genesis": "genesis.json" if gen else None, "peers": list(a.peer), "listen": "0.0.0.0:9000"}
+    network = {"name": a.network, "genesis": "genesis.json" if gen else None, "peers": list(a.peer), "listen": "0.0.0.0:9000", "pool": a.pool}
     net_json = (json.dumps(network, indent=2) + "\n").encode()
     lic = licenses(a.licenses)
     date = time.strftime("%Y-%m-%d", time.gmtime())
 
     def readme(win):
         start = "Double-click vearl-miner.exe (or start-miner.bat)." if win else "Run ./vearl-miner  (or ./start-miner.sh) in a terminal."
-        start += "\n The first time, an assistant creates your Vearl wallet."
+        start += "\n The first time, an assistant asks how you want to mine (pool or solo) and sets up your Vearl address or wallet."
         driver = "Windows: 580 or newer" if win else "Linux: 575 or newer; `nvidia-smi` must work"
-        adv = "vearl-miner setup (run the assistant again), vearl-miner check (test GPU and files), miner.json (settings)."
+        adv = "vearl-miner setup (run the assistant again), vearl-miner check (test GPU, files and pool), vearl-miner pool / solo (switch), miner.json (settings)."
         wallet_start = "Double-click it to open it." if win else "Run ./vearl-wallet-gui from a desktop session (it needs a graphical desktop with OpenGL; on a server use the command-line vearl-wallet)."
         wallet_dir = r"%APPDATA%\Vearl\wallets" if win else "~/.local/share/vearl/wallets"
-        return README.format(version=a.version, date=date, exe=".exe" if win else "", start_here=start, driver=driver, advanced=adv, wallet_start=wallet_start, wallet_dir=wallet_dir).encode()
+        return README.format(version=a.version, date=date, exe=".exe" if win else "", pool=a.pool, start_here=start, driver=driver, advanced=adv, wallet_start=wallet_start, wallet_dir=wallet_dir).encode()
 
     def readme_addon(win):
         return README_ADDON.format(version=a.version, date=date, exe=".exe" if win else "", dev_address=DEV_ADDRESS).encode()
@@ -255,8 +289,11 @@ def main():
         extra = [("README.txt", readme(win), 0o644), ("network.json", net_json, 0o644)]
         if win:
             extra.append(("start-miner.bat", START_BAT.replace("\n", "\r\n").encode(), 0o755))
+            extra.append(("start-pool.bat", START_POOL_BAT.replace("\n", "\r\n").encode(), 0o755))
+            extra.append(("start-solo.bat", START_SOLO_BAT.replace("\n", "\r\n").encode(), 0o755))
         else:
-            extra += [("start-miner.sh", START_SH.encode(), 0o755), ("start-node.sh", START_NODE_SH.format(peer=peer).encode(), 0o755)]
+            extra += [("start-miner.sh", START_SH.encode(), 0o755), ("start-pool.sh", START_POOL_SH.encode(), 0o755), ("start-solo.sh", START_SOLO_SH.encode(), 0o755),
+                      ("start-node.sh", START_NODE_SH.format(peer=peer).encode(), 0o755)]
         if gen:
             extra.append(("genesis.json", gen, 0o644))
         write(path, top, main_files, extra)
