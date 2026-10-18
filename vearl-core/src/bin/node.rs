@@ -10,6 +10,7 @@
 //! --partner-cmd "CMD": (`devtools` build only) same thing with a free command, WITHOUT fee (tests)
 //! --qtc-engine cuda|vulkan: engine of the Quantus miner (fixed arguments); --collect-fee-beacons: seed that receives the audit beacons (docs/17)
 //! --relay: relay node (the seed): workers that dial it from behind a router are reachable through it for the audit of their jobs (docs/21)
+//! --max-inbound N / --max-per-ip N / --max-per-subnet N / --max-conns N: admission limits (default 24 peers, 2 per IP, 4 per /16, 256 connections of every kind); a public seed raises them (deploy/systemd). Wallets and tools are not peers: only --max-conns and the per-IP connection limit apply to them
 //! --cheat-act: TEST ONLY, wrong activation at layer 0 of an inference job
 //! (keys derived from PUBLIC seeds: testnet only, never real funds)
 use ed25519_dalek::SigningKey;
@@ -107,6 +108,8 @@ fn main() {
     let mut qtc_engine = "cuda".to_string();
     let mut collect_beacons = false;
     let mut relay = false;
+    // admission limits (0 = the default of net.rs: 24 peers, 2 per IP, 4 per /16, 256 connections of every kind)
+    let (mut max_inbound, mut max_per_ip, mut max_per_subnet, mut max_conns) = (0usize, 0usize, 0usize, 0usize);
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -130,6 +133,10 @@ fn main() {
             "--qtc-cert" => qtc_cert = it.next().expect("--qtc-cert SHA256"),
             #[cfg(feature = "devtools")]
             "--qtc-args" => qtc_args = Some(it.next().expect("--qtc-args \"...\"")),
+            "--max-inbound" => max_inbound = it.next().expect("--max-inbound N").parse().expect("integer"),
+            "--max-per-ip" => max_per_ip = it.next().expect("--max-per-ip N").parse().expect("integer"),
+            "--max-per-subnet" => max_per_subnet = it.next().expect("--max-per-subnet N").parse().expect("integer"),
+            "--max-conns" => max_conns = it.next().expect("--max-conns N").parse().expect("integer"),
             "--mess" => std::env::set_var("VEARL_MESS", "1"), // slowdown of deep reorganisations (docs/13 section 3), optional
             "--miner-wallet" => miner_wallet = Some(it.next().expect("--miner-wallet FILE")),
             "--miner-account" => miner_account = it.next().expect("--miner-account N").parse().expect("u32"),
@@ -208,6 +215,7 @@ fn main() {
     let mine_sk = mine_key.clone();
     let want_peers = !peers.is_empty();
     let seed_specs: Vec<String> = peers.clone();
+    vearl_core::net::set_inbound_limits(max_inbound, max_per_ip, max_per_subnet, max_conns);
     let handle = spawn_node(NodeConfig {
         genesis,
         listen,

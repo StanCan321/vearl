@@ -35,7 +35,7 @@ Tags (declaration order): `Hello` 0, `GetBlocks` 1, `Blocks` 2, `NewBlock` 3, `N
 
 1. After Noise, **each side sends `Hello` first**. A `Hello` with a different genesis closes the connection. An identity (static key) that is already connected is refused.
 2. A client that does **not** send a `Hello` can only issue simple requests (account state, status, data deposit, submission of a transaction); it receives neither the chain nor the gossip.
-3. **Admission limits** (basic anti-eclipse, not a Sybil defence): at most 24 inbound connections, 2 per IP and 4 per /16 subnet (excluding loopback); at most 6 outbound peers, never two in the same /16; 64 simultaneous handshakes.
+3. **Admission limits** (basic anti-eclipse, not a Sybil defence): at most 24 inbound PEERS (nodes that say Hello), 2 per IP and 4 per /16 subnet (excluding loopback; `--max-inbound`, `--max-per-ip`, `--max-per-subnet` change them, a public seed raises them); wallets and command-line tools are not peers and are bounded only by the number of simultaneous connections (256 in total, 16 per IP; `--max-conns`); a peer that does not fit receives the list of known addresses before it is closed; at most 6 outbound peers, never two in the same /16; 64 simultaneous handshakes.
 4. **Rate**: token bucket per peer, 100 messages/s, burst 200; exceeding = disconnection. **Behaviour**: an invalid message (invalid block, repeated transaction with an invalid signature/nonce) earns a score; an invalid block or 100 points = **disconnection and IP ban**.
 
 ## 3 bis. Mempool (local rule, non-consensus)

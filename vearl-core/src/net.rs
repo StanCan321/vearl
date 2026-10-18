@@ -32,6 +32,60 @@ pub const MAX_IN: usize = 24;
 const MAX_PER_IP: usize = 2;
 const MAX_PER_SUBNET: usize = 4;
 const MAX_HANDSHAKES: usize = 64;
+/// Simultaneous inbound connections of every kind (peers AND short requests of wallets and tools), and per IP address.
+const MAX_CONNS: usize = 256;
+const MAX_CONN_PER_IP: usize = 16;
+
+// Limits of this process (`set_inbound_limits`: the node's --max-inbound, --max-per-ip, --max-per-subnet, --max-conns). The defaults are the
+// constants above. They bound the PEERS (nodes that exchange blocks): a public seed raises them. Wallets and command-line tools are not peers:
+// they are bounded by the two connection limits only, so that a wallet on an address that already hosts two nodes is no longer refused.
+static LIM_IN: AtomicUsize = AtomicUsize::new(MAX_IN);
+static LIM_IP: AtomicUsize = AtomicUsize::new(MAX_PER_IP);
+static LIM_NET: AtomicUsize = AtomicUsize::new(MAX_PER_SUBNET);
+static LIM_CONNS: AtomicUsize = AtomicUsize::new(MAX_CONNS);
+static LIM_CONN_IP: AtomicUsize = AtomicUsize::new(MAX_CONN_PER_IP);
+
+/// Sets the admission limits of this process: peers (total, per IP, per /16) and simultaneous connections (total; the per-IP limit follows,
+/// at least 16). A zero keeps the default of that limit.
+pub fn set_inbound_limits(max_in: usize, per_ip: usize, per_subnet: usize, max_conns: usize) {
+    let put = |a: &AtomicUsize, v: usize, d: usize| a.store(if v == 0 { d } else { v }, Ordering::SeqCst);
+    put(&LIM_IN, max_in, MAX_IN);
+    put(&LIM_IP, per_ip, MAX_PER_IP);
+    put(&LIM_NET, per_subnet, MAX_PER_SUBNET);
+    put(&LIM_CONNS, max_conns, MAX_CONNS);
+    LIM_CONN_IP.store(LIM_IP.load(Ordering::SeqCst).max(MAX_CONN_PER_IP), Ordering::SeqCst);
+}
+
+/// Refusals are logged at most once every 10 s, with the number of refusals since the last line (a flood must not flood the log).
+fn note_refusal(why: &str, ip: &IpAddr) {
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    static COUNT: AtomicUsize = AtomicUsize::new(0);
+    COUNT.fetch_add(1, Ordering::SeqCst);
+    let mut last = LAST.lock().unwrap();
+    if last.map_or(true, |t| t.elapsed() >= Duration::from_secs(10)) {
+        *last = Some(Instant::now());
+        eprintln!("[net] refused {} inbound connection(s) in the last seconds (latest: {ip}, {why})", COUNT.swap(0, Ordering::SeqCst));
+    }
+}
+
+/// One inbound connection counted in `Shared` (total and per IP) until it ends.
+struct ConnGuard {
+    sh: Arc<Shared>,
+    ip: IpAddr,
+}
+
+impl Drop for ConnGuard {
+    fn drop(&mut self) {
+        self.sh.conns.fetch_sub(1, Ordering::SeqCst);
+        let mut m = self.sh.conn_ips.lock().unwrap();
+        if let Some(c) = m.get_mut(&self.ip) {
+            *c -= 1;
+            if *c == 0 {
+                m.remove(&self.ip);
+            }
+        }
+    }
+}
 const BAN_SCORE: u32 = 100;
 pub const MEMPOOL_MAX: usize = 5_000;
 pub const MEMPOOL_PER_SENDER: usize = 64;
@@ -330,7 +384,7 @@ fn subnet16(ip: &IpAddr) -> Option<[u8; 2]> {
 
 /// Admission of INCOMING connections (basic anti-eclipse): global cap, per IP, per /16. Pure function.
 pub fn inbound_allowed(existing_inbound: &[IpAddr], new: &IpAddr) -> bool {
-    if existing_inbound.len() >= MAX_IN {
+    if existing_inbound.len() >= LIM_IN.load(Ordering::SeqCst) {
         return false;
     }
     if new.is_loopback() {
@@ -338,7 +392,7 @@ pub fn inbound_allowed(existing_inbound: &[IpAddr], new: &IpAddr) -> bool {
     }
     let same_ip = existing_inbound.iter().filter(|i| *i == new).count();
     let same_net = existing_inbound.iter().filter(|i| subnet16(i).is_some() && subnet16(i) == subnet16(new)).count();
-    same_ip < MAX_PER_IP && same_net < MAX_PER_SUBNET
+    same_ip < LIM_IP.load(Ordering::SeqCst) && same_net < LIM_NET.load(Ordering::SeqCst)
 }
 
 /// Choice of OUTGOING targets: never two outgoing peers in the same /16 (except loopback).
@@ -628,6 +682,9 @@ pub struct Shared {
     pub stop: AtomicBool,
     pub keys: Keys,
     handshakes: AtomicUsize,
+    /// Inbound connections right now, of every kind (peers and short requests), in total and per IP address.
+    conns: AtomicUsize,
+    conn_ips: Mutex<HashMap<IpAddr, usize>>,
     /// Requests this worker is answering on behalf of relay nodes right now.
     relay_busy: AtomicUsize,
 }
@@ -810,6 +867,8 @@ pub fn spawn_node(cfg: NodeConfig) -> io::Result<NodeHandle> {
         stop: AtomicBool::new(false),
         keys,
         handshakes: AtomicUsize::new(0),
+        conns: AtomicUsize::new(0),
+        conn_ips: Mutex::new(HashMap::new()),
         relay_busy: AtomicUsize::new(0),
     });
 
@@ -831,16 +890,32 @@ pub fn spawn_node(cfg: NodeConfig) -> io::Result<NodeHandle> {
                     if !ip.is_loopback() && n.banned.get(&ip).map_or(false, |t| t.elapsed() < Duration::from_secs(600)) {
                         continue;
                     }
-                    let inbound: Vec<IpAddr> = n.peers.values().filter(|p| !p.outbound).filter_map(|p| p.ip).collect();
-                    if !inbound_allowed(&inbound, &ip) {
-                        continue;
-                    }
                 }
                 if sh.handshakes.load(Ordering::SeqCst) >= MAX_HANDSHAKES {
                     continue; // protection against mass-opened handshakes (slow-loris)
                 }
+                // simultaneous connections of every kind: total and per IP. The limits on PEERS (total, per IP, per /16) are applied when the
+                // connection says Hello, not here: a wallet or a tool is not a peer and must not be refused because nodes already use the address.
+                if !ip.is_loopback() {
+                    let total = sh.conns.load(Ordering::SeqCst);
+                    let same = sh.conn_ips.lock().unwrap().get(&ip).copied().unwrap_or(0);
+                    if total >= LIM_CONNS.load(Ordering::SeqCst) {
+                        note_refusal("too many connections in total", &ip);
+                        continue;
+                    }
+                    if same >= LIM_CONN_IP.load(Ordering::SeqCst) {
+                        note_refusal("too many connections from this address", &ip);
+                        continue;
+                    }
+                }
+                sh.conns.fetch_add(1, Ordering::SeqCst);
+                *sh.conn_ips.lock().unwrap().entry(ip).or_insert(0) += 1;
+                let guard = ConnGuard { sh: sh.clone(), ip };
                 let sh2 = sh.clone();
-                thread::spawn(move || peer_loop(sh2, s, None));
+                thread::spawn(move || {
+                    let _guard = guard;
+                    peer_loop(sh2, s, None)
+                });
             }
         });
     }
@@ -1001,8 +1076,22 @@ fn peer_loop(sh: Arc<Shared>, stream: TcpStream, dialed: Option<String>) {
                     break; // already connected to this identity
                 }
                 if !outbound {
-                    let inbound = n.peers.values().filter(|p| !p.outbound).count();
-                    if inbound >= MAX_IN {
+                    let inbound_ips: Vec<IpAddr> = n.peers.values().filter(|p| !p.outbound).filter_map(|p| p.ip).collect();
+                    let n_in = n.peers.values().filter(|p| !p.outbound).count();
+                    let admitted = match ip {
+                        Some(ip) => inbound_allowed(&inbound_ips, &ip) && n_in < LIM_IN.load(Ordering::SeqCst),
+                        None => n_in < LIM_IN.load(Ordering::SeqCst),
+                    };
+                    if !admitted {
+                        // no room for one more peer: tell it where else to connect (so that a full seed does not leave a new node without
+                        // any address), then close
+                        if let Some(ip) = ip {
+                            note_refusal("no room for another peer (limit per node, per address or per network)", &ip);
+                        }
+                        let list: Vec<String> = n.known.iter().take(32).cloned().collect();
+                        let _ = tx.try_send(Msg::Peers(list));
+                        drop(n);
+                        thread::sleep(Duration::from_millis(250)); // lets the writer thread send the list before the connection is closed
                         break;
                     }
                 }
