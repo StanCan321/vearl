@@ -25,7 +25,7 @@ fn die(m: &str) -> ! {
 const HELP: &str = r#"vearl-pool: a Vearl mining pool (protocols vpool/2 and vpool/1). It runs a full node (without mining of its own) and the pool server.
 
   vearl-pool --wallet POOL.json [--genesis genesis.json] [--peer HOST:PORT]... [--listen 0.0.0.0:9000] [--pool-listen 0.0.0.0:3333]
-             [--http 127.0.0.1:8650] [--data-dir DIR] [--fee 1.0] [--min-payout 1] [--payout-interval 600] [--confirmations 30]
+             [--solo-listen 0.0.0.0:3366 [--solo-fee 1.0]] [--http 127.0.0.1:8650] [--data-dir DIR] [--fee 1.0] [--min-payout 1] [--payout-interval 600] [--confirmations 30]
              [--password-file FILE] [--testnet-start ISO_UTC] [--leaderboard FILE]
 
 The pool wallet receives the block rewards and signs the payouts: use a DEDICATED wallet with few funds of its own.
@@ -70,6 +70,8 @@ fn main() {
     let data_dir = arg("--data-dir").map(std::path::PathBuf::from);
     let cfg = PoolConfig {
         listen: arg("--pool-listen").unwrap_or_else(|| "127.0.0.1:3333".into()),
+        solo_listen: arg("--solo-listen"),
+        solo_fee_bps: (num("--solo-fee", 1.0) * 100.0).round() as u64,
         http: arg("--http"),
         fee_bps: (num("--fee", 1.0) * 100.0).round() as u64,
         pplns_n: num("--pplns", 2.0),
@@ -86,7 +88,7 @@ fn main() {
         leaderboard_file: arg("--leaderboard").map(std::path::PathBuf::from),
         ..PoolConfig::default()
     };
-    if cfg.fee_bps > 10_000 || cfg.pplns_n < 0.1 || cfg.share_secs < 0.5 {
+    if cfg.fee_bps > 10_000 || cfg.solo_fee_bps > 10_000 || cfg.pplns_n < 0.1 || cfg.share_secs < 0.5 {
         die("parameters out of bounds (--fee 0..100, --pplns >= 0.1, --share-secs >= 0.5)");
     }
     let handle = spawn_node(NodeConfig {
@@ -111,6 +113,9 @@ fn main() {
     }
     let pool = Pool::start(cfg.clone(), handle.shared.clone(), sk).unwrap_or_else(|e| die(&e));
     eprintln!("[pool] pool address {}; workers on {}; fee {} %; PPLNS x{}; {} confirmations", pool.address(), pool.local_addr(), cfg.fee_bps as f64 / 100.0, cfg.pplns_n, cfg.confirmations);
+    if let Some(a) = pool.solo_addr.lock().unwrap().clone() {
+        eprintln!("[pool] SOLO workers on {a}; fee {} %", cfg.solo_fee_bps as f64 / 100.0);
+    }
     if let Some(h) = pool.http_addr.lock().unwrap().clone() {
         eprintln!("[pool] statistics on http://{h}/");
     }
@@ -133,5 +138,5 @@ fn main() {
 const KNOWN: &[&str] = &[
     "--wallet", "--account", "--password-file", "--insecure-devnet-key", "--genesis", "--listen", "--peer", "--pool-listen", "--http", "--data-dir",
     "--fee", "--min-payout", "--payout-interval", "--confirmations", "--pplns", "--share-secs", "--refresh-secs", "--max-conns", "--max-per-ip", "--api",
-    "--api-public", "--fixed-share-target", "--testnet-start", "--leaderboard",
+    "--api-public", "--solo-listen", "--solo-fee", "--fixed-share-target", "--testnet-start", "--leaderboard",
 ];

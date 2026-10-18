@@ -148,6 +148,14 @@ the target of each worker was. The target of every worker is adjusted to about o
   balances. A block displaced by a reorganisation becomes `orphaned` and credits nothing; it is removed from the points documents that are not
   published yet, and a document lists, when it is closed, only the blocks that are still on the main chain (or too recent to be decided).
 - The finder gets no bonus: the reward is by work only.
+- **Solo port** (`--solo-listen ADDR [--solo-fee 1.0]`, off by default; 3366 on the official pool). It is the same protocol and the same verification on a second
+  port: a worker that connects there mines SOLO through the pool, without running a node of its own. Its shares are checked, recorded in the points ledger and
+  counted for the points exactly like any other (the work is the same), but they stay OUT of the PPLNS window, so they neither dilute nor profit from the miners
+  of the main port. A block found by a solo worker pays the WHOLE net reward (emission + fees, minus `--solo-fee`, default 1 % of the gross reward) to its
+  address, nothing to anyone else; a block found on the main port is split by the window as above and a solo address never receives a part of it. The login
+  reply carries `"mode": "solo"` or `"pplns"` and the fee of that port; `/api/stats` has `solo: {enabled, fee_bps, workers}` and `/api/miner/ADDR` tells the
+  mode of each worker. Confirmation, payouts, the signed ledger and the audit are the same for both ports. A solo miner finds a block rarely (a lottery, as
+  alone with a node of its own): the main port is the better choice for a small or medium rig.
 
 ## 7. Payouts
 
@@ -182,7 +190,7 @@ vearl-pool --wallet pool.json --password-file pool.pw --genesis genesis.json --p
            --pool-listen 127.0.0.1:3333 --http 127.0.0.1:8650 --data-dir /var/lib/vearl-pool --fee 1 --min-payout 1 --confirmations 30
 ```
 
-Expose `--pool-listen` through a TLS proxy for the public (see section 3). Fund nothing: the pool key only receives rewards and sends payouts.
+Add `--solo-listen 0.0.0.0:3366` (and `--solo-fee 1`) to open the solo port beside the main one. Expose `--pool-listen` through a TLS proxy for the public (see section 3). Fund nothing: the pool key only receives rewards and sends payouts.
 
 Worker:
 
@@ -232,6 +240,9 @@ The worker reconnects by itself (1 s doubled up to 30 s). It prints its rate, ac
 - Points ledger (`tests/pool_points.rs`): an honest pool with two miners passes the audit; each way of cheating is caught (edited document, document signed by
   another key, fake miners, hidden and made-up blocks, a miner credited less than its receipt, a share counted twice, shares credited at a harder target,
   a rewritten history, an unpublished epoch); the work-versus-blocks test; the Python downloader and the audit program end to end on a live pool.
+- The solo port (`tests/pool.rs`): the two ports announce their mode and fee; a pool miner and a solo miner on a real node, each finds blocks; a solo block
+  pays everything but the solo fee to its finder, a pool block pays the window and nothing to the solo address; the solo shares are not in the window but are in
+  the points ledger.
 - Hostile client: submit before login, bad protocol, bad address, bad worker name, double login, duplicate share, foreign slot, unknown job, out-of-range tile,
   share above the target, oversized line, repeated garbage, per-IP cap; none of them credits anything.
 - Vardiff moves the target; state survives a restart (chain and pool), a foreign key or genesis is refused; PPLNS window arithmetic, bounded window,

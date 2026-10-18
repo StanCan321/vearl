@@ -342,6 +342,11 @@ pub struct PoolConfig {
     pub http: Option<String>,
     /// pool fee in basis points of the gross reward (100 = 1 %)
     pub fee_bps: u64,
+    /// second listening address: a worker that connects there mines SOLO through the pool (no node of its own to run): its shares count for the
+    /// points like any other, they stay out of the PPLNS window, and a block it finds pays the whole reward, minus `solo_fee_bps`, to its address
+    pub solo_listen: Option<String>,
+    /// fee of the solo port in basis points of the gross reward
+    pub solo_fee_bps: u64,
     /// PPLNS window = pplns_n x the weight of a share at the network target
     pub pplns_n: f64,
     /// depth (blocks on top) before a block's reward is credited
@@ -384,6 +389,8 @@ impl Default for PoolConfig {
             listen: "127.0.0.1:3333".into(),
             http: None,
             fee_bps: 100,
+            solo_listen: None,
+            solo_fee_bps: 100,
             pplns_n: 2.0,
             confirmations: DEFAULT_CONFIRMATIONS,
             min_payout: COIN,
@@ -425,6 +432,8 @@ struct Job {
 
 struct Session {
     ip: IpAddr,
+    /// connected to the solo port
+    solo: bool,
     writer: Arc<Mutex<TcpStream>>,
     login: Option<Login>,
     slot: u32,
@@ -453,6 +462,8 @@ struct Login {
     agent: String,
     /// speaks vpool/2: receives receipts, its shares count for the points
     v2: bool,
+    /// connected to the solo port
+    solo: bool,
 }
 
 /// What the pool remembers about a published epoch document (the index of /api/points/index).
@@ -516,6 +527,7 @@ pub struct Pool {
     next_conn: std::sync::atomic::AtomicU64,
     started: Instant,
     pub addr: Mutex<String>,
+    pub solo_addr: Mutex<Option<String>>,
     pub http_addr: Mutex<Option<String>>,
     /// last share list served over HTTP, with its Merkle tree (sampling requests come in bursts for the same epoch)
     tree_cache: Mutex<Vec<(u64, Arc<Vec<ShareRec>>, Arc<MerkleTree>)>>,
@@ -550,6 +562,11 @@ impl Pool {
         }
         let listener = TcpListener::bind(&cfg.listen).map_err(|e| format!("cannot listen on {}: {e}", cfg.listen))?;
         let addr = listener.local_addr().map_err(|e| e.to_string())?.to_string();
+        let solo_listener = match &cfg.solo_listen {
+            Some(a) => Some(TcpListener::bind(a).map_err(|e| format!("cannot listen on {a} (solo): {e}"))?),
+            None => None,
+        };
+        let solo_addr = solo_listener.as_ref().and_then(|l| l.local_addr().ok()).map(|a| a.to_string());
         let now = Instant::now();
         let pool = Arc::new(Pool {
             cfg: cfg.clone(),
@@ -585,6 +602,7 @@ impl Pool {
             next_conn: std::sync::atomic::AtomicU64::new(1),
             started: now,
             addr: Mutex::new(addr),
+            solo_addr: Mutex::new(solo_addr),
             http_addr: Mutex::new(None),
             tree_cache: Mutex::new(Vec::new()),
             lb_cache: Mutex::new(None),
@@ -599,7 +617,20 @@ impl Pool {
                     }
                     let Ok(s) = s else { continue };
                     let p2 = p.clone();
-                    thread::spawn(move || p2.handle_conn(s));
+                    thread::spawn(move || p2.handle_conn(s, false));
+                }
+            });
+        }
+        if let Some(l) = solo_listener {
+            let p = pool.clone();
+            thread::spawn(move || {
+                for s in l.incoming() {
+                    if p.stop.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let Ok(s) = s else { continue };
+                    let p2 = p.clone();
+                    thread::spawn(move || p2.handle_conn(s, true));
                 }
             });
         }
@@ -628,6 +659,9 @@ impl Pool {
         self.save_state(true);
         let a = self.local_addr();
         let _ = TcpStream::connect(a);
+        if let Some(a) = self.solo_addr.lock().unwrap().clone() {
+            let _ = TcpStream::connect(a);
+        }
         let writers: Vec<_> = self.inner.lock().unwrap().sess.values().map(|s| s.writer.clone()).collect();
         for w in writers {
             if let Ok(s) = w.lock() {
@@ -1021,7 +1055,7 @@ impl Pool {
         }
     }
 
-    fn handle_conn(self: Arc<Self>, stream: TcpStream) {
+    fn handle_conn(self: Arc<Self>, stream: TcpStream, solo: bool) {
         let Ok(peer) = stream.peer_addr() else { return };
         let ip = peer.ip();
         let _ = stream.set_nodelay(true);
@@ -1049,6 +1083,7 @@ impl Pool {
                 cid,
                 Session {
                     ip,
+                    solo,
                     writer: writer.clone(),
                     login: None,
                     slot: 0,
@@ -1172,6 +1207,7 @@ impl Pool {
         if g.sess.get(&cid).map_or(true, |s| s.login.is_some()) {
             return Err(err(E_BAD_REQUEST, "already logged in"));
         }
+        let solo = g.sess.get(&cid).map_or(false, |s| s.solo);
         let mut slot = None;
         for _ in 0..64 {
             g.next_slot = (g.next_slot + 1) % MAX_SLOTS;
@@ -1189,13 +1225,14 @@ impl Pool {
         s.target = target;
         s.prev_target = target;
         s.win_start = Instant::now();
-        s.login = Some(Login { idx, worker: worker.clone(), agent, v2 });
+        s.login = Some(Login { idx, worker: worker.clone(), agent, v2, solo });
         if self.cfg.log {
-            eprintln!("[pool] connection {worker}@{} (slot {slot}, share target {})", &addr_s[..addr_s.len().min(12)], u64hex(target));
+            eprintln!("[pool] connection {worker}@{} (slot {slot}, share target {}{})", &addr_s[..addr_s.len().min(12)], u64hex(target), if solo { ", SOLO" } else { "" });
         }
         Ok(json!({
             "proto": if v2 { PROTO2 } else { PROTO }, "slot": slot, "share_target": u64hex(target), "pool_address": address_of(&self.pk),
-            "fee_bps": self.cfg.fee_bps, "min_payout": self.cfg.min_payout, "payout_interval": self.cfg.payout_interval,
+            "mode": if solo { "solo" } else { "pplns" },
+            "fee_bps": if solo { self.cfg.solo_fee_bps } else { self.cfg.fee_bps }, "min_payout": self.cfg.min_payout, "payout_interval": self.cfg.payout_interval,
             "confirmations": self.cfg.confirmations, "pplns_n": self.cfg.pplns_n, "nonce_bits": NONCE_BITS,
             "share_secs": self.cfg.share_secs, "points_epoch_secs": self.cfg.points_epoch_secs, "receipt_secs": self.cfg.receipt_secs,
         }))
@@ -1344,7 +1381,12 @@ impl Pool {
                 // the ledger of this hour is full: memory and the document stay bounded whatever a hostile client does
                 return Err(err(E_RATE, "the pool cannot take more shares this hour"));
             }
-            g.ledger.add_share(login.idx, w, need.saturating_mul(4).max(w));
+            if login.solo {
+                // a solo share counts for the points (the record below) and for the speed, never for the PPLNS split of the other miners
+                g.ledger.shares_accepted += 1;
+            } else {
+                g.ledger.add_share(login.idx, w, need.saturating_mul(4).max(w));
+            }
             let jrec = JobRec { prev: job.tpl.prev, height: job.tpl.height, timestamp: job.ts, tx_root: job.tx_root, target: job.tpl.target, native_epoch: job.tpl.height / EPOCH_LEN };
             g.ledger.record_share(ep, login.idx, &jrec, en, ti as u16, tj as u16, credited, login.v2);
             g.dirty = true;
@@ -1386,8 +1428,10 @@ impl Pool {
         match submit_block(&self.sh, Block { header, proof, txs: job.txs.clone() }) {
             Ok(()) => {
                 let mut g = self.inner.lock().unwrap();
-                let cut = ((job.reward as u128) * (self.cfg.fee_bps.min(10_000) as u128) / 10_000) as u64;
-                let credits = g.ledger.distribute(need, job.reward - cut);
+                let fee_bps = if finder.solo { self.cfg.solo_fee_bps } else { self.cfg.fee_bps };
+                let cut = ((job.reward as u128) * (fee_bps.min(10_000) as u128) / 10_000) as u64;
+                // solo: the whole net reward goes to the miner that found the block; otherwise the PPLNS split of the window
+                let credits = if finder.solo { vec![(finder.idx, job.reward - cut)] } else { g.ledger.distribute(need, job.reward - cut) };
                 let distributed: u64 = credits.iter().map(|(_, v)| *v).sum();
                 g.ledger.blocks.push(BlockRec {
                     height: job.tpl.height,
@@ -1411,7 +1455,7 @@ impl Pool {
                 g.c.blocks_found += 1;
                 g.dirty = true;
                 drop(g);
-                self.log(&format!("BLOCK {} found by {} ({}); gross reward {}", job.tpl.height, finder.worker, &hex(&hash)[..8], fmt(job.reward)));
+                self.log(&format!("BLOCK {} found by {}{} ({}); gross reward {}", job.tpl.height, finder.worker, if finder.solo { " (SOLO)" } else { "" }, &hex(&hash)[..8], fmt(job.reward)));
                 Some(hash)
             }
             Err(e) => {
@@ -1453,6 +1497,8 @@ impl Pool {
             "fee_bps": self.cfg.fee_bps, "pplns_n": self.cfg.pplns_n, "confirmations": self.cfg.confirmations,
             "min_payout": self.cfg.min_payout, "payout_interval": self.cfg.payout_interval,
             "workers": logged.len(), "miners": miners.len(), "hashrate_sigma_per_s": rate,
+            "solo": {"enabled": self.cfg.solo_listen.is_some(), "fee_bps": self.cfg.solo_fee_bps,
+                     "workers": logged.iter().filter(|s| s.login.as_ref().map_or(false, |l| l.solo)).count()},
             "shares": {"accepted": l.shares_accepted, "rejected_stale": g.c.rejected_stale, "rejected_duplicate": g.c.rejected_duplicate,
                        "rejected_low": g.c.rejected_low, "rejected_invalid": g.c.rejected_invalid},
             "blocks": {"found": g.c.blocks_found, "stale_submissions": g.c.blocks_stale, "pending": count(BlockStatus::Pending),
@@ -1478,7 +1524,7 @@ impl Pool {
             .values()
             .filter_map(|s| s.login.as_ref().filter(|l| l.idx == i).map(|lg| (s, lg)))
             .map(|(s, lg)| {
-                json!({"worker": lg.worker, "agent": lg.agent, "accepted": s.accepted, "rejected": s.rejected, "share_target": u64hex(s.target),
+                json!({"worker": lg.worker, "agent": lg.agent, "mode": if lg.solo { "solo" } else { "pplns" }, "accepted": s.accepted, "rejected": s.rejected, "share_target": u64hex(s.target),
                        "hashrate_sigma_per_s": Self::est_rate(&s.recent, s.since.max(Instant::now() - Duration::from_secs(600)), tiles),
                        "connected_s": s.since.elapsed().as_secs(), "last_share_s": s.last_share.map(|t| t.elapsed().as_secs())})
             })

@@ -262,6 +262,71 @@ fn pool_mines_blocks_splits_the_rewards_and_pays_on_chain() {
 }
 
 #[test]
+fn the_solo_port_pays_the_whole_block_to_its_finder_and_stays_out_of_the_pplns_window() {
+    let nd = node(None);
+    let mut c = cfg(None);
+    c.solo_listen = Some("127.0.0.1:0".into());
+    c.solo_fee_bps = 100; // 1 % on the solo port, 2 % on the pool port
+    let pool = Pool::start(c, nd.shared.clone(), SigningKey::from_bytes(&[150; 32])).unwrap();
+    let solo_addr = pool.solo_addr.lock().unwrap().clone().expect("the solo port listens");
+    assert_ne!(solo_addr, pool.local_addr());
+    // each port announces its own mode and fee
+    {
+        let mut a = Raw::connect(&pool.local_addr());
+        let r = login(&mut a, 77);
+        assert_eq!((r["result"]["mode"].as_str(), r["result"]["fee_bps"].as_u64()), (Some("pplns"), Some(200)));
+        let mut b = Raw::connect(&solo_addr);
+        let r = login(&mut b, 78);
+        assert_eq!((r["result"]["mode"].as_str(), r["result"]["fee_bps"].as_u64()), (Some("solo"), Some(100)));
+        assert_eq!(pool.stats_json()["solo"]["workers"], 1);
+    }
+    // a pool miner and a solo miner, both real
+    let (s1, stop1, a1) = miner(&pool, 201, "pooled", 1, Some(1000.0));
+    let sa = address_of(&pubkey(&SigningKey::from_bytes(&[202; 32])));
+    let ss = Arc::new(MinerStats::default());
+    let stop2 = Arc::new(AtomicBool::new(false));
+    let mc = MinerConfig { pool: solo_addr.clone(), address: sa.clone(), worker: "alone".into(), threads: 1, gpu: false, rate_hint: Some(1000.0), log: false, receipts: None };
+    let (s, st) = (ss.clone(), stop2.clone());
+    std::thread::spawn(move || run(mc, s, st));
+    let (pp, sp) = (parse_address(&a1), parse_address(&sa));
+    wait("a block found by each miner and shares from both", 240, || {
+        let (Some(ip), Some(is)) = (pool.ledger_snapshot(|l| l.find(&pp)), pool.ledger_snapshot(|l| l.find(&sp))) else { return false };
+        pool.ledger_snapshot(|l| l.blocks.iter().any(|b| b.finder == ip) && l.blocks.iter().any(|b| b.finder == is))
+            && s1.accepted.load(Ordering::Relaxed) > 5
+            && ss.accepted.load(Ordering::Relaxed) > 5
+    });
+    stop1.store(true, Ordering::SeqCst);
+    stop2.store(true, Ordering::SeqCst);
+    pool.ledger_snapshot(|l| {
+        let (ip, is) = (l.find(&pp).unwrap(), l.find(&sp).unwrap());
+        let (mut solo_blocks, mut pool_blocks) = (0, 0);
+        for b in &l.blocks {
+            assert_eq!(b.credits.iter().map(|(_, v)| *v).sum::<u64>() + b.pool_cut, b.reward, "the split of block {} is exact", b.height);
+            if b.finder == is {
+                solo_blocks += 1;
+                let cut = b.reward / 100;
+                assert_eq!(b.pool_cut, cut, "1 % fee on a solo block");
+                assert_eq!(b.credits, vec![(is, b.reward - cut)], "a solo block pays everything to its finder");
+            } else {
+                pool_blocks += 1;
+                assert!(b.credits.iter().all(|(a, _)| *a != is), "a solo miner earns nothing from a block of the pool");
+                assert_eq!(b.pool_cut, b.reward / 50, "2 % fee on a pool block");
+            }
+        }
+        assert!(solo_blocks >= 1 && pool_blocks >= 1);
+        // the solo shares stay out of the window, the pool miner's are in
+        assert!(l.window.iter().all(|(a, _)| *a != is));
+        assert!(l.window.iter().any(|(a, _)| *a == ip));
+        // ... but they are recorded for the points, like every verified share
+        assert!(l.epochs.values().any(|e| e.records.iter().any(|r| r.addr == sp)), "solo shares count for the points");
+    });
+    let m = pool.miner_json(&sp);
+    assert_eq!(m["window_share"].as_f64().unwrap(), 0.0);
+    pool.stop();
+    nd.stop();
+}
+
+#[test]
 fn hostile_clients_cannot_corrupt_the_accounting() {
     let nd = node(None);
     let pool = Pool::start(cfg(None), nd.shared.clone(), SigningKey::from_bytes(&[151; 32])).unwrap();
