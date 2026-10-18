@@ -1145,16 +1145,18 @@
       S.status = st; S.skew = st.node_time - Date.now() / 1000; setOnline(true); setPill(); return st;
     }, function (e) { setOnline(false); throw e; });
   }
+  /* Live updates: the status is asked every 4 to 6 seconds (a random part, so that a crowd does not ask at the same instant) and the page is refreshed when the
+     height moved. It used to be a long poll (/api/wait), but a node answers only a few of those at a time, and a crowd of visitors (the launch) would have been
+     refused; the status is a cheap read that the web server's micro-cache shares between everybody. */
   function liveLoop() {
-    pollStatus().then(function (st) { return step(st.height); }).catch(function () { return sleep(5000).then(liveLoop); });
-    function step(height) {
-      return api('/wait?height=' + height + '&timeout=20', { timeout: 32000 }).then(function (r) {
-        setOnline(true);
-        var next = r.height;
-        if (!r.timed_out) return pollStatus().then(function () { if (S.refresh) S.refresh(); return next; });
-        return next;
-      }).then(step, function () { setOnline(false); return sleep(5000).then(function () { return pollStatus().then(function (st) { return st.height; }); }).then(step, function () { return sleep(3000).then(function () { return step(height); }); }); });
+    var height = null;
+    function tick() {
+      pollStatus().then(function (st) {
+        if (height !== null && st.height !== height && S.refresh) S.refresh();
+        height = st.height;
+      }, function () {}).then(function () { setTimeout(tick, 4000 + Math.random() * 2000); });
     }
+    tick();
   }
 
   /* ------------------------------------------------------------------ nav + keyboard */

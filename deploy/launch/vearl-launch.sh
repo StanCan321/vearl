@@ -22,6 +22,7 @@ set -u
 : "${LIB:=/opt/vearl/launch}"                   # the files this script installs (nginx snippets, faucet page)
 : "${SNIP:=/etc/nginx/snippets}"
 : "${SITE:=/var/www/vearl}"
+: "${CACHE_DIR:=/var/cache/nginx/vearl}"           # the nginx micro-cache of the API and the gateway
 : "${WALLET:=/opt/vearl/bin/vearl-wallet}"
 : "${FAUCET_WALLET:=/etc/vearl/faucet-wallet.json}"
 : "${FAUCET_PW:=/etc/vearl/faucet-password}"
@@ -42,13 +43,15 @@ age() { local f="$STATE_DIR/$1"; [ -f "$f" ] && echo $(( $(now) - $(cat "$f") ))
 api_status() { curl -fsS -m 5 "http://$NODE_API/api/status"; }
 jget() { "${PY:-python3}" -c 'import sys,json; d=json.load(sys.stdin); print(d.get(sys.argv[1],""))' "$1" 2>/dev/null; }
 site_get() { curl -ksS -m 10 --resolve "$SITE_HOST:443:127.0.0.1" "https://$SITE_HOST$1"; }
+cache_purge() { rm -rf "${CACHE_DIR:?}"/* 2>/dev/null || true; }   # the micro-cache must never keep an answer of the previous snippet (sample network, pre-launch gateway)
 nginx_set() {   # $1 snippet name, $2 new content: install it, test nginx, reload; undo if anything fails
   local dst="$SNIP/$1"
   cp -a "$dst" "$STATE_DIR/$1.bak" 2>/dev/null || true
   install -m 644 "$2" "$dst" || return 1
   if ! nginx -t >/dev/null 2>&1 || ! systemctl reload nginx; then nginx_restore "$1"; return 1; fi
+  cache_purge
 }
-nginx_restore() { [ -f "$STATE_DIR/$1.bak" ] && cp -a "$STATE_DIR/$1.bak" "$SNIP/$1" && nginx -t >/dev/null 2>&1 && systemctl reload nginx; }
+nginx_restore() { [ -f "$STATE_DIR/$1.bak" ] && cp -a "$STATE_DIR/$1.bak" "$SNIP/$1" && nginx -t >/dev/null 2>&1 && systemctl reload nginx && cache_purge; }
 svc_active() { systemctl is-active --quiet "$1"; }
 svc_start() { systemctl enable --now "$1" >/dev/null 2>&1; }
 gw_info() { curl -fsS -m 5 "http://$GW_LOCAL/gw/info"; }
