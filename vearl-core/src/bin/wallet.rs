@@ -30,7 +30,7 @@ fn read_password(args: &[String], prompt: &str) -> String {
         return std::fs::read_to_string(&f).unwrap_or_else(|e| die(&format!("{f}: {e}"))).trim_end_matches(['\n', '\r']).to_string();
     }
     if std::io::stdin().is_terminal() {
-        return rpassword::prompt_password(prompt).unwrap_or_else(|e| die(&e.to_string()));
+        return vearl_core::wallet::hidden_prompt(prompt).unwrap_or_else(|e| die(&e));
     }
     let mut l = String::new();
     std::io::stdin().lock().read_line(&mut l).unwrap();

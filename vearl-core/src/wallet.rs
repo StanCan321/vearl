@@ -203,11 +203,22 @@ pub fn read_password(prompt: &str, file: Option<&str>) -> Result<String, String>
         return std::fs::read_to_string(&f).map(|s| s.trim_end_matches(['\n', '\r']).to_string()).map_err(|e| format!("{f}: {e}"));
     }
     if std::io::stdin().is_terminal() {
-        return rpassword::prompt_password(prompt).map_err(|e| e.to_string());
+        return hidden_prompt(prompt);
     }
     let mut l = String::new();
     std::io::stdin().lock().read_line(&mut l).map_err(|e| e.to_string())?;
     Ok(l.trim_end_matches(['\n', '\r']).to_string())
+}
+
+/// Asks a secret on the terminal without echoing it. Nothing appears while typing (not even stars), which looks like a frozen prompt: the
+/// first time, a line says so.
+pub fn hidden_prompt(prompt: &str) -> Result<String, String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static TOLD: AtomicBool = AtomicBool::new(false);
+    if !TOLD.swap(true, Ordering::SeqCst) {
+        eprintln!("(Your typing is hidden: nothing appears on the screen, not even stars. Type it, then press Enter. If nothing is accepted, switch your keyboard to English letters first.)");
+    }
+    rpassword::prompt_password(prompt).map_err(|e| e.to_string())
 }
 
 /// Key of account `account` of a wallet (file): unlocked with the supplied password.
