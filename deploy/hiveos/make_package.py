@@ -5,8 +5,10 @@
 
 DIR is the folder of the LINUX release (the extracted vearl-<version>-linux-x86_64.tar.gz): the package takes from it vearl-miner, node,
 vearl-poolminer, vearl-wallet, vearl-cli, network.json and genesis.json (the same programs as the release, byte for byte) and adds the Hive scripts of this
-folder. Result: OUT/vearl-hiveos-<version>.tar.gz containing one folder `vearl/` (HiveOS unpacks it into /hive/miners/custom/), and
-OUT/vearl-hiveos-<version>.tar.gz.sha256.
+folder. Result: OUT/vearl-<version>.tar.gz containing one folder `vearl/` (HiveOS unpacks it into /hive/miners/custom/), and
+OUT/vearl-<version>.tar.gz.sha256. The FILE NAME matters: HiveOS takes the miner name from the part before the last hyphen of the archive name
+and refuses another "Miner name" ("Custom miner name should be ..."), so the name of the file is `vearl` + one hyphen + the version
+(the version has no hyphen: 0.1.0-rc20 becomes 0.1.0rc20) and the Miner name to type is `vearl`, the folder inside.
 """
 import argparse
 import hashlib
@@ -42,7 +44,7 @@ def main():
         if not os.path.isfile(os.path.join(a.release_dir, f)):
             sys.exit(f"{f} is missing from {a.release_dir}")
     os.makedirs(a.out, exist_ok=True)
-    path = os.path.join(a.out, f"vearl-hiveos-{a.version}.tar.gz")
+    path = os.path.join(a.out, f"vearl-{a.version.replace('-', '')}.tar.gz")
     import gzip
     raw = io.BytesIO()
     with tarfile.open(fileobj=raw, mode="w", format=tarfile.GNU_FORMAT) as tar:

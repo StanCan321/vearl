@@ -20,8 +20,10 @@ In the HiveOS web page: Flight Sheets > Add, then
   Wallet .......................... or the field "Wallet and worker template": YOUR Vearl address (vrl1...), or %WAL%. In pool mode the payouts
                                     go to this address. To name the worker on the pool write  %WAL%.%WORKER_NAME%  (default: the rig name)
   Miner ........................... Custom
-  Miner name ...................... vearl
-  Installation URL ................ the link of vearl-hiveos-<version>.tar.gz from https://github.com/vearl-verified-compute/vearl/releases
+  Miner name ...................... vearl   (exactly this: HiveOS checks it against the name of the file, vearl-<version>.tar.gz, and the
+                                    archive holds the folder "vearl". If HiveOS answers 'Custom miner name should be "..."', the file
+                                    you used has another name: take vearl-<version>.tar.gz from the releases page)
+  Installation URL ................ the link of vearl-<version>.tar.gz from https://github.com/vearl-verified-compute/vearl/releases
   Pool URL ........................ pool.vearl.org:3333 (or leave it EMPTY: same thing). Write  solo  to mine alone instead (step 2).
   Hash algorithm .................. anything: not used
   Extra config arguments .......... optional, see step 4
