@@ -108,6 +108,30 @@ class ProcessTests(unittest.TestCase):
         self.assertEqual((r["added"], r["dropped"], r["total"]), (1, 2, 1))
         self.assertEqual(b.read(b.public, "registered.json")["addresses"], [ADDR1])
 
+    def test_a_value_put_on_the_line_below_its_label_is_accepted(self):
+        b = Box()
+        # Gmail: the long lines are cut, `signature:` is alone on its line and the hex is below it (a real mail of 2026-10-20)
+        wrapped = MSG1.replace(" Address: ", " Address:\r\n").replace(". Contact: ", ". Contact:\r\n")
+        body = f"address:   {ADDR1}\r\nmessage:   {wrapped}\r\nsignature:\r\n{SIG1}\r\n"
+        head = "From: someone@gmail.com\r\nTo: register@vearl.org\r\nSubject: Vearl registration\r\nDate: Fri, 23 Oct 2026 16:05:00 +0000\r\n"
+        raw = (head + "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n" + body).encode()
+        b.put(raw)
+        b.put(raw.replace(SIG1.encode(), SIG2.encode()))                                # forged: still refused
+        r = b.run()
+        self.assertEqual((r["added"], r["dropped"], r["total"]), (1, 1, 1))
+
+    def test_blank_lines_inside_the_message_are_accepted(self):
+        b = Box()
+        # Proton Mail: every field is separated by a blank line and the message is cut after its first sentence (a real mail of 2026-10-14)
+        cut = MSG1.replace(" Address: ", "\r\n\r\nAddress: ")
+        body = f"address: {ADDR1}\r\n\r\nmessage: {cut}\r\n\r\nsignature: {SIG1}\r\n"
+        head = "From: someone@proton.me\r\nTo: register@vearl.org\r\nSubject: sign\r\nDate: Fri, 23 Oct 2026 16:05:00 +0000\r\n"
+        raw = (head + "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + body).encode()
+        b.put(raw)
+        b.put(raw.replace(SIG1.encode(), SIG2.encode()))                                # forged: still refused
+        r = b.run()
+        self.assertEqual((r["added"], r["dropped"], r["total"]), (1, 1, 1))
+
     def test_unlabelled_lines_do_not_let_a_forged_signature_through(self):
         b = Box()
         b.put(unlabelled_mail(ADDR1, MSG1, SIG2))                                  # the signature of another key

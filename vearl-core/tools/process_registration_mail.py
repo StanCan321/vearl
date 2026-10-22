@@ -79,6 +79,15 @@ SIGNATURE_LINE = re.compile(r"^[0-9a-fA-F]{64,}$")
 MESSAGE_START = "Vearl testnet rewards registration."
 
 
+# Gmail on a phone or in a browser puts the value of a long line on the NEXT line (`signature:` alone, the hex below it).
+LABEL_ALONE = re.compile(r"^([ \t]*(?:address|message|signature):)[ \t]*\r?\n[ \t]*(?!(?:address|message|signature):)(?=\S)", re.I | re.M)
+
+
+def join_label_lines(text):
+    """`label:` alone on its line followed by its value on the next line: put them back on one line."""
+    return LABEL_ALONE.sub(r"\1 ", text)
+
+
 def unwrap_message(text):
     """Mail programs (Gmail, phones) cut the long message line into several lines: put them back together with a space, up to the end
     of the message (`docs/19.`). Only the message line is touched."""
@@ -90,7 +99,8 @@ def unwrap_message(text):
         if starts and not t.endswith("docs/19."):
             j = i + 1
             while j < len(lines) and j <= i + 4 and not t.endswith("docs/19."):
-                t = t + " " + lines[j].strip()
+                if lines[j].strip():          # a blank line inside the message (Proton Mail) adds nothing, not a second space
+                    t = t + " " + lines[j].strip()
                 j += 1
             if t.endswith("docs/19."):
                 out.append(t)
@@ -132,7 +142,7 @@ def parse_registration(raw):
     text = body_text(raw)
     if text is None:
         return None, "no text body"
-    text = unwrap_message(text)
+    text = unwrap_message(join_label_lines(text))
     fields = {}
     for line in text.splitlines():
         m = LABEL.match(line.strip())
