@@ -163,29 +163,53 @@ __global__ void pack16(const int8_t* src, long a, long b, int n, int rk, int8_t*
     }
     *reinterpret_cast<uint4*>(out + ((size_t)(idx >> 4) * 4 + kb) * 256 + (idx & 15) * 16) = make_uint4(w[0], w[1], w[2], w[3]);
 }
+// One warp = 4 neighbouring 16x16 tiles of the same row of tiles (a 16 x 64 strip): the 4 A fragments are loaded once and shared, the 4 x 4 B
+// fragments and the 4 words of x are requested up front (4 independent chains instead of one: the kernel is latency bound, not compute bound),
+// and every row of the strip is written as 64 contiguous bytes.
+#define NOISE_TILES_PER_WARP 4
 __global__ void __launch_bounds__(128) noise_tc(const int8_t* x, const int8_t* Lp, const int8_t* Rp, int8_t* out, int n) {
-    __shared__ __align__(32) int32_t sc[4][256];
-    int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
-    int tiles = n / 16;
+    __shared__ __align__(32) int32_t sc[4][NOISE_TILES_PER_WARP][256];
+    const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+    const int tiles = n / 16;
     Lp += (size_t)blockIdx.y * n * 64; Rp += (size_t)blockIdx.y * n * 64; out += (size_t)blockIdx.y * n * n; // x (A or B) is common to the batch
-    size_t t = (size_t)blockIdx.x * 4 + warp;
-    if (t >= (size_t)tiles * tiles) return;
-    int ti = (int)(t / tiles), tj = (int)(t % tiles);
-    wmma::fragment<wmma::matrix_a, 16, 16, 16, signed char, wmma::row_major> af;
-    wmma::fragment<wmma::matrix_b, 16, 16, 16, signed char, wmma::col_major> bf;
-    wmma::fragment<wmma::accumulator, 16, 16, 16, int> acc;
-    wmma::fill_fragment(acc, 0);
+    const size_t t0 = ((size_t)blockIdx.x * 4 + warp) * NOISE_TILES_PER_WARP;
+    if (t0 >= (size_t)tiles * tiles) return;
+    const int ti = (int)(t0 / tiles), tj0 = (int)(t0 % tiles); // tiles is a multiple of 8, so the 4 tiles stay in the same row of tiles
+    const int row = lane >> 1, c0 = (lane & 1) * 8;
+    uint2 xv[NOISE_TILES_PER_WARP];
     #pragma unroll
-    for (int kb = 0; kb < 4; kb++) {
-        wmma::load_matrix_sync(af, Lp + ((size_t)ti * 4 + kb) * 256, 16);
-        wmma::load_matrix_sync(bf, Rp + ((size_t)tj * 4 + kb) * 256, 16);
-        wmma::mma_sync(acc, af, bf, acc);
+    for (int u = 0; u < NOISE_TILES_PER_WARP; u++)
+        xv[u] = *reinterpret_cast<const uint2*>(x + (size_t)(ti * 16 + row) * n + (tj0 + u) * 16 + c0);
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, signed char, wmma::row_major> af[4];
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, signed char, wmma::col_major> bf[NOISE_TILES_PER_WARP][4];
+    wmma::fragment<wmma::accumulator, 16, 16, 16, int> acc[NOISE_TILES_PER_WARP];
+    #pragma unroll
+    for (int kb = 0; kb < 4; kb++) wmma::load_matrix_sync(af[kb], Lp + ((size_t)ti * 4 + kb) * 256, 16);
+    #pragma unroll
+    for (int u = 0; u < NOISE_TILES_PER_WARP; u++) {
+        wmma::fill_fragment(acc[u], 0);
+        #pragma unroll
+        for (int kb = 0; kb < 4; kb++) wmma::load_matrix_sync(bf[u][kb], Rp + ((size_t)(tj0 + u) * 4 + kb) * 256, 16);
     }
-    wmma::store_matrix_sync(&sc[warp][0], acc, 16, wmma::mem_row_major);
+    #pragma unroll
+    for (int u = 0; u < NOISE_TILES_PER_WARP; u++) {
+        #pragma unroll
+        for (int kb = 0; kb < 4; kb++) wmma::mma_sync(acc[u], af[kb], bf[u][kb], acc[u]);
+        wmma::store_matrix_sync(&sc[warp][u][0], acc[u], 16, wmma::mem_row_major);
+    }
     __syncwarp();
-    for (int e = lane; e < 256; e += 32) {
-        size_t o = (size_t)(ti * 16 + (e >> 4)) * n + tj * 16 + (e & 15);
-        out[o] = (int8_t)((int)x[o] + sc[warp][e]); // |A|<=64 and |E|<=rank<=63: fits in int8 (security_check)
+    #pragma unroll
+    for (int u = 0; u < NOISE_TILES_PER_WARP; u++) {
+        const int32_t* s = &sc[warp][u][row * 16 + c0];
+        uint32_t lo = 0, hi = 0;
+        #pragma unroll
+        for (int i = 0; i < 4; i++) {
+            const int v0 = (int)(int8_t)((xv[u].x >> (8 * i)) & 0xffu) + s[i];     // |A|<=64 and |E|<=rank<=63: fits in int8 (security_check)
+            const int v1 = (int)(int8_t)((xv[u].y >> (8 * i)) & 0xffu) + s[4 + i];
+            lo |= (uint32_t)(uint8_t)(int8_t)v0 << (8 * i);
+            hi |= (uint32_t)(uint8_t)(int8_t)v1 << (8 * i);
+        }
+        *reinterpret_cast<uint2*>(out + (size_t)(ti * 16 + row) * n + (tj0 + u) * 16 + c0) = make_uint2(lo, hi);
     }
 }
 
@@ -226,8 +250,15 @@ __device__ __forceinline__ void mma_s8(uint32_t* c, const uint32_t* a, const uin
 
 __device__ __forceinline__ uint32_t swz(int row, int chunk) { return (uint32_t)(row * 64 + ((chunk ^ ((row >> 1) & 3)) << 4)); }
 
+// Hit filter (target != 0): an attempt whose jackpot meets the target (first 8 bytes of the digest, big-endian, < target: the rule of
+// `meets_target` in work.rs) is appended to a short list (index = sigma * tiles^2 + ti * tiles + tj, and the 8 words of the digest), so that the
+// host does not have to copy and scan every jackpot of the batch. The list is bounded (max_hits); `hit_count` keeps counting past it, which tells
+// the host that the list is incomplete (it then falls back to the full copy).
+__device__ __forceinline__ uint32_t bswap32(uint32_t x) { return (x << 24) | ((x & 0xff00u) << 8) | ((x >> 8) & 0xff00u) | (x >> 24); }
+
 __global__ void __launch_bounds__(256, 2) tile_kernel(const int8_t* __restrict__ ap, const int8_t* __restrict__ btp, int n,
-                                                    int fold_k, int tiles, uint32_t* jackpots, int32_t* cout, const uint32_t* hdrs) {
+                                                    int fold_k, int tiles, uint32_t* jackpots, int32_t* cout, const uint32_t* hdrs,
+                                                    uint64_t target, uint32_t* hit_count, uint32_t* hit_idx, uint32_t* hit_words, int max_hits) {
     extern __shared__ __align__(128) uint8_t smem[];
     {   // sigma blockIdx.z of the batch: its noised matrices, its jackpots, its header
         const size_t sb = blockIdx.z;
@@ -260,6 +291,7 @@ __global__ void __launch_bounds__(256, 2) tile_kernel(const int8_t* __restrict__
     };
 
     const int nsteps = n / BK;
+    int next_fold = fold_k, rot = 1; // the folding schedule, kept incrementally: a runtime division and two modulos per step cost real issue slots
     #pragma unroll
     for (int s = 0; s < STAGES - 1; s++) {
         if (s < nsteps) load_stage(s, s * BK);
@@ -293,17 +325,19 @@ __global__ void __launch_bounds__(256, 2) tile_kernel(const int8_t* __restrict__
                 for (int nj = 0; nj < 8; nj++) mma_s8(acc[mi][nj], af[mi], bfr[nj]);
 
             const int kg = it * BK + ks * 32 + 32;
-            if (kg % fold_k == 0) {
-                const int rot = (kg / fold_k - 1) % 31 + 1;
+            if (kg == next_fold) { // fold_k is a multiple of 32 (the step of k): kg meets every multiple of it. rot = (kg / fold_k - 1) % 31 + 1
                 // folding word of the element (row r, column c) of a 16x16 attempt: (r % 4) * 16 + c.
                 // Here r = g or g+8 (same r % 4 = g % 4), c = 8*(nj&1) + 2t + e  =>  2 values XORed into the same word.
                 #pragma unroll
                 for (int mi = 0; mi < 2; mi++)
                     #pragma unroll
                     for (int nj = 0; nj < 8; nj++) {
-                        st[mi][nj >> 1][nj & 1][0] ^= rotl32(acc[mi][nj][0], rot) ^ rotl32(acc[mi][nj][2], rot);
-                        st[mi][nj >> 1][nj & 1][1] ^= rotl32(acc[mi][nj][1], rot) ^ rotl32(acc[mi][nj][3], rot);
+                        // rotl(a, r) ^ rotl(b, r) == rotl(a ^ b, r): one rotation instead of two, the same bits
+                        st[mi][nj >> 1][nj & 1][0] ^= rotl32(acc[mi][nj][0] ^ acc[mi][nj][2], rot);
+                        st[mi][nj >> 1][nj & 1][1] ^= rotl32(acc[mi][nj][1] ^ acc[mi][nj][3], rot);
                     }
+                next_fold += fold_k;
+                rot = rot == 31 ? 1 : rot + 1;
             }
         }
     }
@@ -345,6 +379,16 @@ __global__ void __launch_bounds__(256, 2) tile_kernel(const int8_t* __restrict__
         uint32_t out[8];
         jackpot_hash(hdrs, (uint32_t)ti, (uint32_t)tj, &sst[tid * 64], out);
         for (int e = 0; e < 8; e++) jackpots[((size_t)ti * tiles + tj) * 8 + e] = out[e];
+        if (target != 0) {
+            const uint64_t top = ((uint64_t)bswap32(out[0]) << 32) | bswap32(out[1]); // bytes 0..7 of the digest, big-endian
+            if (top < target) {
+                const uint32_t slot = atomicAdd(hit_count, 1u);
+                if (slot < (uint32_t)max_hits) {
+                    hit_idx[slot] = (uint32_t)blockIdx.z * (uint32_t)(tiles * tiles) + (uint32_t)(ti * tiles + tj);
+                    for (int e = 0; e < 8; e++) hit_words[slot * 8 + e] = out[e];
+                }
+            }
+        }
     }
 }
 
@@ -358,7 +402,16 @@ struct Ctx {
     uint32_t* jack;
     uint32_t* hdrs;
     int32_t* c;
+    // hit filter of `vearl_gpu_run_batch_hits`: a short list of the attempts that meet the target (see tile_kernel)
+    uint32_t* hit_count;  // 1 word
+    uint32_t* hit_idx;    // MAX_HITS words
+    uint32_t* hit_words;  // MAX_HITS * 8 words
+    cudaEvent_t ev[3];    // reused by every batch (creating and destroying events costs about as much as a small kernel)
+    bool ev_ok;
+    cudaStream_t st;      // the context's own (non-blocking) stream: two contexts on the same GPU, driven by two threads, overlap each other's
+                          // host work (copies, synchronisation, the CPU side of the miner) with their kernels instead of queueing on the default stream
 };
+#define MAX_HITS 512
 
 static void free_batch(Ctx* c) {
     cudaFree(c->ap); cudaFree(c->bt); cudaFree(c->el); cudaFree(c->er); cudaFree(c->fl); cudaFree(c->fr);
@@ -427,10 +480,16 @@ extern "C" void* vearl_gpu_new_on(int dev, const int8_t* a, const int8_t* b, int
     c->n = n; c->r = rank; c->cap = 0; c->dev = dev;
     c->ap = c->bt = c->el = c->er = c->fl = c->fr = c->pla = c->pra = c->plb = c->prb = nullptr;
     c->jack = nullptr; c->hdrs = nullptr; c->c = nullptr; c->a = nullptr; c->b = nullptr;
+    c->hit_count = c->hit_idx = c->hit_words = nullptr; c->ev_ok = false;
     size_t nn = (size_t)n * n;
-    if (cudaMalloc(&c->a, nn) || cudaMalloc(&c->b, nn) || cudaMalloc(&c->c, nn * 4) || !alloc_batch(c, 1)) {
-        cudaFree(c->a); cudaFree(c->b); cudaFree(c->c); free_batch(c); delete c; return nullptr;
+    if (cudaMalloc(&c->a, nn) || cudaMalloc(&c->b, nn) || cudaMalloc(&c->c, nn * 4) || !alloc_batch(c, 1) ||
+        cudaMalloc(&c->hit_count, 4) || cudaMalloc(&c->hit_idx, MAX_HITS * 4) || cudaMalloc(&c->hit_words, MAX_HITS * 32) ||
+        cudaEventCreate(&c->ev[0]) || cudaEventCreate(&c->ev[1]) || cudaEventCreate(&c->ev[2]) ||
+        cudaStreamCreateWithFlags(&c->st, cudaStreamNonBlocking)) {
+        cudaFree(c->a); cudaFree(c->b); cudaFree(c->c); cudaFree(c->hit_count); cudaFree(c->hit_idx); cudaFree(c->hit_words);
+        free_batch(c); delete c; return nullptr;
     }
+    c->ev_ok = true;
     // B is stored TRANSPOSED (c->b = B^T) once and for all: the columns of B become rows.
     int8_t* bt_host = (int8_t*)malloc(nn);
     for (int k = 0; k < n; k++)
@@ -450,6 +509,9 @@ extern "C" void vearl_gpu_free(void* p) {
     if (!c) return;
     cudaSetDevice(c->dev);
     cudaFree(c->a); cudaFree(c->b); cudaFree(c->c);
+    cudaFree(c->hit_count); cudaFree(c->hit_idx); cudaFree(c->hit_words);
+    if (c->st) { cudaStreamSynchronize(c->st); cudaStreamDestroy(c->st); }
+    if (c->ev_ok) for (int i = 0; i < 3; i++) cudaEventDestroy(c->ev[i]);
     free_batch(c);
     delete c;
 }
@@ -457,8 +519,14 @@ extern "C" void vearl_gpu_free(void* p) {
 // Batch of `s` sigmas in a single chain of launches (the inputs are concatenated: sigma i has its slices
 // hdr48[48 i..], el[n r i..], ...). jackpots_out: s * tiles * tiles * 32 bytes; c_out (nullable, s == 1 only): n*n int32.
 // ms_out[0]=noise, [1]=tiles.
+// hits (nullable): the batch is filtered on the GPU against `target` (see tile_kernel) and only the short list of the attempts that meet it is
+// copied back: hits[0] = number of hits found (may exceed `max_out`), hit_idx_out / hit_hash_out = the first min(count, max_out, MAX_HITS) of them.
+// In that mode jackpots_out may be null (the full list stays in device memory, nobody copies it).
+struct HitsOut { uint64_t target; uint32_t* count; uint32_t* idx; uint8_t* hash; int max_out; };
+
 static int run_impl(Ctx* c, int s, const uint8_t* hdr48, const int8_t* el, const int8_t* er, const int8_t* fl,
-                    const int8_t* fr, int fold_k, uint8_t* jackpots_out, int32_t* c_out, float* ms_out, bool gen_noise) {
+                    const int8_t* fr, int fold_k, uint8_t* jackpots_out, int32_t* c_out, float* ms_out, bool gen_noise,
+                    const HitsOut* hits = nullptr) {
     int n = c->n, r = c->r, tiles = n / 16;
     CK(cudaSetDevice(c->dev));
     if (fold_k % 32 != 0 || n % fold_k != 0) return -2; // the kernel folds after steps of k=32
@@ -466,39 +534,52 @@ static int run_impl(Ctx* c, int s, const uint8_t* hdr48, const int8_t* el, const
     if (!alloc_batch(c, s)) return -4;
     size_t nr = (size_t)n * r * s;
     if (!gen_noise) {
-        CK(cudaMemcpy(c->el, el, nr, cudaMemcpyHostToDevice));
-        CK(cudaMemcpy(c->er, er, nr, cudaMemcpyHostToDevice));
-        CK(cudaMemcpy(c->fl, fl, nr, cudaMemcpyHostToDevice));
-        CK(cudaMemcpy(c->fr, fr, nr, cudaMemcpyHostToDevice));
+        CK(cudaMemcpyAsync(c->el, el, nr, cudaMemcpyHostToDevice, c->st));
+        CK(cudaMemcpyAsync(c->er, er, nr, cudaMemcpyHostToDevice, c->st));
+        CK(cudaMemcpyAsync(c->fl, fl, nr, cudaMemcpyHostToDevice, c->st));
+        CK(cudaMemcpyAsync(c->fr, fr, nr, cudaMemcpyHostToDevice, c->st));
     }
-    CK(cudaMemcpy(c->hdrs, hdr48, (size_t)48 * s, cudaMemcpyHostToDevice));
-    cudaEvent_t e0, e1, e2;
-    cudaEventCreate(&e0); cudaEventCreate(&e1); cudaEventCreate(&e2);
-    cudaEventRecord(e0);
+    CK(cudaMemcpyAsync(c->hdrs, hdr48, (size_t)48 * s, cudaMemcpyHostToDevice, c->st));
+    cudaEvent_t e0 = c->ev[0], e1 = c->ev[1], e2 = c->ev[2];
+    cudaEventRecord(e0, c->st);
     if (gen_noise) {
         size_t nr1 = (size_t)n * r;
         dim3 gg((unsigned)((4 * (nr1 / 64) + 127) / 128), s);
-        noise_gen<<<gg, 128>>>(c->hdrs, c->el, c->er, c->fl, c->fr, nr1);
+        noise_gen<<<gg, 128, 0, c->st>>>(c->hdrs, c->el, c->er, c->fl, c->fr, nr1);
     }
     unsigned pkb = (unsigned)(((size_t)n * 4 + 127) / 128);
     dim3 pg(pkb, s);
-    pack16<<<pg, 128>>>(c->el, r, 1, n, r, c->pla);  // A : L[i][t]  = EL[i][t]  = el[i*r + t]
-    pack16<<<pg, 128>>>(c->er, 1, n, n, r, c->pra);  //     R[t][k]  = ER[t][k]  = er[t*n + k]
-    pack16<<<pg, 128>>>(c->fr, 1, n, n, r, c->plb);  // B^T : L[j][t] = FR[t][j] = fr[t*n + j]
-    pack16<<<pg, 128>>>(c->fl, r, 1, n, r, c->prb);  //       R[t][k] = FL[k][t] = fl[k*r + t]
-    dim3 ng((unsigned)(((size_t)tiles * tiles + 3) / 4), s);
-    noise_tc<<<ng, 128>>>(c->a, c->pla, c->pra, c->ap, n);
-    noise_tc<<<ng, 128>>>(c->b, c->plb, c->prb, c->bt, n);
-    cudaEventRecord(e1);
+    pack16<<<pg, 128, 0, c->st>>>(c->el, r, 1, n, r, c->pla);  // A : L[i][t]  = EL[i][t]  = el[i*r + t]
+    pack16<<<pg, 128, 0, c->st>>>(c->er, 1, n, n, r, c->pra);  //     R[t][k]  = ER[t][k]  = er[t*n + k]
+    pack16<<<pg, 128, 0, c->st>>>(c->fr, 1, n, n, r, c->plb);  // B^T : L[j][t] = FR[t][j] = fr[t*n + j]
+    pack16<<<pg, 128, 0, c->st>>>(c->fl, r, 1, n, r, c->prb);  //       R[t][k] = FL[k][t] = fl[k*r + t]
+    dim3 ng((unsigned)(((size_t)tiles * tiles + 4 * NOISE_TILES_PER_WARP - 1) / (4 * NOISE_TILES_PER_WARP)), s);
+    noise_tc<<<ng, 128, 0, c->st>>>(c->a, c->pla, c->pra, c->ap, n);
+    noise_tc<<<ng, 128, 0, c->st>>>(c->b, c->plb, c->prb, c->bt, n);
+    cudaEventRecord(e1, c->st);
     dim3 grid(n / BN, n / BM, s);
-    tile_kernel<<<grid, 256, SMEM_BYTES>>>(c->ap, c->bt, n, fold_k, tiles, c->jack, c_out ? c->c : nullptr, c->hdrs);
-    cudaEventRecord(e2);
+    if (hits) CK(cudaMemsetAsync(c->hit_count, 0, 4, c->st));
+    tile_kernel<<<grid, 256, SMEM_BYTES, c->st>>>(c->ap, c->bt, n, fold_k, tiles, c->jack, c_out ? c->c : nullptr, c->hdrs,
+                                                  hits ? hits->target : 0, c->hit_count, c->hit_idx, c->hit_words, MAX_HITS);
+    cudaEventRecord(e2, c->st);
     CK(cudaGetLastError());
     CK(cudaEventSynchronize(e2));
     if (ms_out) { cudaEventElapsedTime(&ms_out[0], e0, e1); cudaEventElapsedTime(&ms_out[1], e1, e2); }
-    cudaEventDestroy(e0); cudaEventDestroy(e1); cudaEventDestroy(e2);
-    CK(cudaMemcpy(jackpots_out, c->jack, (size_t)s * tiles * tiles * 32, cudaMemcpyDeviceToHost));
-    if (c_out) CK(cudaMemcpy(c_out, c->c, (size_t)n * n * 4, cudaMemcpyDeviceToHost));
+    if (hits) {
+        uint32_t cnt = 0;
+        CK(cudaMemcpyAsync(&cnt, c->hit_count, 4, cudaMemcpyDeviceToHost, c->st));
+        CK(cudaStreamSynchronize(c->st));
+        *hits->count = cnt;
+        uint32_t m = cnt < (uint32_t)MAX_HITS ? cnt : (uint32_t)MAX_HITS;
+        if (m > (uint32_t)hits->max_out) m = (uint32_t)hits->max_out;
+        if (m) {
+            CK(cudaMemcpyAsync(hits->idx, c->hit_idx, (size_t)m * 4, cudaMemcpyDeviceToHost, c->st));
+            CK(cudaMemcpyAsync(hits->hash, c->hit_words, (size_t)m * 32, cudaMemcpyDeviceToHost, c->st));
+        }
+    }
+    if (jackpots_out) CK(cudaMemcpyAsync(jackpots_out, c->jack, (size_t)s * tiles * tiles * 32, cudaMemcpyDeviceToHost, c->st));
+    if (c_out) CK(cudaMemcpyAsync(c_out, c->c, (size_t)n * n * 4, cudaMemcpyDeviceToHost, c->st));
+    CK(cudaStreamSynchronize(c->st)); // the copies above are asynchronous: the caller's buffers are complete when this call returns
     return 0;
 }
 
@@ -516,6 +597,49 @@ extern "C" int vearl_gpu_run_batch(void* p, int s, const uint8_t* hdr48, const i
 // Same thing, but the noise is generated on the GPU from the headers alone (hdr48 = domain || sigma, per sigma).
 extern "C" int vearl_gpu_run_batch_gen(void* p, int s, const uint8_t* hdr48, int fold_k, uint8_t* jackpots_out, float* ms_out) {
     return run_impl((Ctx*)p, s, hdr48, nullptr, nullptr, nullptr, nullptr, fold_k, jackpots_out, nullptr, ms_out, true);
+}
+
+// Same, but only the attempts whose jackpot meets `target` (first 8 bytes big-endian < target) come back: `hit_count` = how many there are
+// (the list holds at most min(MAX_HITS, max_out) of them: when count > that, the caller must fall back to `vearl_gpu_run_batch_gen`),
+// hit_idx_out[i] = sigma * tiles^2 + ti * tiles + tj, hit_hash_out[32 i ..] = the digest (the bytes of the jackpot).
+extern "C" int vearl_gpu_run_batch_hits(void* p, int s, const uint8_t* hdr48, int fold_k, uint64_t target, uint32_t* hit_count_out,
+                                        uint32_t* hit_idx_out, uint8_t* hit_hash_out, int max_out, float* ms_out) {
+    HitsOut h{target, hit_count_out, hit_idx_out, hit_hash_out, max_out};
+    return run_impl((Ctx*)p, s, hdr48, nullptr, nullptr, nullptr, nullptr, fold_k, nullptr, nullptr, ms_out, true, &h);
+}
+
+// Development aid (gpubench): the time of each kernel of a batch, ms_out[0..8) = noise_gen, pack16 x4, noise_tc x2 (A', B'^T), tile_kernel.
+extern "C" int vearl_gpu_profile(void* p, int s, const uint8_t* hdr48, int fold_k, float* ms_out) {
+    Ctx* c = (Ctx*)p;
+    int n = c->n, r = c->r, tiles = n / 16;
+    CK(cudaSetDevice(c->dev));
+    if (!alloc_batch(c, s)) return -4;
+    CK(cudaMemcpy(c->hdrs, hdr48, (size_t)48 * s, cudaMemcpyHostToDevice));
+    cudaEvent_t pe[9];
+    for (int i = 0; i < 9; i++) cudaEventCreate(&pe[i]);
+    cudaEventRecord(pe[0]);
+    size_t nr1 = (size_t)n * r;
+    dim3 gg((unsigned)((4 * (nr1 / 64) + 127) / 128), s);
+    noise_gen<<<gg, 128>>>(c->hdrs, c->el, c->er, c->fl, c->fr, nr1);
+    cudaEventRecord(pe[1]);
+    unsigned pkb = (unsigned)(((size_t)n * 4 + 127) / 128);
+    dim3 pg(pkb, s);
+    pack16<<<pg, 128>>>(c->el, r, 1, n, r, c->pla); cudaEventRecord(pe[2]);
+    pack16<<<pg, 128>>>(c->er, 1, n, n, r, c->pra); cudaEventRecord(pe[3]);
+    pack16<<<pg, 128>>>(c->fr, 1, n, n, r, c->plb); cudaEventRecord(pe[4]);
+    pack16<<<pg, 128>>>(c->fl, r, 1, n, r, c->prb); cudaEventRecord(pe[5]);
+    dim3 ng((unsigned)(((size_t)tiles * tiles + 4 * NOISE_TILES_PER_WARP - 1) / (4 * NOISE_TILES_PER_WARP)), s);
+    noise_tc<<<ng, 128>>>(c->a, c->pla, c->pra, c->ap, n); cudaEventRecord(pe[6]);
+    noise_tc<<<ng, 128>>>(c->b, c->plb, c->prb, c->bt, n); cudaEventRecord(pe[7]);
+    dim3 grid(n / BN, n / BM, s);
+    CK(cudaMemsetAsync(c->hit_count, 0, 4));
+    tile_kernel<<<grid, 256, SMEM_BYTES>>>(c->ap, c->bt, n, fold_k, tiles, c->jack, nullptr, c->hdrs, 1ull << 30, c->hit_count, c->hit_idx, c->hit_words, MAX_HITS);
+    cudaEventRecord(pe[8]);
+    CK(cudaGetLastError());
+    CK(cudaEventSynchronize(pe[8]));
+    for (int i = 0; i < 8; i++) cudaEventElapsedTime(&ms_out[i], pe[i], pe[i + 1]);
+    for (int i = 0; i < 9; i++) cudaEventDestroy(pe[i]);
+    return 0;
 }
 
 // ---------------- EXACT int8 GEMM (C = A*B, int32): the USEFUL computation of a job, on tensor cores ----------------
@@ -547,7 +671,7 @@ extern "C" int vearl_gpu_exact_gemm(const int8_t* a, const int8_t* b, int n, int
         dim3 tg(n / 32, n / 32), tb(32, 8);
         transpose_i8<<<tg, tb>>>(db, dbt, n);
         dim3 grid(n / BN, n / BM, 1);
-        tile_kernel<<<grid, 256, SMEM_BYTES>>>(da, dbt, n, 1 << 30, tiles, jack, dc, hdrs);
+        tile_kernel<<<grid, 256, SMEM_BYTES>>>(da, dbt, n, 1 << 30, tiles, jack, dc, hdrs, 0, nullptr, nullptr, nullptr, 0);
         if (cudaGetLastError() != cudaSuccess || cudaDeviceSynchronize() != cudaSuccess) rc = -3;
         else cudaMemcpy(c_out, dc, nn * 4, cudaMemcpyDeviceToHost);
     }

@@ -49,6 +49,33 @@ fn gpu_matches_cpu_larger_and_other_fold() {
     check(WorkParams { n: 256, tile: 16, rank: 16, fold_k: 32 }, 3);
 }
 
+/// The REAL testnet size (n = 1024, rank 63, fold_k 64): the GPU agrees with the CPU reference on C' and the jackpots, and what the batch + GPU-side
+/// filter path of the miners returns is exactly what the CPU reference says (checked on the first sigmas of a real-size batch).
+#[test]
+fn gpu_matches_cpu_at_the_real_testnet_size() {
+    let p = WorkParams { n: 1024, tile: 16, rank: 63, fold_k: 64 };
+    check(p, 5);
+    let mut rng = StdRng::seed_from_u64(9);
+    let (a, b) = (rand_mat(&mut rng, p.n), rand_mat(&mut rng, p.n));
+    let job = GpuJob::new(&a, &b, &p).unwrap();
+    let sigmas: Vec<[u8; 32]> = (0..job.batch_size() as u8).map(|i| [i ^ 0x77; 32]).collect();
+    let target = u64::MAX / 600; // about 7 winners per sigma
+    let got = job.run_batch_hits(&sigmas, target).unwrap();
+    let mut want = Vec::new();
+    for (d, sg) in sigmas.iter().take(3).enumerate() {
+        let (cpu, _) = run_noisy_gemm(&a, &b, sg, &p);
+        for (i, jp) in cpu.jackpots.iter().enumerate() {
+            if meets_target(jp, target) {
+                want.push((d, i, *jp));
+            }
+        }
+    }
+    assert!(want.len() > 5, "the test needs winners ({})", want.len());
+    let got3: Vec<_> = got.iter().filter(|h| h.0 < 3).cloned().collect();
+    assert_eq!(got3, want);
+    assert!(got.iter().any(|h| h.0 >= 3), "the other sigmas of the batch have winners too");
+}
+
 use ed25519_dalek::SigningKey;
 use vearl_core::chain::*;
 use vearl_core::crypto::*;
@@ -172,6 +199,45 @@ fn gpu_batch_equals_sigma_by_sigma() {
                 assert_eq!(lot[i], cpu.jackpots, "lot = reference CPU (n={}, sigma {i})", p.n);
             }
         }
+    }
+}
+
+/// The GPU-side filter (`run_batch_hits`, what the miners call) returns EXACTLY the attempts that scanning the full batch with `meets_target`
+/// finds, in the order (sigma, tile), whatever the target: none, a few, many, and so many that the GPU's short list overflows (full copy).
+#[test]
+fn gpu_hits_equal_scanning_the_full_batch() {
+    for p in [WorkParams::TESTNET, WorkParams { n: 256, tile: 16, rank: 63, fold_k: 64 }] {
+        let mut rng = StdRng::seed_from_u64(23);
+        let (a, b) = (rand_mat(&mut rng, p.n), rand_mat(&mut rng, p.n));
+        let job = GpuJob::new(&a, &b, &p).unwrap();
+        let tiles = p.tiles();
+        let sigmas: Vec<[u8; 32]> = (0..12u8).map(|i| [i.wrapping_mul(29) ^ 0x3c; 32]).collect();
+        let lot = job.run_batch(&sigmas).unwrap();
+        let mut tops: Vec<u64> = lot.iter().flatten().map(|jp| u64::from_be_bytes(jp[..8].try_into().unwrap())).collect();
+        tops.sort_unstable();
+        let q = |f: f64| tops[((tops.len() - 1) as f64 * f) as usize];
+        // 0 = nothing can win; q(0) = the smallest jackpot itself is NOT below it; q(0)+1 = exactly that one wins; then few, some, all
+        for target in [0u64, tops[0], tops[0].wrapping_add(1), q(0.001), q(0.01), q(0.2), q(0.5), u64::MAX] {
+            let mut want = Vec::new();
+            for (d, row) in lot.iter().enumerate() {
+                for (i, jp) in row.iter().enumerate() {
+                    if meets_target(jp, target) {
+                        want.push((d, i, *jp));
+                    }
+                }
+            }
+            let got = job.run_batch_hits(&sigmas, target).unwrap();
+            assert_eq!(got, want, "n={} target={target:#x}: {} expected, {} returned", p.n, want.len(), got.len());
+            assert!(got.iter().all(|h| h.1 < tiles * tiles));
+        }
+        // a sigma alone, and the real batch size
+        let one = job.run_batch_hits(&sigmas[..1], u64::MAX).unwrap();
+        assert_eq!(one.len(), tiles * tiles);
+        let many: Vec<[u8; 32]> = (0..job.batch_size() as u32).map(|i| { let mut h = [0u8; 32]; h[..4].copy_from_slice(&i.to_le_bytes()); h }).collect();
+        let full = job.run_batch(&many).unwrap();
+        let t = u64::MAX / 3000;
+        let want: Vec<_> = full.iter().enumerate().flat_map(|(d, r)| r.iter().enumerate().filter(|(_, jp)| meets_target(jp, t)).map(move |(i, jp)| (d, i, *jp))).collect();
+        assert_eq!(job.run_batch_hits(&many, t).unwrap(), want, "real batch size, n={}", p.n);
     }
 }
 

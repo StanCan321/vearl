@@ -654,7 +654,7 @@ pub fn mine_template(
 
     // Winner of the search shared by several GPUs: (extra_nonce, jackpots of that sigma); None with one GPU or on the CPU.
     #[cfg(feature = "gpu")]
-    let mut found: Option<(u64, Vec<Hash>)> = None;
+    let mut found: Option<(u64, (usize, Hash))> = None;
     #[cfg(feature = "gpu")]
     let gpu: Option<&crate::gpu::GpuJob> = if use_gpu {
         let key = (cm.a_root(), cm.b_root());
@@ -678,7 +678,7 @@ pub fn mine_template(
     }
 
     #[cfg(feature = "gpu")]
-    let mut queue: std::collections::VecDeque<Vec<Hash>> = Default::default(); // jackpots already computed per batch, in extra_nonce order
+    let mut queue: std::collections::VecDeque<Option<(usize, Hash)>> = Default::default(); // per extra_nonce of the batch in progress: its first winning tile (index, jackpot), if any
     #[cfg(feature = "gpu")]
     let first_nonce = found.as_ref().map_or(0, |f| f.0);
     #[cfg(not(feature = "gpu"))]
@@ -694,34 +694,36 @@ pub fn mine_template(
         if gpu.is_none() {
             SIGMA_DONE.fetch_add(1, Ordering::Relaxed);
         }
-        // (jackpots, C' if already available)
-        let (jackpots, mut c_noised): (Vec<Hash>, Option<Vec<i32>>) = {
+        // (first winning tile of this sigma: (index, jackpot), C' if already available)
+        let (first_hit, mut c_noised): (Option<(usize, Hash)>, Option<Vec<i32>>) = {
             #[cfg(feature = "gpu")]
             {
                 if let Some(g) = gpu {
-                    if let Some((_, jp)) = found.take() {
-                        // several GPUs: the winning sigma was found by `search_gpus`, its jackpots are already here
-                        (jp, None)
+                    if let Some((_, hit)) = found.take() {
+                        // several GPUs: the winning sigma was found by `search_gpus`, its winning tile is already here
+                        (Some(hit), None)
                     } else {
                         if queue.is_empty() {
                             let sigs: Vec<Hash> = (0..g.batch_size() as u64).map(|d| sigma(&prev, &miner, class, extra_nonce.wrapping_add(d), &root, timestamp)).collect();
-                            queue = g.run_batch(&sigs).map_err(|e| format!("gpu error {e}"))?.into();
+                            // the GPU filters the jackpots against the target: only the winners come back (sorted by sigma, then tile)
+                            let hits = g.run_batch_hits(&sigs, target).map_err(|e| format!("gpu error {e}"))?;
+                            queue = (0..sigs.len()).map(|d| hits.iter().find(|h| h.0 == d).map(|h| (h.1, h.2))).collect();
                             SIGMA_DONE.fetch_add(sigs.len() as u64, Ordering::Relaxed);
                         }
                         (queue.pop_front().unwrap(), None)
                     }
                 } else {
                     let (o, _) = run_noisy_gemm(&cm.a, &cm.b, &sg, &p);
-                    (o.jackpots, Some(o.c_noised))
+                    (o.jackpots.iter().position(|jp| meets_target(jp, target)).map(|i| (i, o.jackpots[i])), Some(o.c_noised))
                 }
             }
             #[cfg(not(feature = "gpu"))]
             {
                 let (o, _) = run_noisy_gemm(&cm.a, &cm.b, &sg, &p);
-                (o.jackpots, Some(o.c_noised))
+                (o.jackpots.iter().position(|jp| meets_target(jp, target)).map(|i| (i, o.jackpots[i])), Some(o.c_noised))
             }
         };
-        if let Some(idx) = jackpots.iter().position(|jp| meets_target(jp, target)) {
+        if let Some((idx, winning_jackpot)) = first_hit {
             let (ti, tj) = (idx / p.tiles(), idx % p.tiles());
             // account root AFTER the block: we apply the transactions then the reward on a copy of the template's state.
             // If a transaction is invalid (the node never includes it, cf. select_txs; the tests build such blocks on purpose),
@@ -745,7 +747,7 @@ pub fn mine_template(
                 extra_nonce,
                 ti: ti as u32,
                 tj: tj as u32,
-                jackpot: jackpots[idx],
+                jackpot: winning_jackpot,
                 tx_root: root,
                 target,
                 a_root: cm.a_root(),
@@ -787,12 +789,12 @@ fn search_gpus(
     timestamp: u64,
     target: u64,
     cancel: Option<&AtomicBool>,
-) -> Result<(u64, Vec<Hash>), String> {
+) -> Result<(u64, (usize, Hash)), String> {
     use std::sync::Mutex;
     let bs = jobs[0].batch_size() as u64;
     let next = AtomicU64::new(0);
     let stop = AtomicBool::new(false);
-    let best: Mutex<Option<(u64, Vec<Hash>)>> = Mutex::new(None);
+    let best: Mutex<Option<(u64, (usize, Hash))>> = Mutex::new(None);
     let errors: Mutex<Vec<String>> = Mutex::new(Vec::new());
     std::thread::scope(|sc| {
         for (gi, job) in jobs.iter_mut().enumerate() {
@@ -801,13 +803,14 @@ fn search_gpus(
                 while !stop.load(Ordering::Relaxed) && !cancel.map_or(false, |c| c.load(Ordering::Relaxed)) {
                     let first = next.fetch_add(1, Ordering::Relaxed).saturating_mul(bs);
                     let sigs: Vec<Hash> = (0..bs).map(|d| sigma(prev, miner, class, first.wrapping_add(d), root, timestamp)).collect();
-                    match job.run_batch(&sigs) {
-                        Ok(rows) => {
+                    match job.run_batch_hits(&sigs, target) {
+                        Ok(hits) => {
                             SIGMA_DONE.fetch_add(sigs.len() as u64, Ordering::Relaxed);
-                            if let Some(i) = rows.iter().position(|row| row.iter().any(|jp| meets_target(jp, target))) {
+                            // sorted by (sigma, tile): the first one is the lowest winning sigma and its first winning tile
+                            if let Some(&(d, idx, jp)) = hits.first() {
                                 let mut b = best.lock().unwrap();
-                                if b.as_ref().map_or(true, |(n, _)| first + (i as u64) < *n) {
-                                    *b = Some((first + i as u64, rows[i].clone()));
+                                if b.as_ref().map_or(true, |(n, _)| first + (d as u64) < *n) {
+                                    *b = Some((first + d as u64, (idx, jp)));
                                 }
                                 stop.store(true, Ordering::Relaxed);
                             }

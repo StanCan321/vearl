@@ -189,7 +189,8 @@ fn gpu_worker(live: Arc<Live>, stats: Arc<MinerStats>, stop: Arc<AtomicBool>, tx
                 continue;
             }
             let sigs: Vec<Hash> = (0..bs).map(|d| sigma(&job.prev, &job.miner, &WorkClass::Native, counter + d, &job.tx_root, job.timestamp)).collect();
-            let res = match g.run_batch(&sigs) {
+            // the GPU filters the jackpots against the share target and returns only the shares
+            let hits = match g.run_batch_hits(&sigs, live.share_target.load(Ordering::SeqCst)) {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("[poolminer] GPU #{dev}: error {e}");
@@ -197,12 +198,11 @@ fn gpu_worker(live: Arc<Live>, stats: Arc<MinerStats>, stop: Arc<AtomicBool>, tx
                     break;
                 }
             };
+            // the pool may have made the target harder while the batch was running: keep what still qualifies
             let st = live.share_target.load(Ordering::SeqCst);
-            for (d, jps) in res.iter().enumerate() {
-                for (idx, jp) in jps.iter().enumerate() {
-                    if meets_target(jp, st) {
-                        let _ = tx.send(submit_line(&live, &job, counter + d as u64, idx / tiles, idx % tiles));
-                    }
+            for (d, idx, jp) in hits {
+                if meets_target(&jp, st) {
+                    let _ = tx.send(submit_line(&live, &job, counter + d as u64, idx / tiles, idx % tiles));
                 }
             }
             stats.sigmas.fetch_add(bs, Ordering::Relaxed);
@@ -268,13 +268,16 @@ fn session(cfg: &MinerConfig, stats: &Arc<MinerStats>, stop: &Arc<AtomicBool>) -
     let gpu_devs: Vec<usize> = if cfg.gpu { crate::gpu::mining_devices() } else { Vec::new() };
     #[cfg(not(feature = "gpu"))]
     let gpu_devs: Vec<usize> = Vec::new();
+    #[cfg(feature = "gpu")]
+    let threads = if cfg.gpu { gpu_devs.len().max(1) * crate::gpu::workers_per_gpu() } else { cfg.threads.max(1) };
+    #[cfg(not(feature = "gpu"))]
     let threads = if cfg.gpu { gpu_devs.len().max(1) } else { cfg.threads.max(1) };
     for t in 0..threads {
         let (l, s, st, txc) = (live.clone(), stats.clone(), stop.clone(), tx.clone());
         if cfg.gpu {
             #[cfg(feature = "gpu")]
             {
-                let dev = gpu_devs.get(t).copied().unwrap_or(0);
+                let dev = gpu_devs.get(t % gpu_devs.len().max(1)).copied().unwrap_or(0);
                 let count = threads as u64;
                 thread::spawn(move || gpu_worker(l, s, st, txc, dev, t as u64, count));
             }

@@ -5,6 +5,10 @@ use vearl_core::work::*;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::time::Instant;
 
+fn s_fold_probe(n: usize) -> bool {
+    n >= 1024
+}
+
 fn main() {
     let args: Vec<usize> = std::env::args().skip(1).filter_map(|a| a.parse().ok()).collect();
     let n = *args.first().unwrap_or(&4096);
@@ -61,6 +65,53 @@ batches of sigmas (fold_k=64): recommended batch size = {}", job.batch_size());
             }
             let wall = t0.elapsed().as_secs_f64() / reps as f64;
             println!("| {s} | {:.0} | {:.2} | noise {:.3} ms, tiles {:.3} ms ({:.1} TOPS) |", (s * (n / 16) * (n / 16)) as f64 / wall, wall * 1e3, ms[0], ms[1], 2.0 * (n as f64).powi(3) * s as f64 / (ms[1] as f64 * 1e-3) / 1e12);
+        }
+        // Time of each kernel of a batch (the average of 20 runs after a warm-up).
+        for s in [8usize, 32] {
+            if s * n * n > (1 << 30) {
+                continue;
+            }
+            let sg: Vec<[u8; 32]> = (0..s).map(|i| { let mut h = [0u8; 32]; h[..8].copy_from_slice(&(i as u64 + 5).to_le_bytes()); h }).collect();
+            job.profile_batch(&sg).unwrap();
+            let mut acc = [0f32; 8];
+            for _ in 0..20 {
+                let m = job.profile_batch(&sg).unwrap();
+                for i in 0..8 { acc[i] += m[i] / 20.0; }
+            }
+            let tot: f32 = acc.iter().sum();
+            println!("\nper kernel, batch {s} (ms): noise_gen {:.3} | pack16 {:.3} {:.3} {:.3} {:.3} | noise_tc A {:.3} B {:.3} | tile_kernel {:.3} | total {:.3} (noise side {:.0} %)", acc[0], acc[1], acc[2], acc[3], acc[4], acc[5], acc[6], acc[7], tot, 100.0 * (tot - acc[7]) / tot);
+        }
+        // Where the tile kernel's time goes: the same batch with fewer foldings (fold_k up to n: one folding at the very end).
+        if s_fold_probe(n) {
+            for fk in [64usize, 128, 256, 1024] {
+                if n % fk != 0 { continue; }
+                let pp = WorkParams { n, tile: 16, rank, fold_k: fk };
+                let jj = GpuJob::new(&a, &b, &pp).expect("gpu init");
+                let sg: Vec<[u8; 32]> = (0..32usize).map(|i| { let mut h = [0u8; 32]; h[..8].copy_from_slice(&(i as u64 + 9).to_le_bytes()); h }).collect();
+                jj.profile_batch(&sg).unwrap();
+                let mut t = 0f32;
+                for _ in 0..20 { t += jj.profile_batch(&sg).unwrap()[7] / 20.0; }
+                println!("tile_kernel, batch 32, fold_k {fk}: {t:.3} ms ({:.1} TOPS)", 2.0 * (n as f64).powi(3) * 32.0 / (t as f64 * 1e-3) / 1e12);
+            }
+        }
+        // What the miners now call: the GPU filters the jackpots against the target and only the winners come back (target 2^30: no winner in practice).
+        println!("
+batches of sigmas, GPU-side filter (`run_batch_hits`, what the miners use):");
+        println!("| batch | attempts/s | wall (ms/batch) |");
+        println!("|---|---|---|");
+        for s in only_batch.map_or(vec![8usize, 16, 32, 64, 128, 512], |b| vec![b]) {
+            if s > 1 && s * n * n > (1 << 30) {
+                continue;
+            }
+            let sig = |k: usize| -> Vec<[u8; 32]> { (0..s).map(|i| { let mut h = [0u8; 32]; h[..8].copy_from_slice(&((k * s + i) as u64).to_le_bytes()); h }).collect() };
+            job.run_batch_hits(&sig(1000), 1 << 30).unwrap();
+            let reps = 40;
+            let t0 = Instant::now();
+            for k in 0..reps {
+                job.run_batch_hits(&sig(k), 1 << 30).unwrap();
+            }
+            let wall = t0.elapsed().as_secs_f64() / reps as f64;
+            println!("| {s} | {:.0} | {:.3} |", (s * (n / 16) * (n / 16)) as f64 / wall, wall * 1e3);
         }
     }
 }

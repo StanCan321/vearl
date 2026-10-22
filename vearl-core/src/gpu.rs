@@ -31,6 +31,13 @@ pub fn devices() -> Vec<(usize, String, i32, i32)> {
     (0..device_count()).filter_map(|d| device_n(d).map(|(n, a, b)| (d, n, a, b))).collect()
 }
 
+/// Mining threads per GPU, each with its own `GpuJob` (own buffers and CUDA stream): while one of them is busy on the CPU side of its batch
+/// (copying the result, preparing the next sigmas, talking to the pool) the kernels of the other keep the card busy, so it is never idle between
+/// two batches. `VEARL_GPU_WORKERS` = 1..4 (default 2; 1 = the old behaviour).
+pub fn workers_per_gpu() -> usize {
+    std::env::var("VEARL_GPU_WORKERS").ok().and_then(|v| v.trim().parse::<usize>().ok()).map_or(2, |v| v.clamp(1, 4))
+}
+
 /// The CUDA devices the miner will use: all the GPUs of capability >= 8.0, or those listed in `VEARL_GPUS` (comma-separated CUDA
 /// indices, for example `0,2`; an index of a missing or unsupported GPU is ignored, with a message).
 pub fn mining_devices() -> Vec<usize> {
@@ -92,6 +99,19 @@ extern "C" {
     ) -> i32;
     fn vearl_gpu_exact_gemm(a: *const i8, b: *const i8, n: i32, c_out: *mut i32) -> i32;
     fn vearl_gpu_run_batch_gen(p: *mut c_void, s: i32, hdr48: *const u8, fold_k: i32, jackpots_out: *mut u8, ms_out: *mut f32) -> i32;
+    fn vearl_gpu_profile(p: *mut c_void, s: i32, hdr48: *const u8, fold_k: i32, ms_out: *mut f32) -> i32;
+    fn vearl_gpu_run_batch_hits(
+        p: *mut c_void,
+        s: i32,
+        hdr48: *const u8,
+        fold_k: i32,
+        target: u64,
+        hit_count_out: *mut u32,
+        hit_idx_out: *mut u32,
+        hit_hash_out: *mut u8,
+        max_out: i32,
+        ms_out: *mut f32,
+    ) -> i32;
     fn vearl_gpu_run_batch(
         p: *mut c_void,
         s: i32,
@@ -132,10 +152,13 @@ impl GpuJob {
     }
 
     /// Number of sigmas processed per launch: enough tiles to occupy the whole GPU even at small n
-    /// (at n=128 a sigma is only 64 attempts = a single CUDA block); ~32,768 attempts per batch.
+    /// (at n=128 a sigma is only 64 attempts = a single CUDA block); ~32,768 attempts per batch, ~131,072 at the real size
+    /// (n >= 1024): a batch is then ~1 ms, the fixed cost of a launch (noise, 8 kernels, a synchronisation) is spread over 4 times
+    /// more attempts and a new job or a cancellation is still noticed within a millisecond or two.
     pub fn batch_size(&self) -> usize {
         let t = self.p.tiles();
-        (32768 / (t * t)).max(1)
+        let attempts = if t >= 64 { 131072 } else { 32768 };
+        (attempts / (t * t)).max(1)
     }
 
     /// Jackpots (a vector of tiles^2 hashes per sigma) of a batch of sigmas; result identical to `run` sigma by sigma.
@@ -158,8 +181,57 @@ impl GpuJob {
         Ok((jb.chunks_exact(t2 * 32).map(|per_sigma| per_sigma.chunks_exact(32).map(|ch| <Hash>::try_from(ch).unwrap()).collect()).collect(), ms))
     }
 
+    /// Development aid (gpubench): the time in ms of each kernel of a batch: noise_gen, 4 x pack16, 2 x noise_tc (A', B'^T), tile_kernel.
+    pub fn profile_batch(&self, sigmas: &[Hash]) -> Result<[f32; 8], i32> {
+        let mut hdr = vec![0u8; 48 * sigmas.len()];
+        for (i, sigma) in sigmas.iter().enumerate() {
+            hdr[i * 48..i * 48 + 16].copy_from_slice(JACKPOT_DOMAIN);
+            hdr[i * 48 + 16..(i + 1) * 48].copy_from_slice(sigma);
+        }
+        let mut ms = [0f32; 8];
+        let rc = unsafe { vearl_gpu_profile(self.ctx, sigmas.len() as i32, hdr.as_ptr(), self.p.fold_k as i32, ms.as_mut_ptr()) };
+        if rc != 0 { Err(rc) } else { Ok(ms) }
+    }
+
     pub fn run_batch(&self, sigmas: &[Hash]) -> Result<Vec<Vec<Hash>>, i32> {
         self.run_batch_timed(sigmas).map(|(j, _)| j)
+    }
+
+    /// The attempts of a batch whose jackpot meets `target` (`work::meets_target`), as (index of the sigma in the batch, tile index
+    /// `ti * tiles + tj`, jackpot), in the order (sigma, tile): exactly what scanning `run_batch` would find, but the GPU does the
+    /// filtering and only the few winners are copied back (a batch of 32 sigmas is 4 MiB of jackpots, copied and scanned for nothing
+    /// almost every time). When the target is so easy that the GPU's short list overflows, the full copy is used instead.
+    pub fn run_batch_hits(&self, sigmas: &[Hash], target: u64) -> Result<Vec<(usize, usize, Hash)>, i32> {
+        const MAX_OUT: usize = 512; // the capacity of the GPU's list (MAX_HITS in vearl_gpu.cu)
+        let p = &self.p;
+        let s = sigmas.len();
+        let t2 = p.tiles() * p.tiles();
+        let mut hdr = vec![0u8; 48 * s];
+        for (i, sigma) in sigmas.iter().enumerate() {
+            hdr[i * 48..i * 48 + 16].copy_from_slice(JACKPOT_DOMAIN);
+            hdr[i * 48 + 16..(i + 1) * 48].copy_from_slice(sigma);
+        }
+        let (mut count, mut idx, mut hashes, mut ms) = (0u32, [0u32; MAX_OUT], [0u8; MAX_OUT * 32], [0f32; 2]);
+        let rc = unsafe {
+            vearl_gpu_run_batch_hits(self.ctx, s as i32, hdr.as_ptr(), p.fold_k as i32, target, &mut count, idx.as_mut_ptr(), hashes.as_mut_ptr(), MAX_OUT as i32, ms.as_mut_ptr())
+        };
+        if rc != 0 {
+            return Err(rc);
+        }
+        if count as usize > MAX_OUT {
+            let mut v = Vec::new();
+            for (d, row) in self.run_batch(sigmas)?.iter().enumerate() {
+                for (i, jp) in row.iter().enumerate() {
+                    if crate::work::meets_target(jp, target) {
+                        v.push((d, i, *jp));
+                    }
+                }
+            }
+            return Ok(v);
+        }
+        let mut v: Vec<(usize, usize, Hash)> = (0..count as usize).map(|k| (idx[k] as usize / t2, idx[k] as usize % t2, <Hash>::try_from(&hashes[k * 32..k * 32 + 32]).unwrap())).collect();
+        v.sort_by_key(|h| (h.0, h.1));
+        Ok(v)
     }
 
 
@@ -274,9 +346,16 @@ impl GpuPool {
     pub fn new(a: &[i8], b: &[i8], p: &WorkParams) -> Option<Self> {
         let mut jobs = Vec::new();
         for d in mining_devices() {
-            match GpuJob::new_on(d, a, b, p) {
-                Some(j) => jobs.push(j),
-                None => eprintln!("[gpu] GPU #{d} could not be initialised (out of memory or driver error): skipped"),
+            // `workers_per_gpu()` jobs on each device: the search runs one thread per job, each with its own CUDA stream
+            for w in 0..workers_per_gpu() {
+                match GpuJob::new_on(d, a, b, p) {
+                    Some(j) => jobs.push(j),
+                    None if w == 0 => {
+                        eprintln!("[gpu] GPU #{d} could not be initialised (out of memory or driver error): skipped");
+                        break;
+                    }
+                    None => break, // no room for one more: the device mines with the jobs it has
+                }
             }
         }
         (!jobs.is_empty()).then_some(Self { jobs })
