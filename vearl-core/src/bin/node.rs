@@ -4,6 +4,7 @@
 //! --cheat: TEST ONLY, the worker publishes a wrong result to exercise the fraud proofs
 //! --log-file PATH: UTC-timestamped copy of the whole log into PATH (the node runs as a child process, its log goes through this process)
 //! --no-native: with --worker, never mine Native blocks: only work on the jobs claimed (the miner's pool mode with paid jobs)
+//! --models-dir DIR: model packs (*.vblocks) installed in advance are loaded into the registry: a client then sends no weights, the job only names the model
 //! --max-jobs N: level 2 jobs claimed at the same time (default 1): a busy worker leaves the queue to the other miners
 //! --ask VRL: asking price for auction jobs (the worker bids this price if it beats the best bid)
 //! --no-serve / --cheat-garbage: TEST ONLY (worker that withholds the data / publishes an invented result)
@@ -111,6 +112,7 @@ fn main() {
     let (mut listen, mut peers, mut seed, mut gpu) = ("127.0.0.1:9000".to_string(), vec![], None, false);
     let (mut worker, mut cheat, mut cheat_act, mut data_dir, mut ask) = (false, false, false, None, None::<u64>);
     let (mut max_jobs, mut no_native) = (1usize, false);
+    let mut models_dir: Option<std::path::PathBuf> = None;
     let (mut no_serve, mut cheat_garbage, mut cheat_sum, mut cheat_elem, mut cheat_col, mut cheat_l2) = (false, false, false, false, false, false);
     let (mut genesis_path, mut api_addr, mut api_public) = (None::<String>, None::<String>, false);
     let (mut miner_wallet, mut miner_account, mut password_file, mut insecure) = (None::<String>, 0u32, None::<String>, false);
@@ -170,6 +172,7 @@ fn main() {
             "--cheat-l2" => cheat_l2 = true,
             "--cheat-garbage" => cheat_garbage = true,
             "--no-native" => no_native = true,
+            "--models-dir" => models_dir = Some(std::path::PathBuf::from(it.next().expect("--models-dir DIR"))),
             "--max-jobs" => max_jobs = it.next().expect("--max-jobs N").parse().expect("integer >= 1"),
             "--ask" => ask = Some((it.next().expect("--ask VRL").parse::<f64>().expect("number") * vearl_core::state::COIN as f64) as u64),
             "--data-dir" => data_dir = Some(std::path::PathBuf::from(it.next().expect("--data-dir DIR"))),
@@ -245,6 +248,10 @@ fn main() {
     })
     .expect("bind");
     eprintln!("[node] listening on {} (gpu={gpu}, worker={worker}, height at start={})", handle.addr, handle.height());
+    if let Some(d) = models_dir {
+        eprintln!("[models] loading the model packs of {} in the background", d.display());
+        handle.preload_models(d, true);
+    }
     eprintln!("[node] network public key (to be pinned by peers: --peer HOST:PORT@KEY): {}", handle.id_hex());
     if relay {
         handle.set_relay(true);

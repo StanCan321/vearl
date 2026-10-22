@@ -1398,3 +1398,42 @@ fn model_jobs_spread_over_the_workers_that_hold_their_data() {
         node.stop();
     }
 }
+
+/// A model pack installed in advance (`--models-dir`): the node reports its blocks as present (`HasModel`), so a client sends nothing, and the pack
+/// does not eat the upload cap. A pack built for another matrix size is ignored.
+#[test]
+fn a_model_pack_installed_in_advance_makes_the_client_upload_nothing() {
+    let dir = std::env::temp_dir().join(format!("vearl-models-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let n = genesis().params.n;
+    let blocks: Vec<Vec<i8>> = (0..3).map(|k| (0..n * n).map(|i| (((i * 31 + k * 7) % 61) as i32 - 30) as i8).collect()).collect();
+    let write = |name: &str, pn: usize, bl: &[Vec<i8>]| {
+        let mut f = Vec::new();
+        f.extend_from_slice(MODEL_PACK_MAGIC);
+        f.extend_from_slice(&(pn as u32).to_le_bytes());
+        f.extend_from_slice(&(bl.len() as u32).to_le_bytes());
+        for b in bl {
+            f.extend(b.iter().map(|v| *v as u8));
+        }
+        std::fs::write(dir.join(name), f).unwrap();
+    };
+    write("good.vblocks", n, &blocks[..2]);
+    write("other-size.vblocks", n * 2, &blocks[2..]);
+    let w = node(vec![], None);
+    let (loaded, refused) = w.preload_models(dir.clone(), false).join().unwrap();
+    assert_eq!((loaded, refused), (2, 1));
+    let roots: Vec<Hash> = blocks.iter().map(|b| vearl_core::work::rows_tree(b, n).root()).collect();
+    match request(&w.addr, &Msg::HasModel { roots: roots.clone() }).unwrap() {
+        Msg::ModelHave { have } => assert_eq!(have, vec![true, true, false], "the two blocks of the good pack are present, the one of the other pack is not"),
+        m => panic!("{m:?}"),
+    }
+    // the client uploads the missing block only, as before, and the registry then has the three
+    assert!(matches!(request(&w.addr, &Msg::PutModel { ws: vec![blocks[2].clone()] }).unwrap(), Msg::Ack { ok: true, .. }));
+    match request(&w.addr, &Msg::HasModel { roots }).unwrap() {
+        Msg::ModelHave { have } => assert_eq!(have, vec![true; 3]),
+        m => panic!("{m:?}"),
+    }
+    w.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -228,6 +228,14 @@ The ResNet-20 photos are 32 × 32 pixels because an image there occupies one col
 
 **Not done** `[TO DO]`: quantisation-aware training (the main lever left for the quality), a fused gain in `RmsNorm` (one rounding instead of two on the queries and keys), a standard retrieval benchmark, a GPU run (the CPU worker is the slow part), a test on a network with several workers (the model is 530 MiB to deposit with each); until then this model must not be announced as available.
 
+## 4 decies. Models installed in advance (model packs)
+
+A model is a list of n x n int8 weight blocks; a job names them by Merkle root and the worker looks them up in its **registry** (`HasModel` / `PutModel`). Until rc22 the client sent the blocks the worker did not have, once per worker. That does not scale (Qwen3-Embedding-0.6B is 472 MiB; models of tens of billions of parameters will be tens of GiB), so since rc23 the miners hold the models themselves: `node --models-dir DIR` loads every `*.vblocks` pack of DIR into the registry (at start, then every 30 s), `HasModel` answers "present", and the client sends only its input. Blocks that come from packs do not count in the upload cap of the registry.
+
+Pack format `NAME.vblocks`: 8 bytes `VBLOCK01`, n (u32 little-endian), number of blocks (u32 little-endian), then the blocks (n x n int8, row-major, no duplicate). A node ignores a pack built for another n and refuses a block with a value outside +-64. Build one with `tools/make_model_pack.py --n 1024 --out DIR NAME=model.json ...` (it collects every base64 matrix found under a `weights` key and writes the `models.json` list: name, file, bytes, sha256, blocks, url). `vearl-miner models` downloads the packs of that list, checks the SHA-256 and installs them in `models/`. A pack cannot make a miner compute something wrong: a job refers to its weights by Merkle root, so a block that is not the client's is simply never used.
+
+Measured (Windows, n = 1024): the three packs of the testnet (TinyStories language model 93 blocks, DeiT-Tiny 77, Qwen3-Embedding-0.6B 472) are 650 MiB, load in about 2 s and take 649 MiB of memory; a client `infer` against a node that has the pack reports "3/3 weight blocks already present, 0 sent" (test `a_model_pack_installed_in_advance_makes_the_client_upload_nothing`).
+
 ## 5. Reproduce
 
 ```bash

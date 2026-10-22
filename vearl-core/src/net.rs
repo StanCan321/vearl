@@ -470,6 +470,8 @@ pub struct Node {
     prog_data: Vec<ProgData>,
     /// Model registry: weight blocks by Merkle root.
     models: HashMap<Hash, Vec<i8>>,
+    /// How many blocks of `models` come from the packs installed on this machine (`--models-dir`): they do not count in the upload cap.
+    models_pre: usize,
     prog_runs: HashMap<JobId, ProgRun>,
     l2_runs: HashMap<JobId, L2Run>,
     /// Level 2 jobs computed as a background task (outside the node lock): results to merge back, jobs in progress.
@@ -499,6 +501,34 @@ struct RelayPending {
 
 /// Maximum number of weight blocks in a worker's registry (n = 1024: 1 MiB each).
 const MAX_MODEL_BLOCKS: usize = 1024; // (Qwen3-Embedding-0.6B alone holds 528 blocks of 1 MiB)
+
+/// Model pack: the weight blocks of a model, installed on the machine in advance so that a client never has to send them
+/// (`node --models-dir DIR` loads every `*.vblocks` of the folder into the registry, which `HasModel` then reports as present).
+/// Layout: 8 bytes `VBLOCK01`, n (u32 LE), number of blocks (u32 LE), then the blocks (n*n i8 each, row-major).
+pub const MODEL_PACK_MAGIC: &[u8; 8] = b"VBLOCK01";
+
+/// Reads a pack and gives each block to `f`; the pack must be built for matrices of size `n` (the chain's).
+pub fn read_model_pack(path: &std::path::Path, n: usize, mut f: impl FnMut(Vec<i8>)) -> Result<usize, String> {
+    let mut r = io::BufReader::with_capacity(1 << 20, File::open(path).map_err(|e| e.to_string())?);
+    let mut head = [0u8; 16];
+    r.read_exact(&mut head).map_err(|_| "file too short".to_string())?;
+    if &head[..8] != MODEL_PACK_MAGIC {
+        return Err("not a model pack".into());
+    }
+    let (pn, count) = (u32::from_le_bytes(head[8..12].try_into().unwrap()) as usize, u32::from_le_bytes(head[12..16].try_into().unwrap()) as usize);
+    if pn != n {
+        return Err(format!("built for n={pn}, this chain uses n={n}"));
+    }
+    for i in 0..count {
+        let mut raw = vec![0u8; n * n];
+        r.read_exact(&mut raw).map_err(|_| format!("truncated at block {i}/{count}"))?;
+        if raw.iter().any(|b| (*b as i8 as i32).abs() > VAL_MAX) {
+            return Err(format!("block {i} holds a value outside the allowed range"));
+        }
+        f(raw.into_iter().map(|b| b as i8).collect());
+    }
+    Ok(count)
+}
 
 /// Maximum number of program data sets (input + weights) kept by a worker.
 const MAX_PROG_DATA: usize = 32;
@@ -735,6 +765,58 @@ impl NodeHandle {
     pub fn relay_routes(&self) -> usize {
         self.shared.node.lock().unwrap().relay_routes.len()
     }
+    /// Loads the model packs (`*.vblocks`) of a folder into the registry of this node, in the background: from then on a client that asks
+    /// `HasModel` is told the blocks are here and sends nothing. With `watch`, the folder is looked at again every 30 s (the miner downloads the
+    /// packs while it already runs) until the node stops. Returns the thread (its result: blocks registered, packs refused).
+    pub fn preload_models(&self, dir: PathBuf, watch: bool) -> thread::JoinHandle<(usize, usize)> {
+        let sh = self.shared.clone();
+        thread::spawn(move || {
+            let n = sh.node.lock().unwrap().chain.params.n;
+            let (mut loaded, mut refused) = (0usize, 0usize);
+            let mut done: HashSet<(String, u64)> = HashSet::new();
+            loop {
+                let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+                    .map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().map_or(false, |x| x == "vblocks")).collect())
+                    .unwrap_or_default();
+                files.sort();
+                for p in files {
+                    let name = p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+                    if !done.insert((name.clone(), std::fs::metadata(&p).map_or(0, |m| m.len()))) {
+                        continue;
+                    }
+                    let mut added = 0usize;
+                    let res = read_model_pack(&p, n, |w| {
+                        let root = rows_tree(&w, n).root();
+                        let mut g = sh.node.lock().unwrap();
+                        if g.models.insert(root, w).is_none() {
+                            g.models_pre += 1;
+                            added += 1;
+                        }
+                    });
+                    match res {
+                        Ok(c) => {
+                            loaded += added;
+                            eprintln!("[models] {name}: {c} weight blocks ({added} new) ready: clients no longer have to send this model");
+                        }
+                        Err(e) => {
+                            refused += 1;
+                            eprintln!("[models] {name} ignored: {e}");
+                        }
+                    }
+                }
+                if !watch {
+                    break;
+                }
+                for _ in 0..30 {
+                    if sh.stop.load(Ordering::SeqCst) {
+                        return (loaded, refused);
+                    }
+                    thread::sleep(Duration::from_secs(1));
+                }
+            }
+            (loaded, refused)
+        })
+    }
     pub fn connect(&self, addr: &str) {
         let sh = self.shared.clone();
         let a = addr.to_string();
@@ -847,6 +929,7 @@ pub fn spawn_node(cfg: NodeConfig) -> io::Result<NodeHandle> {
             tiled_inbox: Arc::new(Mutex::new(Vec::new())),
             prog_data: Vec::new(),
             models: HashMap::new(),
+            models_pre: 0,
             prog_runs: HashMap::new(),
             l2_runs: HashMap::new(),
             l2_inbox: Arc::new(Mutex::new(Vec::new())),
@@ -1401,7 +1484,7 @@ fn on_msg_reply(sh: &Arc<Shared>, n: &mut Node, m: &Msg) -> Option<Msg> {
             if ws.is_empty() || ws.iter().any(|w| w.len() != p.n * p.n) || ws.iter().flatten().any(|v| (*v as i32).abs() > VAL_MAX) {
                 return Some(Msg::Ack { ok: false, info: "bad matrices".into() });
             }
-            if n.models.len() + ws.len() > MAX_MODEL_BLOCKS {
+            if n.models.len() - n.models_pre + ws.len() > MAX_MODEL_BLOCKS {
                 return Some(Msg::Ack { ok: false, info: "model registry full".into() });
             }
             for w in ws {
