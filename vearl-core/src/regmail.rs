@@ -205,9 +205,50 @@ fn now_and_id() -> (u64, String) {
     (now, r.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// Sends the registration over TLS (certificate of mail.vearl.org checked).
-#[cfg(feature = "mail")]
+/// Tries (at most) this many times when the NETWORK breaks the connection (reset during the TLS handshake, timeout, closed socket).
+const ATTEMPTS: usize = 3;
+
+/// True for a failure of the network itself, which a new attempt can cure. An answer of the server (wrong password, recipient refused, 4xx
+/// rate limit) is not one: the same request would get the same answer.
+fn is_network_failure(e: &str) -> bool {
+    e.starts_with("network error") || e.starts_with("cannot connect") || e.starts_with("the server closed the connection")
+}
+
+/// Reads "unexpected end of file" the way a user can act on it: the other side (or something on the way) cut the connection.
+fn explain(e: &str) -> String {
+    // Windows words these errors in the language of the PC, which the wallet's font cannot always show ("????"): say it in English from the code
+    let code = e.rsplit_once("(os error ").and_then(|(_, t)| t.split(')').next()).and_then(|n| n.parse::<u32>().ok());
+    let timed_out = matches!(code, Some(10060) | Some(110));
+    let cut = matches!(code, Some(10054) | Some(10053) | Some(104) | Some(103));
+    if timed_out {
+        format!("no answer from {SMTP_HOST} within {TIMEOUT_SECS} seconds (os error {})", code.unwrap_or(0))
+    } else if cut {
+        format!("the connection to {SMTP_HOST} was reset on the way (os error {})", code.unwrap_or(0))
+    } else if e.contains("unexpected end of file") || e.starts_with("the server closed the connection") {
+        format!("{e} (the connection to {SMTP_HOST} was cut before the e-mail was sent: unstable network, firewall or antivirus)")
+    } else {
+        e.to_string()
+    }
+}
+
+/// Sends the registration over TLS (certificate of mail.vearl.org checked). A connection cut by the network is retried, with a pause.
 pub fn send_registration(r: &Registration) -> Result<(), String> {
+    let mut last = String::new();
+    for attempt in 0..ATTEMPTS {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_secs(2 * attempt as u64 + 1));
+        }
+        match send_once(r) {
+            Ok(()) => return Ok(()),
+            Err(e) if is_network_failure(&e) => last = e,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(format!("{} (tried {ATTEMPTS} times)", explain(&last)))
+}
+
+#[cfg(feature = "mail")]
+fn send_once(r: &Registration) -> Result<(), String> {
     use std::net::{TcpStream, ToSocketAddrs};
     use std::sync::Arc;
     use std::time::Duration;
@@ -243,7 +284,7 @@ pub fn send_registration(r: &Registration) -> Result<(), String> {
 }
 
 #[cfg(not(feature = "mail"))]
-pub fn send_registration(_r: &Registration) -> Result<(), String> {
+fn send_once(_r: &Registration) -> Result<(), String> {
     Err("this build of the wallet cannot send e-mail".into())
 }
 
@@ -384,5 +425,29 @@ mod tests {
         let m = Mail { from: "a@b".into(), to: "c@d".into(), subject: "s".into(), body: "x".into() };
         assert!(m.to_wire(1_792_771_200, "i").contains("Date: Fri, 23 Oct 2026 16:00:00 +0000"));
         assert!(m.to_wire(951_827_696, "i").contains("Date: Tue, 29 Feb 2000 12:34:56 +0000"));
+    }
+
+    #[test]
+    fn only_a_broken_connection_is_retried_not_an_answer_of_the_server() {
+        // what a miner saw on 2026-10-20: rustls reports a connection closed during the TLS handshake as "unexpected end of file"
+        assert!(is_network_failure("network error while reading: unexpected end of file"));
+        assert!(is_network_failure("network error while writing: Broken pipe (os error 32)"));
+        assert!(is_network_failure("the server closed the connection"));
+        assert!(is_network_failure("cannot connect to mail.vearl.org:465 (no address)"));
+        assert!(!is_network_failure("authentication: the server answered 535 5.7.8 Authentication failed"));
+        assert!(!is_network_failure("recipient: the server answered 554 5.7.1 Relay access denied"));
+        assert!(!is_network_failure("greeting: the server answered 421 4.7.0 Error: too many connections"));
+        assert!(!is_network_failure("this build of the wallet cannot send e-mail"));
+    }
+
+    #[test]
+    fn an_unexpected_end_of_file_is_explained() {
+        let e = explain("network error while reading: unexpected end of file");
+        assert!(e.starts_with("network error while reading: unexpected end of file (the connection to mail.vearl.org was cut"));
+        assert_eq!(explain("recipient: the server answered 554 no"), "recipient: the server answered 554 no");
+        // a Chinese Windows: the system text is unreadable in the wallet font, the code is enough
+        let t = explain("network error while reading: ???????? (os error 10060)");
+        assert_eq!(t, "no answer from mail.vearl.org within 20 seconds (os error 10060)");
+        assert!(explain("network error while reading: ??? (os error 10054)").starts_with("the connection to mail.vearl.org was reset"));
     }
 }

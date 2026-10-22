@@ -650,7 +650,7 @@ fn rewards(ui: &mut Ui, s: &mut Session, cmds: &mut Vec<Cmd>) {
                     t::notice(ui, Tone::Ok, "Sent. It is processed within a few minutes: your address then appears in the public list (press 'Check again' above).");
                 }
                 Some(Err(e)) => {
-                    t::notice(ui, Tone::Bad, &format!("The e-mail could not be sent: {e}. Some networks block outgoing mail. You can send the three lines yourself."));
+                    t::notice(ui, Tone::Bad, &format!("The e-mail could not be sent: {e}. Press the button again, or, if a network blocks outgoing mail, send the three lines yourself."));
                 }
                 None => {}
             }
