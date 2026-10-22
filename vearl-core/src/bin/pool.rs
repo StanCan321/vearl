@@ -17,6 +17,26 @@ use vearl_core::pool::{parse_u64hex, Pool, PoolConfig};
 use vearl_core::wallet::*;
 use std::time::Duration;
 
+/// SIGTERM (systemctl stop/restart) and SIGINT (Ctrl+C): the handler only raises a flag; the main loop then calls `Pool::stop`, which saves the
+/// state (blocks found, shares, points of the current hour) instead of falling back to the last periodic save, up to 30 s old.
+#[cfg(unix)]
+mod term {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    pub static REQUESTED: AtomicBool = AtomicBool::new(false);
+    extern "C" {
+        fn signal(signum: i32, handler: usize) -> usize;
+    }
+    extern "C" fn on_signal(_: i32) {
+        REQUESTED.store(true, Ordering::SeqCst);
+    }
+    pub fn install() {
+        unsafe {
+            signal(2, on_signal as *const () as usize); // SIGINT
+            signal(15, on_signal as *const () as usize); // SIGTERM
+        }
+    }
+}
+
 fn die(m: &str) -> ! {
     eprintln!("error: {m}");
     std::process::exit(1)
@@ -122,8 +142,22 @@ fn main() {
     if !cfg.listen.starts_with("127.") && !cfg.listen.starts_with("[::1]") {
         eprintln!("[pool] WARNING: the protocol is not encrypted; put a TLS proxy (stunnel / nginx stream) in front of {} for public use", cfg.listen);
     }
+    #[cfg(unix)]
+    term::install();
+    let mut waited = 0u32;
     loop {
-        std::thread::sleep(Duration::from_secs(30));
+        std::thread::sleep(Duration::from_secs(1));
+        #[cfg(unix)]
+        if term::REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
+            eprintln!("[pool] stop requested: saving the state");
+            pool.stop();
+            std::process::exit(0);
+        }
+        waited += 1;
+        if waited < 30 {
+            continue;
+        }
+        waited = 0;
         let s = pool.stats_json();
         eprintln!(
             "[pool] height={} workers={} rate={:.2} sigma/s shares={} blocks found={} (pending {}, confirmed {}, orphaned {}) owed to miners={}",
