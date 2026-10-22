@@ -58,6 +58,9 @@ What the miner does
      SOLO ................ your machine runs a full Vearl node and mines alone: you keep 100 % of the blocks you find and you also
                             compute the paid jobs that clients submit to the network (AI inference, rendering, linear algebra).
  * It mines Vearl only (the optional Quantus add-on aside): no other program runs on your machine.
+ * Paid jobs: the AI models are installed in advance, so that a client never has to send a model. In the background at each start (solo, or
+   pool with a wallet) the miner downloads the model packs (about 650 MiB, from this project's GitHub release "models-1") into the "models"
+   folder and checks them; mining starts at once. "vearl-miner models" does it now, "vearl-miner --no-models" skips it for one run.
  * You need an NVIDIA GPU of the Ampere generation or newer (RTX 30xx, 40xx, 50xx, A-series, L-series, H100...) and the NVIDIA driver
    ({driver}). Without a GPU the miner runs on the CPU, slowly.
  * The first start downloads the chain from the seed node and can take a few minutes. A status line is printed every 10 seconds
