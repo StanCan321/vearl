@@ -3,6 +3,7 @@
 //! --worker: claims and mines the jobs whose data the node knows (deposited by `vearl-cli job-submit`)
 //! --cheat: TEST ONLY, the worker publishes a wrong result to exercise the fraud proofs
 //! --log-file PATH: UTC-timestamped copy of the whole log into PATH (the node runs as a child process, its log goes through this process)
+//! --no-native: with --worker, never mine Native blocks: only work on the jobs claimed (the miner's pool mode with paid jobs)
 //! --max-jobs N: level 2 jobs claimed at the same time (default 1): a busy worker leaves the queue to the other miners
 //! --ask VRL: asking price for auction jobs (the worker bids this price if it beats the best bid)
 //! --no-serve / --cheat-garbage: TEST ONLY (worker that withholds the data / publishes an invented result)
@@ -54,10 +55,24 @@ fn run_with_log_file(path: &str) -> ! {
         eprintln!("--log-file {path}: {e}");
         std::process::exit(2)
     });
-    let mut child = std::process::Command::new(std::env::current_exe().expect("program path"))
-        .args(&child_args)
-        .env("VEARL_LOG_CHILD", "1")
-        .stderr(std::process::Stdio::piped())
+    let mut cmd = std::process::Command::new(std::env::current_exe().expect("program path"));
+    cmd.args(&child_args).env("VEARL_LOG_CHILD", "1").stderr(std::process::Stdio::piped());
+    #[cfg(target_os = "linux")]
+    {
+        // the real node stops when this logging parent dies (for example when the launcher is killed and this process receives its SIGTERM): without
+        // it the node would go on alone, with the wallet it unlocked
+        use std::os::unix::process::CommandExt;
+        extern "C" {
+            fn prctl(option: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> i32;
+        }
+        unsafe {
+            cmd.pre_exec(|| {
+                prctl(1, 15, 0, 0, 0); // PR_SET_PDEATHSIG, SIGTERM
+                Ok(())
+            });
+        }
+    }
+    let mut child = cmd
         .spawn()
         .unwrap_or_else(|e| {
             eprintln!("could not start the node: {e}");
@@ -95,7 +110,7 @@ fn main() {
     }
     let (mut listen, mut peers, mut seed, mut gpu) = ("127.0.0.1:9000".to_string(), vec![], None, false);
     let (mut worker, mut cheat, mut cheat_act, mut data_dir, mut ask) = (false, false, false, None, None::<u64>);
-    let mut max_jobs = 1usize;
+    let (mut max_jobs, mut no_native) = (1usize, false);
     let (mut no_serve, mut cheat_garbage, mut cheat_sum, mut cheat_elem, mut cheat_col, mut cheat_l2) = (false, false, false, false, false, false);
     let (mut genesis_path, mut api_addr, mut api_public) = (None::<String>, None::<String>, false);
     let (mut miner_wallet, mut miner_account, mut password_file, mut insecure) = (None::<String>, 0u32, None::<String>, false);
@@ -154,6 +169,7 @@ fn main() {
             "--cheat-col" => cheat_col = true,
             "--cheat-l2" => cheat_l2 = true,
             "--cheat-garbage" => cheat_garbage = true,
+            "--no-native" => no_native = true,
             "--max-jobs" => max_jobs = it.next().expect("--max-jobs N").parse().expect("integer >= 1"),
             "--ask" => ask = Some((it.next().expect("--ask VRL").parse::<f64>().expect("number") * vearl_core::state::COIN as f64) as u64),
             "--data-dir" => data_dir = Some(std::path::PathBuf::from(it.next().expect("--data-dir DIR"))),
@@ -170,6 +186,7 @@ fn main() {
     }
     assert!(partner_share <= 100, "--partner-share: 0 to 100");
     assert!(!worker || seed.is_some() || miner_wallet.is_some(), "--worker requires --miner-wallet (worker key, with funds for the bond)");
+    assert!(!no_native || worker, "--no-native goes with --worker (a node that neither mines Native blocks nor works on jobs does nothing)");
     if seed.is_some() && genesis_path.is_some() && !insecure {
         panic!("--mine-seed derives the key from a PUBLIC seed: with a genesis file, use --miner-wallet (or --insecure-devnet-keys if the network has no value)");
     }
@@ -223,7 +240,7 @@ fn main() {
         mine_key,
         use_gpu: gpu,
         log: true,
-        worker: worker.then_some(WorkerCfg { cheat, cheat_act, ask, no_serve, cheat_garbage, cheat_sum, cheat_elem, cheat_col, cheat_l2, max_jobs }),
+        worker: worker.then_some(WorkerCfg { cheat, cheat_act, ask, no_serve, cheat_garbage, cheat_sum, cheat_elem, cheat_col, cheat_l2, max_jobs, no_native }),
         data_dir,
     })
     .expect("bind");

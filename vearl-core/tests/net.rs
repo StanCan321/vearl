@@ -189,6 +189,28 @@ fn compute_market_end_to_end_honest_worker_is_paid() {
     }
 }
 
+/// A worker-only node (`--worker --no-native`, the pool mode of the miner with paid jobs) never mines a Native block, but it claims and computes the
+/// jobs whose data it knows: the pool miner does the Native mining, this node takes the compute market. The blocks come from another miner (in real
+/// life, the pool); the worker's balance must not move (no block reward) until it works on a job.
+#[test]
+fn a_worker_only_node_mines_no_native_block_but_still_computes_jobs() {
+    let worker_key = SigningKey::from_bytes(&[101; 32]);
+    let worker = node_with(vec![], Some(101), Some(WorkerCfg { no_native: true, ..Default::default() }), None);
+    let miner = node(vec![worker.addr.clone()], Some(102)); // the native miner (the pool)
+    let balance = |n: &NodeHandle| match request(&n.addr, &Msg::GetAccount(pubkey(&worker_key))).unwrap() {
+        Msg::Account { balance, .. } => balance,
+        m => panic!("{m:?}"),
+    };
+    let before = balance(&worker);
+    wait("the native miner makes blocks and the worker follows them", 60, || miner.height() >= 6 && worker.height() >= 6);
+    assert_eq!(balance(&worker), before, "a worker-only node earns no block reward: it mined no Native block");
+    let client = SigningKey::from_bytes(&[100; 32]);
+    let cm = rand_cm(6);
+    let id = submit_job(&client, &miner, &worker, &cm);
+    wait("job posted by the worker-only node", 90, || job_status(&miner.addr, id).starts_with("Posted"));
+    assert!(balance(&worker) != before, "it mined the blocks of the job and was rewarded for them");
+}
+
 #[test]
 fn compute_market_end_to_end_cheating_worker_is_slashed_by_fraud_proof() {
     let worker = node_with(vec![], Some(101), Some(WorkerCfg { cheat: true, ..Default::default() }), None);

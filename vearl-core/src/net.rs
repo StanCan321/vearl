@@ -635,6 +635,9 @@ pub struct WorkerCfg {
     /// Maximum number of level 2 jobs claimed at the same time (claimed, not yet published): 0 = 1. A busy worker does not claim
     /// from the queue: waiting jobs stay for the other miners.
     pub max_jobs: usize,
+    /// Worker only (`node --worker --no-native`): the node never mines Native blocks, it only works on the jobs it claims. This is the
+    /// miner's pool mode with paid jobs: the pool miner does the Native mining, this node takes the compute market.
+    pub no_native: bool,
 }
 
 impl Node {
@@ -2745,6 +2748,13 @@ fn mining_loop(sh: Arc<Shared>, sk: SigningKey, use_gpu: bool, log: bool) {
             let target = if n.worker.is_some() { worker_step(&mut n, &sk) } else { None };
             drop(t_ws);
             sh.native_work.store(target.is_none() && !background_compute_busy(&n), Ordering::SeqCst);
+            if target.is_none() && n.worker.map_or(false, |w| w.no_native) {
+                // no job to work on and no Native mining wanted here: wait for the next one (the queue is read again at every turn)
+                drop(_held);
+                drop(n);
+                thread::sleep(Duration::from_millis(100));
+                continue;
+            }
             let _t_tpl = LockTimer::new("  of which template + transaction selection");
             let tpl = match &target {
                 Some(Target::Job(id, data)) => n.chain.template(WorkClass::Job(*id), Some(data)),
