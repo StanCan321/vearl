@@ -19,7 +19,9 @@ So:
 - a worker proves its work with **shares**: tile jackpots below an easier *share target*; a share that also meets the network target is a block.
 
 Pools mine the **Native Work** (class 0). Paid jobs (level 1 / level 2) stay reserved to solo workers (`node --worker`): the block rules require
-the job's worker to be the miner, which a pool cannot delegate. A pool operator can still run a worker next to the pool.
+the job's worker to be the miner, which a pool cannot delegate. A pool operator can still run a worker next to the pool, and since rc22 a pool MINER can
+too: `vearl-miner` in pool mode with a wallet starts `node --worker --no-native` next to `vearl-poolminer` (docs/15), so that the machine mines for the
+pool and takes paid jobs on its own account.
 
 ## 2. Roles
 
@@ -208,8 +210,8 @@ vearl-miner --mode pool --pool pool.example.org:3333 --address vrl1yourpayoutadd
 ```
 
 In pool mode the launcher starts `vearl-poolminer` (GPU when one is usable, otherwise CPU) and no node: only the payout address is needed, no wallet
-password. Its status line is shown and appended to `miner.log`, the signed receipts go to `pool-receipts.jsonl`. Paid compute jobs and the
-Quantus add-on belong to solo mode. The worker name defaults to the computer name (the wizard asks, because the pool shows it).
+password. Its status line is shown and appended to `miner.log`, the signed receipts go to `pool-receipts.jsonl`. With a wallet it also starts a
+worker-only node for the paid compute jobs (docs/15); the Quantus add-on belongs to solo mode. The worker name defaults to the computer name (the wizard asks, because the pool shows it).
 
 The worker reconnects by itself (1 s doubled up to 30 s). It prints its rate, accepted/rejected shares and blocks every 10 s.
 

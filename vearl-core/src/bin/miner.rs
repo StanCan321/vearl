@@ -246,7 +246,8 @@ fn wizard(env: &Env, gpu_ok: bool, quantus_present: bool, mode_hint: Option<&str
             println!("  1) POOL (recommended): you join the official Vearl pool ({pool_addr}). Many miners share the work, so what you earn");
             println!("     arrives in small regular payouts instead of depending on finding a whole block alone. The pool keeps a small fee");
             println!("     (shown on its website). You only need your Vearl ADDRESS: no node runs here and your wallet password is not needed to mine.");
-            println!("     Not available in this mode: paid compute jobs and the optional Quantus add-on.");
+            println!("     Paid compute jobs (AI, computations) are available here too if you give a wallet: a Vearl node then runs next to the pool");
+            println!("     miner and takes jobs on the same GPU. The optional Quantus add-on is for solo mode only.");
             println!("  2) SOLO: this computer runs a full Vearl node and mines on its own: you keep 100 % of the blocks you find, you can also");
             println!("     compute paid jobs and use the optional Quantus add-on, but with one GPU a block is rare.");
             println!("You can switch at any time with \"vearl-miner pool\" or \"vearl-miner solo\".\n");
@@ -382,8 +383,18 @@ fn wizard(env: &Env, gpu_ok: bool, quantus_present: bool, mode_hint: Option<&str
     let wpath = if Path::new(&wallet_file).is_absolute() { PathBuf::from(&wallet_file) } else { env.path(&wallet_file) };
     let address = if mode == 3 { typed_address } else { Keystore::load(&wpath).map(|k| k.address).unwrap_or_default() };
     println!("Your Vearl address: {address}\n");
-    // 3. remembered password? (solo only: in pool mode the password is never needed to mine)
-    let save_pw = !pool_mode && yes("Remember the wallet password on this computer so the miner can restart without asking? (anybody who can read this folder could then spend your tokens)", false);
+    // 2 bis. paid jobs next to the pool (needs a wallet: the node signs the claims, the payments arrive in it)
+    let node_here = env.path(&exe("node")).exists();
+    let jobs = pool_mode && mode != 3 && node_here && {
+        println!("PAID JOBS: besides the pool, this miner can take paid compute jobs (AI models, computations) from the Vearl market.");
+        println!("  - A Vearl node runs next to the pool miner and shares the GPU with it: a job is computed a bit slower than alone, the pool keeps going.");
+        println!("  - Your wallet password is asked at each start (or remembered if you say so below): the node signs the job claims with your wallet.");
+        println!("  - A job pays your wallet directly; taking one needs a few VRL in it for the bond (10 % of the price): the testnet faucet gives some.");
+        println!("  - Your payout address in the pool is the address of this wallet.\n");
+        yes("Also take paid jobs?", true)
+    };
+    // 3. remembered password? (solo and pool with jobs: the node needs the wallet key; plain pool mode never needs the password)
+    let save_pw = (!pool_mode || jobs) && yes("Remember the wallet password on this computer so the miner can restart without asking? (anybody who can read this folder could then spend your tokens)", false);
     if save_pw {
         let pw = password_prompt("Wallet password: ");
         if load_signing_key(&wpath, &pw, 0).is_err() {
@@ -406,6 +417,7 @@ fn wizard(env: &Env, gpu_ok: bool, quantus_present: bool, mode_hint: Option<&str
         "partner_cycle": 60,
         "worker": true,
         "max_jobs": 1,
+        "jobs": jobs,
         "remember_password": save_pw,
     });
     std::fs::write(env.path("miner.json"), serde_json::to_string_pretty(&cfg).unwrap()).unwrap_or_else(|e| die(&format!("cannot save miner.json: {e}")));
@@ -415,7 +427,7 @@ fn wizard(env: &Env, gpu_ok: bool, quantus_present: bool, mode_hint: Option<&str
 
 /// Pool mode: runs `vearl-poolminer` (docs/16) and waits for it. Never returns. Its status line (every 10 s) is shown here and appended to
 /// miner.log, where the HiveOS stats script reads it.
-fn run_pool(env: &Env, pool: &str, address: &str, worker: &str, gpu_ok: bool) -> ! {
+fn run_pool(env: &Env, pool: &str, address: &str, worker: &str, gpu_ok: bool, mut jobs_node: Option<(std::process::Child, JobHandle)>) -> ! {
     let pm = env.path(&exe("vearl-poolminer"));
     if !pm.exists() {
         die(&format!("{} is missing: pool mining needs it next to vearl-miner", pm.display()));
@@ -429,7 +441,11 @@ fn run_pool(env: &Env, pool: &str, address: &str, worker: &str, gpu_ok: bool) ->
     println!("  Payout address:  {address}");
     println!("  Worker name:     {worker}");
     println!("  Hardware:        {}", if gpu_ok { "GPU (all the compatible GPUs of this machine)" } else { "CPU (no usable GPU)" });
-    println!("  Not in this mode: paid compute jobs and the Quantus add-on (use \"vearl-miner solo\" for those)");
+    if jobs_node.is_some() {
+        println!("  Paid jobs:       ON (a worker node runs next to the pool miner and shares the GPU; its log: {})", env.path("jobs.log").display());
+    } else {
+        println!("  Paid jobs:       off (\"vearl-miner setup\" turns them on: they need a wallet; the Quantus add-on needs \"vearl-miner solo\")");
+    }
     println!("  Receipts:        {}  (signed proofs of your work, kept so that you can check what the pool owes you)", env.path("pool-receipts.jsonl").display());
     println!("  Log:             {}  (status line every 10 s; Ctrl+C or closing this window stops everything)\n", env.path("miner.log").display());
     if !pool_reachable(pool) {
@@ -459,6 +475,27 @@ fn run_pool(env: &Env, pool: &str, address: &str, worker: &str, gpu_ok: bool) ->
     let mut child = c.spawn().unwrap_or_else(|e| die(&format!("cannot start {}: {e}", pm.display())));
     #[cfg(windows)]
     let _job = job::kill_on_close(&child);
+    // the node of the paid jobs: its lines about jobs are shown here, the rest is in jobs.log; if it stops, pool mining goes on
+    let mut _jobs_job: Option<JobHandle> = None; // kept until the end: closing it stops the node
+    if let Some((mut node, h)) = jobs_node.take() {
+        _jobs_job = Some(h);
+        let err = node.stderr.take();
+        std::thread::spawn(move || {
+            if let Some(err) = err {
+                for line in io::BufReader::new(err).lines().map_while(Result::ok) {
+                    let low = line.to_lowercase();
+                    // what the user wants to see: the jobs taken, the blocks mined for them, errors; not the idle notices of a worker-only node
+                    if (low.contains("(job") || low.contains("claim") || low.contains("settled") || low.contains("bond") || low.contains("panicked") || low.contains("error"))
+                        && !low.contains("nothing is being computed")
+                    {
+                        println!("[jobs] {line}");
+                    }
+                }
+            }
+            let code = node.wait().ok().and_then(|s| s.code()).unwrap_or(1);
+            println!("[jobs] the worker node stopped (exit code {code}): no more paid jobs in this session, pool mining goes on.");
+        });
+    }
     if let Some(err) = child.stderr.take() {
         let mut log = std::fs::OpenOptions::new().create(true).append(true).open(&log_path).ok();
         for line in io::BufReader::new(err).lines().map_while(Result::ok) {
@@ -474,6 +511,122 @@ fn run_pool(env: &Env, pool: &str, address: &str, worker: &str, gpu_ok: bool) ->
         pause_on_windows();
     }
     std::process::exit(code)
+}
+
+/// The wallet password: the remembered one (`wallet.pw`, if the user chose so) or asked, tried up to 4 times. Solo mode (`optional` false) dies
+/// after 4 wrong ones; with `optional` (the paid jobs of the pool mode) an empty answer or 4 wrong ones give None: pool mining goes on without them.
+fn unlock_wallet(env: &Env, cfg: &Value, wallet: &Path, account: u32, optional: bool) -> Option<String> {
+    let mut pw = String::new();
+    let pw_file = env.path("wallet.pw");
+    if cfg["remember_password"].as_bool().unwrap_or(false) && pw_file.exists() {
+        pw = std::fs::read_to_string(&pw_file).unwrap_or_default().trim_end_matches(['\r', '\n']).to_string();
+    }
+    for attempt in 0..4 {
+        if pw.is_empty() {
+            pw = password_prompt(if optional { "Wallet password for the paid jobs (just press Enter to skip them this time): " } else { "Wallet password: " });
+            if optional && pw.is_empty() {
+                return None;
+            }
+        }
+        match load_signing_key(wallet, &pw, account) {
+            Ok(_) => break,
+            Err(_) if attempt < 3 => {
+                println!("Wrong password.");
+                pw.clear();
+            }
+            Err(e) if optional => {
+                println!("Cannot unlock the wallet {}: {e}", wallet.display());
+                return None;
+            }
+            Err(e) => die(&format!("cannot unlock the wallet {}: {e}", wallet.display())),
+        }
+    }
+    Some(pw)
+}
+
+/// What keeps a child of the launcher tied to it: the job object on Windows (the child dies with the launcher), nothing elsewhere (Linux: PDEATHSIG).
+#[cfg(windows)]
+type JobHandle = *mut std::ffi::c_void;
+#[cfg(not(windows))]
+type JobHandle = ();
+
+/// Pool mode with paid jobs: starts a Vearl node as a WORKER ONLY (`--worker --no-native`: it never mines Native blocks, the pool miner does that)
+/// with the user's wallet, on the same GPU. Its log goes to jobs.log; the lines about jobs are echoed here. The node stops with the launcher
+/// (Linux: PDEATHSIG; Windows: job object, set by the caller). Returns None, with a note, if it cannot be started: pool mining then goes on alone.
+fn start_jobs_node(env: &Env, cfg: &Value, devnet: bool, gpu_ok: bool, address: &str) -> Option<(std::process::Child, JobHandle)> {
+    let genesis = match solo_checks(env, devnet) {
+        Ok(g) => g,
+        Err(e) => {
+            println!("Note: paid jobs are OFF this time ({e}). Pool mining goes on.\n");
+            return None;
+        }
+    };
+    let wallet_file = cfg["vearl_wallet"].as_str().unwrap_or("wallet.json").to_string();
+    if wallet_file.is_empty() {
+        println!("Note: paid jobs are OFF: you gave only an address, a wallet file is needed (\"vearl-miner setup\"). Pool mining goes on.\n");
+        return None;
+    }
+    let wallet = if Path::new(&wallet_file).is_absolute() { PathBuf::from(&wallet_file) } else { env.path(&wallet_file) };
+    let account = cfg["account"].as_u64().unwrap_or(0) as u32;
+    match Keystore::load(&wallet) {
+        Ok(k) if k.address == address => {}
+        Ok(k) => {
+            println!("Note: paid jobs are OFF: the wallet {} has the address {} but the pool payout address is {address}. Use the same address, or run \"vearl-miner setup\". Pool mining goes on.\n", wallet.display(), k.address);
+            return None;
+        }
+        Err(e) => {
+            println!("Note: paid jobs are OFF: cannot read the wallet {} ({e}). Pool mining goes on.\n", wallet.display());
+            return None;
+        }
+    }
+    let Some(pw) = unlock_wallet(env, cfg, &wallet, account, true) else {
+        println!("Note: paid jobs are OFF this time (no wallet password). Pool mining goes on.\n");
+        return None;
+    };
+    let mut a: Vec<String> = Vec::new();
+    if let Some(g) = &genesis {
+        a.extend(["--genesis".into(), g.display().to_string()]);
+    }
+    for p in env.network["peers"].as_array().cloned().unwrap_or_default() {
+        if let Some(p) = p.as_str() {
+            a.extend(["--peer".into(), p.into()]);
+        }
+    }
+    a.extend(["--listen".into(), env.network["listen"].as_str().unwrap_or("0.0.0.0:9000").into()]);
+    a.extend(["--miner-wallet".into(), wallet.display().to_string(), "--miner-account".into(), account.to_string()]);
+    if gpu_ok {
+        a.push("--gpu".into());
+    }
+    a.extend(["--worker".into(), "--no-native".into(), "--max-jobs".into(), cfg["max_jobs"].as_u64().unwrap_or(1).to_string()]);
+    a.extend(["--data-dir".into(), env.path("data").display().to_string(), "--log-file".into(), env.path("jobs.log").display().to_string()]);
+    let node_path = env.path(&exe("node"));
+    let mut c = Command::new(&node_path);
+    c.args(&a).env("VEARL_WALLET_PASSWORD", &pw).current_dir(&env.home).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
+    apply_lib_path(&mut c, &env.home);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            c.pre_exec(|| {
+                prctl(1, 15, 0, 0, 0); // PR_SET_PDEATHSIG, SIGTERM: the node stops with the launcher
+                Ok(())
+            });
+        }
+    }
+    match c.spawn() {
+        Ok(child) => {
+            // tied to the launcher at once (the node starts its own child right away: a late assignment would leave that one outside the job)
+            #[cfg(windows)]
+            let h = job::kill_on_close(&child);
+            #[cfg(not(windows))]
+            let h = ();
+            Some((child, h))
+        }
+        Err(e) => {
+            println!("Note: paid jobs are OFF: cannot start {} ({e}). Pool mining goes on.\n", node_path.display());
+            None
+        }
+    }
 }
 
 fn clear_screen() {
@@ -580,7 +733,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |n: &str| args.iter().any(|a| a == n);
     if flag("--help") || flag("-h") {
-        println!("vearl-miner [setup | check | pool | solo] [--home DIR] [--devnet] [--mode pool|solo] [--pool HOST:PORT] [--address vrl1...] [--worker-name NAME]\n  (no argument)  start mining Vearl; the first time, an assistant asks how to mine (pool or solo), creates your Vearl wallet (and offers the optional Quantus add-on, if installed)\n  setup          run the assistant again\n  check          test the GPU, the network files, the Quantus add-on (if installed) and the pool, then stop\n  pool | solo    switch the saved way of mining and start\n  --mode, --pool use that way of mining for this run only (--pool HOST:PORT implies pool mode; default pool {DEFAULT_POOL})\n  --address      with pool mode: mine to this Vearl address, no wizard and no settings file needed (HiveOS, scripts)");
+        println!("vearl-miner [setup | check | pool | solo] [--home DIR] [--devnet] [--mode pool|solo] [--pool HOST:PORT] [--address vrl1...] [--worker-name NAME] [--no-jobs]\n  (no argument)  start mining Vearl; the first time, an assistant asks how to mine (pool or solo), creates your Vearl wallet (and offers the optional Quantus add-on, if installed)\n  setup          run the assistant again\n  check          test the GPU, the network files, the Quantus add-on (if installed) and the pool, then stop\n  pool | solo    switch the saved way of mining and start\n  --mode, --pool use that way of mining for this run only (--pool HOST:PORT implies pool mode; default pool {DEFAULT_POOL})\n  --address      with pool mode: mine to this Vearl address, no wizard and no settings file needed (HiveOS, scripts)\n  --no-jobs      pool mode: do not take paid jobs in this run (with a wallet, a worker node runs next to the pool miner)");
         return;
     }
     // maintenance commands used by the release scripts (not shown in --help)
@@ -590,7 +743,7 @@ fn main() {
         return;
     }
     for a in &args {
-        if a.starts_with("--") && !["--home", "--devnet", "--help", "--mode", "--pool", "--address", "--worker-name"].contains(&a.as_str()) {
+        if a.starts_with("--") && !["--home", "--devnet", "--help", "--mode", "--pool", "--address", "--worker-name", "--no-jobs"].contains(&a.as_str()) {
             die(&format!("unknown option {a}"));
         }
     }
@@ -696,7 +849,13 @@ fn main() {
         if !cfg["quantus_address"].as_str().unwrap_or("").is_empty() {
             println!("Note: the Quantus add-on only works in solo mode: it is OFF while you mine in the pool (your Quantus address stays saved).\n");
         }
-        run_pool(&env, &pool, &address, &worker, gpu.is_ok());
+        // paid jobs next to the pool: chosen in the wizard (miner.json "jobs"), needs the wallet whose address is the payout address
+        let jobs_node = if cfg["jobs"].as_bool().unwrap_or(false) && !flag("--no-jobs") && opt("--address").is_none() {
+            start_jobs_node(&env, &cfg, devnet, gpu.is_ok(), &address)
+        } else {
+            None
+        };
+        run_pool(&env, &pool, &address, &worker, gpu.is_ok(), jobs_node);
     }
     // solo mode from here: the node and the network files are needed
     let node_path = env.path(&exe("node"));
@@ -727,24 +886,7 @@ fn main() {
     }
 
     // --- password
-    let mut pw = String::new();
-    let pw_file = env.path("wallet.pw");
-    if cfg["remember_password"].as_bool().unwrap_or(false) && pw_file.exists() {
-        pw = std::fs::read_to_string(&pw_file).unwrap_or_default().trim_end_matches(['\r', '\n']).to_string();
-    }
-    for attempt in 0..4 {
-        if pw.is_empty() {
-            pw = password_prompt("Wallet password: ");
-        }
-        match load_signing_key(&wallet, &pw, account) {
-            Ok(_) => break,
-            Err(_) if attempt < 3 => {
-                println!("Wrong password.");
-                pw.clear();
-            }
-            Err(e) => die(&format!("cannot unlock the wallet {}: {e}", wallet.display())),
-        }
-    }
+    let pw = unlock_wallet(&env, &cfg, &wallet, account, false).unwrap_or_default();
 
     // --- node command
     let mut a: Vec<String> = Vec::new();

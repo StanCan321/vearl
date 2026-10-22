@@ -6,6 +6,7 @@ This package runs the Vearl miner on a HiveOS rig. It uses EVERY NVIDIA GPU of t
 40xx, 50xx, A-series): one worker per GPU. Two ways of mining, chosen in the flight sheet:
   POOL (the default) .. the rig joins the official Vearl pool (pool.vearl.org:3333). Small regular payouts, the pool keeps a small fee,
                         and NOTHING to set up on the rig: your Vearl address in the flight sheet is enough (no wallet file, no password).
+                        (Paid jobs next to the pool need a wallet and its password: the PC miner does that, this package stays pool-only.)
   SOLO ................ the rig runs its own Vearl node and mines alone: all the blocks it finds are yours and it computes paid jobs,
                         but it needs a wallet on the rig (step 2) and a block is rare with a few GPUs. The public testnet starts on 23 October 2026 at 16:00 UTC; before that the miner only waits
 (height 0, 0 sigma/s, "peers=1" means it is connected to our seed).

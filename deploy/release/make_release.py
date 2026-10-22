@@ -52,7 +52,9 @@ What the miner does
  * The first time, it asks HOW you want to mine, and you can change your mind at any time ("vearl-miner pool" / "vearl-miner solo"):
      POOL (recommended) ... you join the official pool ({pool}). Many miners share the work and what you earn arrives in small
                             regular payouts; the pool keeps a small fee (shown on its website). You only need your Vearl ADDRESS: no node
-                            runs on your machine and your wallet password is not needed. No paid jobs and no Quantus in this mode.
+                            runs on your machine and your wallet password is not needed to mine. If you also give a wallet, the miner takes
+                            paid jobs (AI, computations) too: a worker node then runs next to the pool miner, on the same GPU, and asks your
+                            wallet password at each start (a job pays your wallet and needs a few VRL in it for the bond). No Quantus in this mode.
      SOLO ................ your machine runs a full Vearl node and mines alone: you keep 100 % of the blocks you find and you also
                             compute the paid jobs that clients submit to the network (AI inference, rendering, linear algebra).
  * It mines Vearl only (the optional Quantus add-on aside): no other program runs on your machine.
