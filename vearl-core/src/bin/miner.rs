@@ -598,6 +598,7 @@ fn start_jobs_node(env: &Env, cfg: &Value, devnet: bool, gpu_ok: bool, address: 
         a.push("--gpu".into());
     }
     a.extend(["--worker".into(), "--no-native".into(), "--max-jobs".into(), cfg["max_jobs"].as_u64().unwrap_or(1).to_string()]);
+    a.extend(models_args(env, cfg, devnet));
     a.extend(["--data-dir".into(), env.path("data").display().to_string(), "--log-file".into(), env.path("jobs.log").display().to_string()]);
     let node_path = env.path(&exe("node"));
     let mut c = Command::new(&node_path);
@@ -625,6 +626,147 @@ fn start_jobs_node(env: &Env, cfg: &Value, devnet: bool, gpu_ok: bool, address: 
         Err(e) => {
             println!("Note: paid jobs are OFF: cannot start {} ({e}). Pool mining goes on.\n", node_path.display());
             None
+        }
+    }
+}
+
+/// Where the model packs come from: the manifest (`models.json`) of the project's release; `--from` or VEARL_MODELS_URL name another source
+/// (a folder or an https address), for example a local mirror.
+const MODELS_URL: &str = "https://github.com/vearl-verified-compute/vearl/releases/download/models-1/models.json";
+const MODELS_MAX_PACK: u64 = 8 << 30;
+
+fn sha256_file(p: &Path) -> io::Result<String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut f = io::BufReader::with_capacity(1 << 20, std::fs::File::open(p)?);
+    let (mut h, mut buf) = (Sha256::new(), vec![0u8; 1 << 20]);
+    loop {
+        let k = f.read(&mut buf)?;
+        if k == 0 {
+            break;
+        }
+        h.update(&buf[..k]);
+    }
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+fn curl_get(url: &str, out: &Path, resume: bool) -> Result<(), String> {
+    let mut c = Command::new("curl");
+    c.args(["-fL", "--silent", "--show-error", "--retry", "3", "--connect-timeout", "20"]);
+    if resume {
+        c.args(["-C", "-"]);
+    }
+    match c.arg("-o").arg(out).arg(url).status() {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(format!("download of {url} failed (curl exit code {})", s.code().unwrap_or(-1))),
+        Err(e) => Err(format!("cannot run curl ({e}): download {url} by hand into the \"models\" folder")),
+    }
+}
+
+/// Installs or updates the model packs in `<home>/models` from the manifest at `source` (https address or folder). A pack is downloaded
+/// to `NAME.part`, its SHA-256 is checked, then it is renamed: the node only ever sees complete packs. Returns (packs ready, packs in the manifest).
+/// The packs are self-certifying anyway: a job names its weights by Merkle root, and a block that is not the client's never matches.
+fn models_sync(env: &Env, source: Option<&str>) -> Result<(usize, usize), String> {
+    let dir = env.path("models");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let src = source.map(String::from).or_else(|| std::env::var("VEARL_MODELS_URL").ok()).unwrap_or_else(|| MODELS_URL.to_string());
+    let remote = src.starts_with("https://");
+    let (text, base) = if remote {
+        let tmp = dir.join("models.json.part");
+        curl_get(&src, &tmp, false)?;
+        let t = std::fs::read_to_string(&tmp).map_err(|e| e.to_string());
+        let _ = std::fs::remove_file(&tmp);
+        (t?, src[..src.rfind('/').map_or(src.len(), |i| i + 1)].to_string())
+    } else {
+        let p = PathBuf::from(&src);
+        let f = if p.is_dir() { p.join("models.json") } else { p };
+        (std::fs::read_to_string(&f).map_err(|e| format!("cannot read {}: {e}", f.display()))?, f.parent().map(|d| d.display().to_string()).unwrap_or_default())
+    };
+    let man: Value = serde_json::from_str(&text).map_err(|e| format!("the list of models is not valid: {e}"))?;
+    let packs = man["packs"].as_array().ok_or("the list of models has no \"packs\"")?;
+    let mut ready = 0;
+    for p in packs {
+        let (file, sha, bytes) = (p["file"].as_str().unwrap_or(""), p["sha256"].as_str().unwrap_or(""), p["bytes"].as_u64().unwrap_or(0));
+        let name_ok = !file.is_empty() && file.ends_with(".vblocks") && file.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)) && !file.starts_with('.');
+        if !name_ok || sha.len() != 64 || !sha.chars().all(|c| c.is_ascii_hexdigit()) || bytes == 0 || bytes > MODELS_MAX_PACK {
+            println!("[models] skipped an entry of the list that is not valid ({file})");
+            continue;
+        }
+        let (dest, part) = (dir.join(file), dir.join(format!("{file}.part")));
+        if dest.metadata().map_or(false, |m| m.len() == bytes) && sha256_file(&dest).map_or(false, |h| h.eq_ignore_ascii_case(sha)) {
+            ready += 1;
+            continue;
+        }
+        let _ = std::fs::remove_file(&dest);
+        let url = match p["url"].as_str().filter(|u| !u.is_empty()) {
+            Some(u) if u.starts_with("https://") => u.to_string(),
+            Some(_) => {
+                println!("[models] {file}: the address is not https, skipped");
+                continue;
+            }
+            None if remote => format!("{base}{file}"),
+            None => PathBuf::from(&base).join(file).display().to_string(),
+        };
+        println!("[models] {file}: installing {} MiB (the weights of the AI models: clients will not have to send them)...", bytes >> 20);
+        if part.metadata().map_or(false, |m| m.len() > bytes) {
+            let _ = std::fs::remove_file(&part);
+        }
+        let got = if url.starts_with("https://") {
+            if part.metadata().map_or(false, |m| m.len() == bytes) { Ok(()) } else { curl_get(&url, &part, true) }
+        } else {
+            std::fs::copy(&url, &part).map(|_| ()).map_err(|e| format!("cannot copy {url}: {e}"))
+        };
+        if let Err(e) = got {
+            println!("[models] {file}: {e}");
+            continue;
+        }
+        match sha256_file(&part) {
+            Ok(h) if h.eq_ignore_ascii_case(sha) && part.metadata().map_or(false, |m| m.len() == bytes) => {
+                if std::fs::rename(&part, &dest).is_ok() {
+                    ready += 1;
+                    println!("[models] {file}: installed and checked");
+                }
+            }
+            _ => {
+                let _ = std::fs::remove_file(&part);
+                println!("[models] {file}: the file does not match its SHA-256, removed (it will be downloaded again at the next start)");
+            }
+        }
+    }
+    Ok((ready, packs.len()))
+}
+
+/// Paid jobs: the models are installed in advance (`<home>/models`), the node loads them and a client then sends no weights. The download
+/// goes on in the background: mining starts at once, the node picks the packs up as they arrive. Returns the node arguments.
+fn models_args(env: &Env, cfg: &Value, devnet: bool) -> Vec<String> {
+    if !cfg["models"].as_bool().unwrap_or(true) {
+        return vec![];
+    }
+    let dir = env.path("models");
+    let _ = std::fs::create_dir_all(&dir);
+    if !devnet {
+        let env2 = Env { home: env.home.clone(), network: env.network.clone() };
+        std::thread::spawn(move || match models_sync(&env2, None) {
+            Ok((r, t)) if r < t => println!("[models] {r}/{t} model packs installed (retry at the next start, or run \"vearl-miner models\")"),
+            Ok(_) => {}
+            Err(e) => println!("[models] {e}. Mining goes on; paid jobs will work when the clients send their model, and \"vearl-miner models\" retries."),
+        });
+    }
+    vec!["--models-dir".into(), dir.display().to_string()]
+}
+
+/// `vearl-miner models [--from FOLDER_OR_URL]`: installs or updates the AI model packs now and lists them.
+fn models_command(env: &Env, from: Option<&str>) {
+    println!("Installing the model packs in {} ...", env.path("models").display());
+    match models_sync(env, from) {
+        Ok((r, t)) => println!("{r}/{t} packs ready. The miner loads them at start (and every 30 s while it runs)."),
+        Err(e) => die(&e),
+    }
+    if let Ok(rd) = std::fs::read_dir(env.path("models")) {
+        let mut v: Vec<_> = rd.filter_map(|e| e.ok()).filter(|e| e.path().extension().map_or(false, |x| x == "vblocks")).collect();
+        v.sort_by_key(|e| e.file_name());
+        for e in v {
+            println!("  {}  {} MiB", e.file_name().to_string_lossy(), e.metadata().map_or(0, |m| m.len()) >> 20);
         }
     }
 }
@@ -733,7 +875,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |n: &str| args.iter().any(|a| a == n);
     if flag("--help") || flag("-h") {
-        println!("vearl-miner [setup | check | pool | solo] [--home DIR] [--devnet] [--mode pool|solo] [--pool HOST:PORT] [--address vrl1...] [--worker-name NAME] [--no-jobs]\n  (no argument)  start mining Vearl; the first time, an assistant asks how to mine (pool or solo), creates your Vearl wallet (and offers the optional Quantus add-on, if installed)\n  setup          run the assistant again\n  check          test the GPU, the network files, the Quantus add-on (if installed) and the pool, then stop\n  pool | solo    switch the saved way of mining and start\n  --mode, --pool use that way of mining for this run only (--pool HOST:PORT implies pool mode; default pool {DEFAULT_POOL})\n  --address      with pool mode: mine to this Vearl address, no wizard and no settings file needed (HiveOS, scripts)\n  --no-jobs      pool mode: do not take paid jobs in this run (with a wallet, a worker node runs next to the pool miner)");
+        println!("vearl-miner [setup | check | models | pool | solo] [--home DIR] [--devnet] [--mode pool|solo] [--pool HOST:PORT] [--address vrl1...] [--worker-name NAME] [--no-jobs] [--no-models]\n  (no argument)  start mining Vearl; the first time, an assistant asks how to mine (pool or solo), creates your Vearl wallet (and offers the optional Quantus add-on, if installed)\n  setup          run the assistant again\n  check          test the GPU, the network files, the Quantus add-on (if installed) and the pool, then stop\n  models         install or update the AI model packs now (otherwise done in the background at start): with them in place, clients send no model\n  --no-models    do not install or load the AI model packs in this run (they weigh about 650 MiB on disk and in memory)\n  pool | solo    switch the saved way of mining and start\n  --mode, --pool use that way of mining for this run only (--pool HOST:PORT implies pool mode; default pool {DEFAULT_POOL})\n  --address      with pool mode: mine to this Vearl address, no wizard and no settings file needed (HiveOS, scripts)\n  --no-jobs      pool mode: do not take paid jobs in this run (with a wallet, a worker node runs next to the pool miner)");
         return;
     }
     // maintenance commands used by the release scripts (not shown in --help)
@@ -743,7 +885,7 @@ fn main() {
         return;
     }
     for a in &args {
-        if a.starts_with("--") && !["--home", "--devnet", "--help", "--mode", "--pool", "--address", "--worker-name", "--no-jobs"].contains(&a.as_str()) {
+        if a.starts_with("--") && !["--home", "--devnet", "--help", "--mode", "--pool", "--address", "--worker-name", "--no-jobs", "--no-models", "--from"].contains(&a.as_str()) {
             die(&format!("unknown option {a}"));
         }
     }
@@ -764,7 +906,7 @@ fn main() {
         let mut it = args.iter();
         let mut c = String::new();
         while let Some(a) = it.next() {
-            if ["--home", "--mode", "--pool", "--address", "--worker-name"].contains(&a.as_str()) {
+            if ["--home", "--mode", "--pool", "--address", "--worker-name", "--from"].contains(&a.as_str()) {
                 it.next();
             } else if !a.starts_with("--") {
                 c = a.clone();
@@ -775,6 +917,11 @@ fn main() {
     };
 
     println!("Vearl miner (testnet \"{}\"): tokens have no value, not audited.\n", env.network["name"].as_str().unwrap_or("?"));
+
+    if cmd == "models" {
+        models_command(&env, opt("--from").as_deref());
+        return;
+    }
 
     // --- diagnostic
     let gpu = gpu_status();
@@ -831,6 +978,9 @@ fn main() {
         cfg = Some(wizard(&env, gpu.is_ok(), has_quantus, cli_mode.as_deref()));
     }
     let mut cfg = cfg.unwrap_or_else(|| json!({}));
+    if flag("--no-models") {
+        cfg["models"] = json!(false); // for this run only: not saved
+    }
     let mode = cli_mode.clone().unwrap_or_else(|| cfg["mode"].as_str().unwrap_or("solo").to_string());
     if (cmd == "pool" || cmd == "solo") && saved.is_some() {
         if mode == "solo" && cfg["vearl_wallet"].as_str().unwrap_or("wallet.json").is_empty() {
@@ -905,6 +1055,7 @@ fn main() {
     }
     if cfg["worker"].as_bool().unwrap_or(true) {
         a.extend(["--worker".into(), "--max-jobs".into(), cfg["max_jobs"].as_u64().unwrap_or(1).to_string()]);
+        a.extend(models_args(&env, &cfg, devnet));
     }
     a.extend(["--data-dir".into(), env.path("data").display().to_string(), "--log-file".into(), env.path("miner.log").display().to_string()]);
     if let Ok((qpath, quantus_cuda)) = &qm {
